@@ -1,0 +1,188 @@
+{
+  "schema": "aisie.smart_subtitle.v1",
+  "platform": "youtube_shorts",
+  "aspect": "9:16",
+  "video_size": {
+    "w": 1080,
+    "h": 1920
+  },
+  "safe_zones": {
+    "name": "youtube_shorts",
+    "aspect": "9:16",
+    "top_safe": 0.08,
+    "bottom_safe": 0.17,
+    "left_safe": 0.02,
+    "right_safe": 0.1
+  },
+  "visual_load": {
+    "visual": "LOW",
+    "audio": "HIGH",
+    "text_allowed": "MEDIUM"
+  },
+  "hooks": [
+    {
+      "type": "CONTRADICTION",
+      "attention_score": 99,
+      "band": "hook",
+      "text": "СВОБОДЫ СТАЛО БОЛЬШЕ.",
+      "start": 2.2,
+      "end": 3.6,
+      "visual_weight": "L4",
+      "animation": "quick_cut",
+      "position_zone": "primary",
+      "y_percent": 10.0,
+      "x_percent": 50.0,
+      "color": "#FF7A12",
+      "font": "Montserrat ExtraBold",
+      "uppercase": true,
+      "semantic_groups": [
+        {
+          "text": "СВОБОДЫ СТАЛО",
+          "start": 2.2,
+          "end": 2.55,
+          "words": [
+            "СВОБОДЫ",
+            "СТАЛО"
+          ],
+          "delay_ms": 150,
+          "is_keyword_group": false
+        },
+        {
+          "text": "БОЛЬШЕ",
+          "start": 2.7,
+          "end": 3.05,
+          "words": [
+            "БОЛЬШЕ"
+          ],
+          "delay_ms": 170,
+          "is_keyword_group": true
+        }
+      ],
+      "placement_reason": "PRIMARY 10-25% свободна",
+      "weight_downgraded": false
+    },
+    {
+      "type": "CONTRADICTION",
+      "attention_score": 97,
+      "band": "hook",
+      "text": "НО МЫ НЕ СТАЛИ СЧАСТЛИВЕЕ.",
+      "start": 3.7,
+      "end": 5.4,
+      "visual_weight": "L4",
+      "animation": "quick_cut",
+      "position_zone": "primary",
+      "y_percent": 10.0,
+      "x_percent": 50.0,
+      "color": "#FF7A12",
+      "font": "Montserrat ExtraBold",
+      "uppercase": true,
+      "semantic_groups": [
+        {
+          "text": "НО МЫ",
+          "start": 3.7,
+          "end": 4.05,
+          "words": [
+            "НО",
+            "МЫ"
+          ],
+          "delay_ms": 150,
+          "is_keyword_group": false
+        },
+        {
+          "text": "НЕ СТАЛИ",
+          "start": 4.2,
+          "end": 4.55,
+          "words": [
+            "НЕ",
+            "СТАЛИ"
+          ],
+          "delay_ms": 170,
+          "is_keyword_group": false
+        },
+        {
+          "text": "СЧАСТЛИВЕЕ",
+          "start": 4.89,
+          "end": 5.24,
+          "words": [
+            "СЧАСТЛИВЕЕ"
+          ],
+          "delay_ms": 170,
+          "is_keyword_group": true
+        }
+      ],
+      "placement_reason": "PRIMARY 10-25% свободна",
+      "weight_downgraded": false
+    },
+    {
+      "type": "REVELATION",
+      "attention_score": 88,
+      "band": "accent",
+      "text": "И вот что мы обычно не замечаем.",
+      "start": 5.5,
+      "end": 7.6,
+      "visual_weight": "L4",
+      "animation": "hold_accent",
+      "position_zone": "primary",
+      "y_percent": 10.0,
+      "x_percent": 50.0,
+      "color": "#FF7A12",
+      "font": "Montserrat ExtraBold",
+      "uppercase": true,
+      "semantic_groups": [
+        {
+          "text": "И вот что мы",
+          "start": 5.5,
+          "end": 6.14,
+          "words": [
+            "И",
+            "вот",
+            "что",
+            "мы"
+          ],
+          "delay_ms": 130,
+          "is_keyword_group": false
+        },
+        {
+          "text": "обычно не",
+          "start": 6.27,
+          "end": 6.62,
+          "words": [
+            "обычно",
+            "не"
+          ],
+          "delay_ms": 170,
+          "is_keyword_group": false
+        },
+        {
+          "text": "замечаем",
+          "start": 6.96,
+          "end": 7.31,
+          "words": [
+            "замечаем"
+          ],
+          "delay_ms": 170,
+          "is_keyword_group": true
+        }
+      ],
+      "placement_reason": "PRIMARY 10-25% свободна",
+      "weight_downgraded": false
+    }
+  ],
+  "subtitles": [
+    {
+      "text": "МЫ ЖИВЁМ В МИРЕ БЕСКОНЕЧНОГО ВЫБОРА.",
+      "start": 0.3,
+      "end": 2.1,
+      "visual_weight": "L0",
+      "animation": "fade_move"
+    },
+    {
+      "text": "КАЖДЫЙ ДЕНЬ МЫ ВЫБИРАЕМ ИЗ ТЫСЯЧ ВЕЩЕЙ.",
+      "start": 7.7,
+      "end": 10.2,
+      "visual_weight": "L0",
+      "animation": "fade_move"
+    }
+  ],
+  "validation_issues": []
+}
