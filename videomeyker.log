@@ -276,3 +276,86 @@
 2026-08-26 23:41:32,725 [INFO] video_maker.gui.app: [GUI] audio_var = /Users/dreamstore/Downloads/аудио для шортс 2/ш1.m4a
 2026-08-26 23:41:59,827 [INFO] video_maker.gui.app: [GUI] Диалог выбора папки: broll_h_var
 2026-08-26 23:42:55,068 [INFO] video_maker.gui.app: [GUI] Выбрана папка: (пусто)
+2026-08-26 23:46:56,911 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:46:56,911 [INFO] __main__: ║           ВИДЕОМЕЙКЕР — ЗАПУСК               ║
+2026-08-26 23:46:56,911 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:46:56,911 [INFO] __main__: Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:46:56,911 [INFO] __main__: PID: 92022
+2026-08-26 23:46:56,911 [INFO] __main__: Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:46:56,911 [INFO] __main__: Лог-файл: /Users/dreamstore/video_maker/videomeyker.log
+2026-08-26 23:46:56,912 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-26 23:46:58,028 [INFO] __main__: Tk() создан: .
+2026-08-26 23:46:58,028 [INFO] __main__: Импорт App...
+2026-08-26 23:46:58,122 [INFO] __main__: Создание App(root)...
+2026-08-26 23:46:58,122 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:46:58,123 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-26 23:46:58,123 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:46:58,123 [INFO] video_maker.gui.app: [GUI] PID: 92022
+2026-08-26 23:46:58,123 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:46:58,123 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-26 23:46:58,126 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-26 23:46:58,127 [ERROR] __main__: Критическая ошибка: TypeError: Settings.__init__() got an unexpected keyword argument 'broll_vertical'. Did you mean 'cover_vertical'?
+2026-08-26 23:46:58,129 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:46:58,129 [INFO] __main__: ║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                ║
+2026-08-26 23:46:58,129 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:47:11,680 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:47:11,681 [INFO] __main__: ║           ВИДЕОМЕЙКЕР — ЗАПУСК               ║
+2026-08-26 23:47:11,681 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:47:11,681 [INFO] __main__: Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:47:11,681 [INFO] __main__: PID: 92082
+2026-08-26 23:47:11,681 [INFO] __main__: Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:47:11,681 [INFO] __main__: Лог-файл: /Users/dreamstore/video_maker/videomeyker.log
+2026-08-26 23:47:11,681 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-26 23:47:12,088 [INFO] __main__: Tk() создан: .
+2026-08-26 23:47:12,088 [INFO] __main__: Импорт App...
+2026-08-26 23:47:12,141 [INFO] __main__: Создание App(root)...
+2026-08-26 23:47:12,141 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:47:12,141 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-26 23:47:12,141 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:47:12,141 [INFO] video_maker.gui.app: [GUI] PID: 92082
+2026-08-26 23:47:12,141 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:47:12,142 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-26 23:47:12,143 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-26 23:47:12,144 [ERROR] __main__: Критическая ошибка: TypeError: Settings.__init__() got an unexpected keyword argument 'broll_vertical'. Did you mean 'cover_vertical'?
+2026-08-26 23:47:12,146 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:47:12,146 [INFO] __main__: ║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                ║
+2026-08-26 23:47:12,146 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:47:39,874 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:47:39,874 [INFO] __main__: ║           ВИДЕОМЕЙКЕР — ЗАПУСК               ║
+2026-08-26 23:47:39,875 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:47:39,875 [INFO] __main__: Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:47:39,875 [INFO] __main__: PID: 92169
+2026-08-26 23:47:39,875 [INFO] __main__: Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:47:39,875 [INFO] __main__: Лог-файл: /Users/dreamstore/video_maker/videomeyker.log
+2026-08-26 23:47:39,875 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-26 23:47:40,280 [INFO] __main__: Tk() создан: .
+2026-08-26 23:47:40,280 [INFO] __main__: Импорт App...
+2026-08-26 23:47:40,333 [INFO] __main__: Создание App(root)...
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] PID: 92169
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:47:40,333 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-26 23:47:40,334 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-26 23:47:40,335 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] _load_settings(): загрузка из .env
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-26 23:47:40,354 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:47:40,354 [INFO] __main__: App создан — запуск mainloop()
+2026-08-26 23:47:40,354 [INFO] __main__: mainloop() начат

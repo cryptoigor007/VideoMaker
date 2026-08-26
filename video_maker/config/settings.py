@@ -69,7 +69,6 @@ class Settings:
             gemini_api_keys=keys,
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             broll_horizontal=os.getenv("BROLL_HORIZONTAL_FOLDER", ""),
-            broll_vertical=os.getenv("BROLL_VERTICAL_FOLDER", ""),
             bgm_folder=os.getenv("BGM_FOLDER", ""),
             output_folder=os.getenv("OUTPUT_FOLDER", ""),
             whisper_model=os.getenv("WHISPER_MODEL", "base"),
