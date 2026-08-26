@@ -121,20 +121,33 @@ def measure_loudness(path: str) -> dict | None:
     i_lufs = None
     peak_dbtp = None
 
-    for line in stderr.split("\n"):
-        if "Integrated loudness" in line and "LUFS" in line:
-            parts = line.split(":")
+    lines = stderr.split("\n")
+    for i, line in enumerate(lines):
+        # Ищем "I:         -26.9 LUFS" после "Integrated loudness:"
+        if "I:" in line and "LUFS" in line:
+            parts = line.split("I:")
             if len(parts) >= 2:
                 try:
-                    i_lufs = float(parts[-1].strip().replace("LUFS", "").strip())
-                except ValueError:
+                    val = parts[1].strip().split()[0]
+                    i_lufs = float(val)
+                except (ValueError, IndexError):
                     pass
-        if "True peak" in line and "dBTP" in line:
-            parts = line.split(":")
+        # Ищем "Peak:      -22.9 dBFS" или "TPK: -22.9 dBFS" после "True peak:"
+        if "Peak:" in line and "dBFS" in line:
+            parts = line.split("Peak:")
             if len(parts) >= 2:
                 try:
-                    peak_dbtp = float(parts[-1].strip().replace("dBTP", "").strip())
-                except ValueError:
+                    val = parts[1].strip().split()[0]
+                    peak_dbtp = float(val)
+                except (ValueError, IndexError):
+                    pass
+        if "TPK:" in line and "dBFS" in line:
+            parts = line.split("TPK:")
+            if len(parts) >= 2:
+                try:
+                    val = parts[1].strip().split()[0]
+                    peak_dbtp = float(val)
+                except (ValueError, IndexError):
                     pass
 
     if i_lufs is None:

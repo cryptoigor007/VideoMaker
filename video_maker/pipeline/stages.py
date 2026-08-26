@@ -118,7 +118,7 @@ class TranscribeStage(Stage):
         ctx.transcription = transcribe(
             ctx.audio_path,
             model_name=ctx.whisper_model,
-            log=ctx.log,
+            log_fn=ctx.log,
         )
         ctx.log(f"[WHISPER] Готово: {len(ctx.transcription.get('segments', []))} сегментов")
         ctx.progress = 15.0
@@ -140,7 +140,7 @@ class GeminiStage(Stage):
             ctx.transcription,
             api_key=ctx.gemini_api_key,
             model_name=ctx.gemini_model,
-            log=ctx.log,
+            log_fn=ctx.log,
         )
         ctx.log("[GEMINI] Пакет ANALYSIS готов")
         ctx.progress = 25.0

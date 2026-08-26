@@ -55,7 +55,7 @@ class MasterBuilder(Stage):
             target_duration=ctx.audio_duration,
             output_path=output_path,
             audio_file=ctx.audio_path,
-            log=ctx.log,
+            log_fn=ctx.log,
         )
         return output_path
 
