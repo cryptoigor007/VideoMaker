@@ -42,6 +42,7 @@ class PipelineContext:
     whisper_model: str = "base"
     voice_enhance: bool = True
     add_bgm: bool = True
+    intro_gemini: bool = True
 
     # Чекбоксы
     h_enable_intro: bool = False
@@ -141,6 +142,7 @@ class GeminiStage(Stage):
             api_key=ctx.gemini_api_key,
             api_keys=ctx.gemini_api_keys,
             model_name=ctx.gemini_model,
+            intro_gemini=ctx.intro_gemini,
             log_fn=ctx.log,
         )
         ctx.log("[GEMINI] Пакет ANALYSIS готов")

@@ -330,8 +330,10 @@ class App:
         audio_settings = self._add_section(right_col, "Настройки аудио")
         self.voice_enhance_var = tk.BooleanVar(value=True)
         self.add_bgm_var = tk.BooleanVar(value=True)
+        self.intro_gemini_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(audio_settings, text="Усилить голос", variable=self.voice_enhance_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
 
         # Этапы обработки — ВЫРОВНЕНЫ С ОБЛОЖКАМИ
         checks_frame = self._add_section(right_col, "Этапы обработки")
@@ -546,6 +548,7 @@ class App:
         self.settings.cover_vertical = self.cover_v_var.get()
         self.settings.series_name = self.series_var.get()
         self.settings.gemini_model = self.model_var.get()
+        self.settings.intro_gemini = self.intro_gemini_var.get()
 
         log.info(f"[GUI] audio_path = {self.settings.audio_path}")
         log.info(f"[GUI] broll_horizontal = {self.settings.broll_horizontal}")
@@ -633,6 +636,7 @@ class App:
                 whisper_model=self.settings.whisper_model,
                 voice_enhance=self.settings.voice_enhance,
                 add_bgm=self.settings.add_bgm,
+                intro_gemini=self.settings.intro_gemini,
                 h_enable_intro=self.settings.h_enable_intro,
                 h_enable_middle=self.settings.h_enable_middle,
                 h_enable_outro=self.settings.h_enable_outro,

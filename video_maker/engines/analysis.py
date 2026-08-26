@@ -13,6 +13,7 @@ def analyze(
     api_key: str = "",
     api_keys: list[str] | None = None,
     model_name: str = "gemini-3.6-flash",
+    intro_gemini: bool = True,
     log_fn=None,
 ) -> dict:
     """Единый вызов Gemini → пакет ANALYSIS. Поддержка ротации ключей."""
@@ -41,7 +42,7 @@ def analyze(
             from google import genai
             client = genai.Client(api_key=key)
 
-            prompt = _build_analysis_prompt(full_text, segments)
+            prompt = _build_analysis_prompt(full_text, segments, intro_gemini)
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -65,12 +66,21 @@ def analyze(
     return _empty_analysis()
 
 
-def _build_analysis_prompt(text: str, segments: list[dict]) -> str:
+def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool = True) -> str:
     """Построить промпт для анализа."""
     timings = "\n".join(
         f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
         for s in segments[:200]
     )
+
+    intro_section = ""
+    if intro_gemini:
+        intro_section = """
+ИНТРО:
+- Это анимация логотипа (3-4 сек), без голоса
+- Определи лучший момент для показа — любое подходящее место в видео
+- Если не видишь подходящего момента — верни start=0, end=0
+"""
 
     return f"""Ты — опытный контент-стратег для YouTube Shorts.
 
@@ -84,23 +94,7 @@ def _build_analysis_prompt(text: str, segments: list[dict]) -> str:
 - title: заголовок (до 40 символов)
 - description: описание + CTA
 - hashtags: 5-8 хештегов
-
-ИНТРО:
-- Это анимация логотипа (3-4 сек), без голоса
-- Определи лучший момент для показа — любое подходящее место в видео
-- Если неเหишь подходящего момента — верни start=0, end=0
-
-MIDDLE:
-- Вставки между основной речью (5-15 сек)
-- Определи где уместно показать дополнительный контент
-
-OUTRO:
-- Концовка видео (3-5 сек)
-- Определи где логично завершить
-
-СИЛЬНЫЕ СЛОВА:
-- 5-10 слов для визуального выделения (капс, цвет)
-
+{intro_section}
 Текст с таймингами:
 {timings}
 

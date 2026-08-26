@@ -58,6 +58,7 @@ class Settings:
     whisper_model: str = "base"
     voice_enhance: bool = True
     add_bgm: bool = True
+    intro_gemini: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
