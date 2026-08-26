@@ -17,7 +17,6 @@ class PipelineContext:
     # Входные данные
     audio_path: str = ""
     broll_horizontal: str = ""
-    broll_vertical: str = ""
     bgm_folder: str = ""
     intro_middle_outro_folder: str = ""
     vertical_background: str = ""

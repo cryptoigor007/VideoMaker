@@ -183,7 +183,6 @@ class TestPipelineFlow(unittest.TestCase):
         ctx = PipelineContext(
             audio_path="/tmp/test.mp3",
             broll_horizontal="/tmp/broll_h",
-            broll_vertical="/tmp/broll_v",
             output_folder="/tmp/out",
             vertical_background="/tmp/bg.jpg",
         )

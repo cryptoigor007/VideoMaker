@@ -281,12 +281,7 @@ class App:
         )
 
         broll_frame = self._add_section(left_col, "B-roll видео")
-        row1 = ttk.Frame(broll_frame)
-        row1.pack(fill=tk.X, pady=(0, 4))
-        self._add_browse_row(row1, "Горизонтальный:", "broll_h_var", "dir")
-        row2 = ttk.Frame(broll_frame)
-        row2.pack(fill=tk.X)
-        self._add_browse_row(row2, "Вертикальный:  ", "broll_v_var", "dir")
+        self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
 
         self._add_file_section(
             left_col, "Фон для вертикального видео",
@@ -482,9 +477,6 @@ class App:
     def _choose_broll_h(self) -> None:
         self._browse_dir(self.broll_h_var, "broll_h_var")
 
-    def _choose_broll_v(self) -> None:
-        self._browse_dir(self.broll_v_var, "broll_v_var")
-
     def _choose_bg(self) -> None:
         self._browse_file(self.bg_var, "bg_var", [("Изображения/Видео", "*.jpg *.jpeg *.png *.mp4 *.mov")])
 
@@ -547,7 +539,6 @@ class App:
         log.info("[GUI] Сбор настроек из GUI...")
         self.settings.audio_path = self.audio_var.get()
         self.settings.broll_horizontal = self.broll_h_var.get()
-        self.settings.broll_vertical = self.broll_v_var.get()
         self.settings.vertical_background = self.bg_var.get()
         self.settings.bgm_folder = self.bgm_var.get()
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
@@ -558,7 +549,6 @@ class App:
 
         log.info(f"[GUI] audio_path = {self.settings.audio_path}")
         log.info(f"[GUI] broll_horizontal = {self.settings.broll_horizontal}")
-        log.info(f"[GUI] broll_vertical = {self.settings.broll_vertical}")
         log.info(f"[GUI] vertical_background = {self.settings.vertical_background}")
         log.info(f"[GUI] bgm_folder = {self.settings.bgm_folder}")
         log.info(f"[GUI] imo_folder = {self.settings.intro_middle_outro_folder}")
@@ -630,7 +620,6 @@ class App:
             ctx = PipelineContext(
                 audio_path=self.settings.audio_path,
                 broll_horizontal=self.settings.broll_horizontal,
-                broll_vertical=self.settings.broll_vertical,
                 bgm_folder=self.settings.bgm_folder,
                 intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
                 vertical_background=self.settings.vertical_background,
