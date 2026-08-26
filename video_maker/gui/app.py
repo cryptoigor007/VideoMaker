@@ -249,33 +249,19 @@ class App:
         """Построить интерфейс."""
         log.info("[GUI] _build_ui(): начало построения интерфейса")
 
-        # Скроллируемый контейнер
-        canvas = tk.Canvas(self.root, bg=COLORS["bg"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=canvas.yview)
-        self.main_frame = ttk.Frame(canvas, padding=16)
+        # Главный контейнер — بدون скролла, лог занимает остаток
+        self.main_frame = ttk.Frame(self.root, padding=16)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.main_frame.bind(
-            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        # Заголовок
+        # === Заголовок ===
         header = ttk.Frame(self.main_frame)
-        header.pack(fill=tk.X, pady=(0, 16))
+        header.pack(fill=tk.X, pady=(0, 12))
         ttk.Label(header, text="ВидеоМейкер", style="Title.TLabel").pack(anchor="w")
         ttk.Label(header, text="Создание видео из аудио + B-roll", style="Subtitle.TLabel").pack(anchor="w", pady=(2, 0))
 
-        # Колонки
+        # === Колонки (фиксированная высота) ===
         columns = ttk.Frame(self.main_frame)
-        columns.pack(fill=tk.BOTH, expand=True)
+        columns.pack(fill=tk.X)
         columns.columnconfigure(0, weight=3)
         columns.columnconfigure(1, weight=2)
 
@@ -285,7 +271,8 @@ class App:
         right_col = ttk.Frame(columns)
         right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
-        # Левая колонка
+        # ─── Левая колонка ──────────────────────────────────────────────
+
         self._add_file_section(
             left_col, "Аудио",
             [("Файл:", "audio_var", "file", [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg")])],
@@ -295,7 +282,6 @@ class App:
         row1 = ttk.Frame(broll_frame)
         row1.pack(fill=tk.X, pady=(0, 4))
         self._add_browse_row(row1, "Горизонтальный:", "broll_h_var", "dir")
-
         row2 = ttk.Frame(broll_frame)
         row2.pack(fill=tk.X)
         self._add_browse_row(row2, "Вертикальный:  ", "broll_v_var", "dir")
@@ -324,17 +310,21 @@ class App:
         row1 = ttk.Frame(cover_frame)
         row1.pack(fill=tk.X, pady=(0, 4))
         self._add_browse_row(row1, "Горизонтальная:", "cover_h_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
-
         row2 = ttk.Frame(cover_frame)
         row2.pack(fill=tk.X)
         self._add_browse_row(row2, "Вертикальная:  ", "cover_v_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
 
-        # Правая колонка
+        # ─── Правая колонка ─────────────────────────────────────────────
+
+        # Название серии — ПРОСТОЙ ВВОД С ПОДСКАЗКОЙ
         series_frame = self._add_section(right_col, "Название серии")
         self.series_var = tk.StringVar()
         entry = ttk.Entry(series_frame, textvariable=self.series_var, font=("SF Pro Text", 11))
         entry.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(series_frame, text="Например: Выпуск 01 — Основы монтажа",
+                  font=("SF Pro Text", 9)).pack(anchor="w", pady=(4, 0))
 
+        # Модель Gemini
         model_frame = self._add_section(right_col, "Модель Gemini")
         self.model_var = tk.StringVar(value="gemini-3.6-flash")
         model_combo = ttk.Combobox(
@@ -346,37 +336,40 @@ class App:
         )
         model_combo.pack(fill=tk.X, pady=(4, 0))
 
+        # Настройки аудио
         audio_settings = self._add_section(right_col, "Настройки аудио")
         self.voice_enhance_var = tk.BooleanVar(value=True)
         self.add_bgm_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(audio_settings, text="Усилить голос", variable=self.voice_enhance_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
 
+        # Этапы обработки — ВЫРОВНЕНЫ С ОБЛОЖКАМИ
         checks_frame = self._add_section(right_col, "Этапы обработки")
+        checks_frame.configure(padding=8)
 
         for label, prefix, defaults in [
-            ("Горизонтальный", "h", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
-            ("Вертикальный",   "v", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
-            ("Shorts",         "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
+            ("16:9 Гориз.", "h", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
+            ("9:16 Вертик.", "v", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
+            ("Shorts",      "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
         ]:
             row = ttk.Frame(checks_frame)
             row.pack(fill=tk.X, pady=(0, 6))
-            ttk.Label(row, text=label, width=14, style="Section.TLabel").pack(side=tk.LEFT)
+            ttk.Label(row, text=label, width=12, style="Section.TLabel").pack(side=tk.LEFT)
 
             for key, default in defaults.items():
                 var = tk.BooleanVar(value=default)
                 setattr(self, f"{prefix}_{key}", var)
                 ttk.Checkbutton(row, text=key.capitalize(), variable=var).pack(side=tk.LEFT, padx=2)
 
-        # Кнопка запуска
+        # === Кнопка запуска ===
         btn_frame = ttk.Frame(self.main_frame)
-        btn_frame.pack(fill=tk.X, pady=(16, 8))
+        btn_frame.pack(fill=tk.X, pady=(12, 8))
         self.start_btn = ttk.Button(
             btn_frame, text="  СОЗДАТЬ ВИДЕО  ", style="Accent.TButton", command=self._start
         )
         self.start_btn.pack()
 
-        # Прогресс
+        # === Прогресс ===
         progress_frame = ttk.Frame(self.main_frame)
         progress_frame.pack(fill=tk.X, pady=(0, 8))
 
@@ -393,13 +386,16 @@ class App:
         self.time_label = ttk.Label(progress_frame, text="", style="Progress.TLabel", width=12)
         self.time_label.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Лог
+        # === Лог — ЗАНИМАЕТ ВСЁ ОСТАВШЕЕСЯ МЕСТО ===
         log_frame = self._add_section(self.main_frame, "Лог")
         log_frame.configure(padding=4)
+        # Лог растягивается на весь остаток высоты
+        self.main_frame.columnconfigure(0, weight=1)
+        self.main_frame.rowconfigure(self.main_frame.grid_size()[0] - 1, weight=1)
 
         self.log_text = tk.Text(
             log_frame,
-            height=12,
+            height=10,
             state=tk.DISABLED,
             wrap=tk.WORD,
             bg=COLORS["log_bg"],
@@ -412,12 +408,12 @@ class App:
             padx=8,
             pady=8,
         )
-        scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
+        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+        log_scrollbar.pack(side="right", fill="y")
         self.log_text.pack(fill="both", expand=True)
 
-        log.info(f"[GUI] _build_ui(): интерфейс построен — {len(self.main_frame.winfo_children())} виджетов")
+        log.info(f"[GUI] _build_ui(): интерфейс построен")
 
     # ─── Хелперы ──────────────────────────────────────────────────────────
 
