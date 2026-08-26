@@ -9,6 +9,18 @@ import tempfile
 log = logging.getLogger(__name__)
 
 
+def _ffmpeg_bin() -> str:
+    """ffmpeg с поддержкой libass."""
+    try:
+        import imageio_ffmpeg
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+        if path and os.path.exists(path):
+            return str(path)
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
 def collect_video_files(folder: str) -> list[str]:
     """Собрать все видеофайлы из папки."""
     exts = (".mp4", ".mov", ".avi", ".mkv", ".webm")
@@ -34,8 +46,9 @@ def fit_video_to_duration(
         raise FileNotFoundError("Нет видеофайлов для склейки")
 
     # Простой fallback: берём первый файл и обрезаем
+    ffmpeg = _ffmpeg_bin()
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-i", video_files[0],
         "-t", str(target_duration),
         "-c:v", "libx264", "-preset", "fast",
@@ -65,6 +78,8 @@ def vstack_video_image(
     _log = log_fn or log.info
     _log("[ВИДЕО] Создание вертикального видео (vstack)")
 
+    ffmpeg = _ffmpeg_bin()
+
     # Проверяем расширение фона
     ext = os.path.splitext(background_path)[1].lower()
     if ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif"):
@@ -80,7 +95,7 @@ def vstack_video_image(
         )
 
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-i", video_path,
             "-i", background_path,
             "-filter_complex", filter_complex,
@@ -98,7 +113,7 @@ def vstack_video_image(
         )
 
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg, "-y",
             "-i", video_path,
             "-i", background_path,
             "-filter_complex", filter_complex,
@@ -123,8 +138,9 @@ def cut_segment(
     _log = log_fn or log.info
     _log(f"[ВИДЕО] Обрезка: {start:.1f} — {start + duration:.1f}")
 
+    ffmpeg = _ffmpeg_bin()
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),

@@ -39,6 +39,7 @@ class PipelineContext:
     # Настройки
     gemini_model: str = "gemini-2.5-flash"
     gemini_api_key: str = ""
+    gemini_api_keys: list = field(default_factory=list)
     whisper_model: str = "base"
     voice_enhance: bool = True
     add_bgm: bool = True
@@ -139,6 +140,7 @@ class GeminiStage(Stage):
         ctx.analysis = analyze(
             ctx.transcription,
             api_key=ctx.gemini_api_key,
+            api_keys=ctx.gemini_api_keys,
             model_name=ctx.gemini_model,
             log_fn=ctx.log,
         )

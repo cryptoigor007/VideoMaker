@@ -127,6 +127,7 @@ class TestShortsCutter(unittest.TestCase):
         cutter = ShortsCutter()
         with patch("video_maker.engines.video.cut_segment") as mock_cut, \
              patch("video_maker.engines.subtitles.burn_subtitles") as mock_sub, \
+             patch("video_maker.engines.audio.probe_duration", return_value=60.0), \
              patch("os.makedirs"), \
              patch("os.path.exists", return_value=True), \
              patch.object(cutter, "_write_metadata"):
@@ -221,6 +222,7 @@ class TestPipelineFlow(unittest.TestCase):
         sc = ShortsCutter()
         with patch("video_maker.engines.video.cut_segment") as mock_cut, \
              patch("video_maker.engines.subtitles.burn_subtitles") as mock_sub, \
+             patch("video_maker.engines.audio.probe_duration", return_value=60.0), \
              patch("os.makedirs"), \
              patch("os.path.exists", return_value=True), \
              patch.object(sc, "_write_metadata"):

@@ -41,10 +41,20 @@ class ShortsCutter(Stage):
         """Создать один Short из промежуточного вертикального видео."""
         from ..engines.video import cut_segment
         from ..engines.subtitles import burn_subtitles
+        from ..engines.audio import probe_duration
 
         start = clip.get("start", 0)
         end = clip.get("end", 0)
         duration = end - start
+
+        # Проверяем длительность видео и ограничиваем клип
+        video_duration = probe_duration(ctx.master_vertical)
+        if start >= video_duration:
+            ctx.log(f"[SHORTS] Клип {index}: start ({start:.1f}) >= длительность видео ({video_duration:.1f}), пропускаем")
+            return ctx.master_vertical
+        if end > video_duration:
+            end = video_duration
+            duration = end - start
 
         # Обрезаем из master_9x16 (промежуточное!)
         cut_path = os.path.join(output_dir, f"short_{index:03d}_cut.mp4")

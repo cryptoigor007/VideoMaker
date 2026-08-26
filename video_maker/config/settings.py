@@ -14,6 +14,7 @@ class Settings:
 
     # API
     gemini_api_key: str = ""
+    gemini_api_keys: list = field(default_factory=list)
     gemini_model: str = "gemini-3.6-flash"
 
     # Пути
@@ -62,9 +63,12 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         """Загрузить настройки из .env."""
+        keys_str = os.getenv("GEMINI_API_KEYS", "")
+        keys = [k.strip() for k in keys_str.split(",") if k.strip()] if keys_str else []
         return cls(
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
-            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            gemini_api_keys=keys,
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             broll_horizontal=os.getenv("BROLL_HORIZONTAL_FOLDER", ""),
             broll_vertical=os.getenv("BROLL_VERTICAL_FOLDER", ""),
             bgm_folder=os.getenv("BGM_FOLDER", ""),

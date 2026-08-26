@@ -11,14 +11,21 @@ log = logging.getLogger(__name__)
 def analyze(
     transcription: dict,
     api_key: str = "",
-    model_name: str = "gemini-2.5-flash",
+    api_keys: list[str] | None = None,
+    model_name: str = "gemini-3.6-flash",
     log_fn=None,
 ) -> dict:
-    """Единый вызов Gemini → пакет ANALYSIS."""
+    """Единый вызов Gemini → пакет ANALYSIS. Поддержка ротации ключей."""
     _log = log_fn or log.info
     _log(f"[GEMINI] Анализ моделью {model_name}")
 
-    if not api_key:
+    keys = []
+    if api_keys:
+        keys = [k.strip() for k in api_keys if k.strip()]
+    if api_key and api_key not in keys:
+        keys.insert(0, api_key)
+
+    if not keys:
         _log("[GEMINI] API ключ не задан, пропускаем")
         return _empty_analysis()
 
@@ -27,27 +34,35 @@ def analyze(
         _log("[GEMINI] Нет сегментов для анализа")
         return _empty_analysis()
 
-    # Собираем текст
     full_text = " ".join(s.get("text", "") for s in segments)
 
-    try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
+    for attempt, key in enumerate(keys):
+        try:
+            from google import genai
+            client = genai.Client(api_key=key)
 
-        prompt = _build_analysis_prompt(full_text, segments)
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-        )
+            prompt = _build_analysis_prompt(full_text, segments)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
 
-        raw = response.text
-        analysis = _parse_analysis(raw, segments)
-        _log(f"[GEMINI] Получено {len(analysis.get('clips_for_shorts', []))} клипов для Shorts")
-        return analysis
+            raw = response.text
+            analysis = _parse_analysis(raw, segments)
+            _log(f"[GEMINI] Получено {len(analysis.get('clips_for_shorts', []))} клипов для Shorts")
+            return analysis
 
-    except Exception as e:
-        _log(f"[GEMINI] Ошибка: {e}")
-        return _empty_analysis()
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                _log(f"[GEMINI] Ключ [{attempt+1}/{len(keys)}] исчерпан, пробуем следующий...")
+                continue
+            else:
+                _log(f"[GEMINI] Ошибка: {e}")
+                return _empty_analysis()
+
+    _log("[GEMINI] Все ключи исчерпаны")
+    return _empty_analysis()
 
 
 def _build_analysis_prompt(text: str, segments: list[dict]) -> str:

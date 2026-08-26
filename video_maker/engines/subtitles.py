@@ -29,6 +29,18 @@ def _ass_color(hex_color: str, fallback: str = "&H00FFFFFF&") -> str:
         return fallback
 
 
+def _ffmpeg_bin() -> str:
+    """ffmpeg с поддержкой libass."""
+    try:
+        import imageio_ffmpeg
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+        if path and os.path.exists(path):
+            return str(path)
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
 def burn_subtitles(
     video_path: str,
     analysis: dict,
@@ -99,9 +111,10 @@ def burn_subtitles(
     # Генерируем .ass файл
     ass_path = _generate_ass(events, output_path)
 
-    # Рендерим через ffmpeg+libass
+    # Рендерим через ffmpeg+libass (imageio_ffmpeg)
+    ffmpeg = _ffmpeg_bin()
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-i", video_path,
         "-vf", f"ass={ass_path}",
         "-c:v", "libx264", "-preset", "fast",
