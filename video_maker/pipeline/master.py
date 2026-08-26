@@ -70,6 +70,6 @@ class MasterBuilder(Stage):
             video_path=ctx.master_horizontal,
             background_path=ctx.vertical_background,
             output_path=output_path,
-            log=ctx.log,
+            log_fn=ctx.log,
         )
         return output_path

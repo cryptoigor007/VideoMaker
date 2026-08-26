@@ -53,7 +53,7 @@ class ShortsCutter(Stage):
             start=start,
             duration=duration,
             output_path=cut_path,
-            log=ctx.log,
+            log_fn=ctx.log,
         )
 
         current = cut_path
@@ -68,7 +68,7 @@ class ShortsCutter(Stage):
                 enable_middle=ctx.s_enable_middle,
                 enable_outro=ctx.s_enable_outro,
                 output_dir=output_dir,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         # Добавляем хуки + субтитры
@@ -82,7 +82,7 @@ class ShortsCutter(Stage):
                 enable_subtitles=ctx.s_enable_subtitles,
                 enable_strong_words=ctx.s_enable_strong_words,
                 output_path=final_path,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         # Сохраняем метаданные

@@ -34,7 +34,7 @@ class FinalHorizontal(Stage):
                 enable_middle=ctx.h_enable_middle,
                 enable_outro=ctx.h_enable_outro,
                 output_dir=output_dir,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -47,7 +47,7 @@ class FinalHorizontal(Stage):
                 enable_subtitles=ctx.h_enable_subtitles,
                 enable_strong_words=ctx.h_enable_strong_words,
                 output_path=output_path,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         ctx.final_horizontal = current
@@ -81,7 +81,7 @@ class FinalVertical(Stage):
                 enable_middle=ctx.v_enable_middle,
                 enable_outro=ctx.v_enable_outro,
                 output_dir=output_dir,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -94,7 +94,7 @@ class FinalVertical(Stage):
                 enable_subtitles=ctx.v_enable_subtitles,
                 enable_strong_words=ctx.v_enable_strong_words,
                 output_path=output_path,
-                log=ctx.log,
+                log_fn=ctx.log,
             )
 
         ctx.final_vertical = current
