@@ -251,7 +251,7 @@ class App:
         """Построить интерфейс."""
         log.info("[GUI] _build_ui(): начало построения интерфейса")
 
-        # Главный контейнер — بدون скролла, лог занимает остаток
+        # Главный контейнер
         self.main_frame = ttk.Frame(self.root, padding=16)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -261,9 +261,26 @@ class App:
         ttk.Label(header, text="ВидеоМейкер", style="Title.TLabel").pack(anchor="w")
         ttk.Label(header, text="Создание видео из аудио + B-roll", style="Subtitle.TLabel").pack(anchor="w", pady=(2, 0))
 
-        # === Колонки (фиксированная высота) ===
-        columns = ttk.Frame(self.main_frame)
-        columns.pack(fill=tk.X)
+        # === Вкладки ===
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # Вкладка 1: Основные настройки
+        self.tab_main = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_main, text="  Основные  ")
+        self._build_main_tab(self.tab_main)
+
+        # Вкладка 2: Intro / Middle / Outro
+        self.tab_imo = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_imo, text="  Intro / Middle / Outro  ")
+        self._build_imo_tab(self.tab_imo)
+
+        log.info("[GUI] _build_ui(): интерфейс построен")
+
+    def _build_main_tab(self, parent) -> None:
+        """Вкладка основных настроек."""
+        columns = ttk.Frame(parent)
+        columns.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         columns.columnconfigure(0, weight=3)
         columns.columnconfigure(1, weight=2)
 
@@ -298,12 +315,7 @@ class App:
             [("Папка:", "output_var", "dir", [])],
         )
 
-        self._add_file_section(
-            left_col, "Intro / Middle / Outro",
-            [("Папка:", "imo_folder_var", "dir", [])],
-        )
-
-        # Обложки — РАСТЯНУТЫ ДО НИЗА
+        # Обложки
         cover_frame = self._add_section(left_col, "Обложки", expand=True)
         row1 = ttk.Frame(cover_frame)
         row1.pack(fill=tk.X, pady=(0, 4))
@@ -335,7 +347,7 @@ class App:
         ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
 
-        # Этапы обработки — ВЫРОВНЕНЫ С ОБЛОЖКАМИ
+        # Этапы обработки
         checks_frame = self._add_section(right_col, "Этапы обработки")
         checks_frame.configure(padding=8)
 
@@ -353,7 +365,7 @@ class App:
                 setattr(self, f"{prefix}_{key}", var)
                 ttk.Checkbutton(row, text=key.capitalize(), variable=var).pack(side=tk.LEFT, padx=2)
 
-        # Название серии — ВНИЗУ, РАСТЯНУТО ДО НИЗА ОБЛОЖЕК
+        # Название серии
         series_frame = self._add_section(right_col, "Название серии", expand=True)
         series_frame.configure(padding=8)
         self.series_var = tk.StringVar()
@@ -394,7 +406,7 @@ class App:
         self.time_label = ttk.Label(progress_frame, text="", style="Progress.TLabel", width=12)
         self.time_label.pack(side=tk.LEFT, padx=(8, 0))
 
-        # === Лог — ЗАНИМАЕТ ВСЁ ОСТАВШЕЕСЯ МЕСТО ===
+        # === Лог ===
         log_frame = self._add_section(self.main_frame, "Лог", expand=True)
         log_frame.configure(padding=4)
 
@@ -418,7 +430,91 @@ class App:
         log_scrollbar.pack(side="right", fill="y")
         self.log_text.pack(fill="both", expand=True)
 
-        log.info(f"[GUI] _build_ui(): интерфейс построен")
+    def _build_imo_tab(self, parent) -> None:
+        """Вкладка Intro / Middle / Outro для каждого формата."""
+        scroll = ttk.Frame(parent)
+        scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        for section_title, prefix in [
+            ("16:9 Горизонтальное видео", "h"),
+            ("9:16 Вертикальное видео", "v"),
+            ("Shorts", "s"),
+        ]:
+            section = self._add_section(scroll, section_title)
+
+            # Intro
+            intro_frame = ttk.Frame(section)
+            intro_frame.pack(fill=tk.X, pady=(0, 8))
+            ttk.Label(intro_frame, text="Intro:", style="Section.TLabel", width=8).pack(side=tk.LEFT)
+            imo_folder = getattr(self, "imo_folder_var", None)
+            intro_path_var = tk.StringVar()
+            setattr(self, f"{prefix}_intro_path", intro_path_var)
+            ttk.Entry(intro_frame, textvariable=intro_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+            ttk.Button(intro_frame, text="...", width=3, command=lambda v=intro_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+
+            intro_dur_frame = ttk.Frame(section)
+            intro_dur_frame.pack(fill=tk.X, pady=(0, 4))
+            ttk.Label(intro_dur_frame, text="Длительность:", width=12).pack(side=tk.LEFT)
+            intro_dur_var = tk.StringVar(value="3")
+            setattr(self, f"{prefix}_intro_duration", intro_dur_var)
+            ttk.Entry(intro_dur_frame, textvariable=intro_dur_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Label(intro_dur_frame, text="сек").pack(side=tk.LEFT)
+
+            intro_pos_var = tk.StringVar(value="start")
+            setattr(self, f"{prefix}_intro_position", intro_pos_var)
+            ttk.Radiobutton(intro_dur_frame, text="В начале", variable=intro_pos_var, value="start").pack(side=tk.LEFT, padx=(12, 4))
+            ttk.Radiobutton(intro_dur_frame, text="Время:", variable=intro_pos_var, value="custom").pack(side=tk.LEFT, padx=(0, 4))
+            intro_custom_var = tk.StringVar(value="0")
+            setattr(self, f"{prefix}_intro_custom_time", intro_custom_var)
+            ttk.Entry(intro_dur_frame, textvariable=intro_custom_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT)
+            ttk.Label(intro_dur_frame, text="сек").pack(side=tk.LEFT)
+
+            # Middle
+            mid_frame = ttk.Frame(section)
+            mid_frame.pack(fill=tk.X, pady=(0, 8))
+            ttk.Label(mid_frame, text="Middle:", style="Section.TLabel", width=8).pack(side=tk.LEFT)
+            mid_path_var = tk.StringVar()
+            setattr(self, f"{prefix}_mid_path", mid_path_var)
+            ttk.Entry(mid_frame, textvariable=mid_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+            ttk.Button(mid_frame, text="...", width=3, command=lambda v=mid_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+
+            mid_pos_var = tk.StringVar(value="middle")
+            setattr(self, f"{prefix}_mid_position", mid_pos_var)
+            mid_pos_frame = ttk.Frame(section)
+            mid_pos_frame.pack(fill=tk.X, pady=(0, 4))
+            ttk.Label(mid_pos_frame, text="Позиция:", width=12).pack(side=tk.LEFT)
+            ttk.Radiobutton(mid_pos_frame, text="По центру", variable=mid_pos_var, value="middle").pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Radiobutton(mid_pos_frame, text="Время:", variable=mid_pos_var, value="custom").pack(side=tk.LEFT, padx=(0, 4))
+            mid_custom_var = tk.StringVar(value="0")
+            setattr(self, f"{prefix}_mid_custom_time", mid_custom_var)
+            ttk.Entry(mid_pos_frame, textvariable=mid_custom_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT)
+            ttk.Label(mid_pos_frame, text="сек").pack(side=tk.LEFT)
+
+            # Outro
+            outro_frame = ttk.Frame(section)
+            outro_frame.pack(fill=tk.X, pady=(0, 8))
+            ttk.Label(outro_frame, text="Outro:", style="Section.TLabel", width=8).pack(side=tk.LEFT)
+            outro_path_var = tk.StringVar()
+            setattr(self, f"{prefix}_outro_path", outro_path_var)
+            ttk.Entry(outro_frame, textvariable=outro_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+            ttk.Button(outro_frame, text="...", width=3, command=lambda v=outro_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+
+            outro_dur_frame = ttk.Frame(section)
+            outro_dur_frame.pack(fill=tk.X, pady=(0, 4))
+            ttk.Label(outro_dur_frame, text="Длительность:", width=12).pack(side=tk.LEFT)
+            outro_dur_var = tk.StringVar(value="3")
+            setattr(self, f"{prefix}_outro_duration", outro_dur_var)
+            ttk.Entry(outro_dur_frame, textvariable=outro_dur_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Label(outro_dur_frame, text="сек").pack(side=tk.LEFT)
+
+            outro_pos_var = tk.StringVar(value="end")
+            setattr(self, f"{prefix}_outro_position", outro_pos_var)
+            ttk.Radiobutton(outro_dur_frame, text="В конце", variable=outro_pos_var, value="end").pack(side=tk.LEFT, padx=(12, 4))
+            ttk.Radiobutton(outro_dur_frame, text="Время:", variable=outro_pos_var, value="custom").pack(side=tk.LEFT, padx=(0, 4))
+            outro_custom_var = tk.StringVar(value="0")
+            setattr(self, f"{prefix}_outro_custom_time", outro_custom_var)
+            ttk.Entry(outro_dur_frame, textvariable=outro_custom_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT)
+            ttk.Label(outro_dur_frame, text="сек").pack(side=tk.LEFT)
 
     # ─── Хелперы ──────────────────────────────────────────────────────────
 
