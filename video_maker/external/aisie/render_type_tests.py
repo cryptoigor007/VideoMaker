@@ -10,10 +10,10 @@ from pathlib import Path
 from moviepy import ColorClip, CompositeVideoClip
 
 from advanced_text_features import AdvancedTextEngine
-from aisie.classifier import HookClassifier
-from aisie.placement import PROFILES, Obstacles, PlacementEngine
-from aisie.timing import TimingEngine
-from aisie.validate import StyleValidator
+from .classifier import HookClassifier
+from .placement import PROFILES, Obstacles, PlacementEngine
+from .timing import TimingEngine
+from .validate import StyleValidator
 from text_overlay_engine import _resolve_font_path
 from text_style_utils import HOOK_TYPES, VISUAL_WEIGHTS
 

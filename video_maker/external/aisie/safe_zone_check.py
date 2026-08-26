@@ -10,8 +10,8 @@ from moviepy import ColorClip, CompositeVideoClip
 from PIL import Image, ImageDraw, ImageFont
 
 from advanced_text_features import AdvancedTextEngine
-from aisie.placement import PROFILES, Obstacles, PlacementEngine
-from aisie.timing import TimingEngine
+from .placement import PROFILES, Obstacles, PlacementEngine
+from .timing import TimingEngine
 from text_style_utils import HOOK_TYPES, VISUAL_WEIGHTS
 
 OUT = Path(__file__).resolve().parent.parent / "asie_safezone_tests"

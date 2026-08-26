@@ -111,7 +111,7 @@ class HookClassifier:
     def classify_transcript(self, segments: list[dict],
                             scorer=None) -> list[HookClassification]:
         """Прогоняет транскрипт [{text,start,end}] через scoring+classification."""
-        from aisie.scoring import AttentionScorer  # локальный импорт — без цикла
+        from .scoring import AttentionScorer  # локальный импорт — без цикла
         scorer = scorer or AttentionScorer()
         scored = scorer.score_transcript(segments)
         out = []

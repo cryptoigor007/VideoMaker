@@ -20,11 +20,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 
-from aisie.classifier import HookClassification, HookClassifier
-from aisie.placement import PROFILES, Obstacles, PlacementEngine
-from aisie.scoring import AttentionResult, AttentionScorer
-from aisie.timing import TimingEngine
-from aisie.validate import StyleValidator
+from .classifier import HookClassification, HookClassifier
+from .placement import PROFILES, Obstacles, PlacementEngine
+from .scoring import AttentionResult, AttentionScorer
+from .timing import TimingEngine
+from .validate import StyleValidator
 
 HOOK_THRESHOLD = 76          # accent и выше становятся хуками
 WEAK_FIRST_PHRASE = 56       # раздел 22: ниже — «visual hook» окно
