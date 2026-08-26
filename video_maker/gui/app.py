@@ -318,25 +318,21 @@ class App:
 
         # ─── Правая колонка ─────────────────────────────────────────────
 
-        # Название серии — МНОГОСТРОЧНЫЙ ВВОД
-        series_frame = self._add_section(right_col, "Названия серий (по одному на строку)")
+        # Название серии — ВЫСОКИЙ ВВОД
+        series_frame = self._add_section(right_col, "Название серии")
         series_frame.configure(padding=8)
-        self.series_text = tk.Text(
+        self.series_var = tk.StringVar()
+        entry = ttk.Entry(
             series_frame,
-            height=6,
-            bg=COLORS["input_bg"],
-            fg=COLORS["input_fg"],
-            insertbackground=COLORS["text"],
-            font=("SF Pro Text", 10),
-            borderwidth=1,
-            relief="solid",
-            padx=6,
-            pady=6,
-            wrap=tk.WORD,
+            textvariable=self.series_var,
+            font=("SF Pro Text", 11),
         )
-        self.series_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
-        self.series_text.insert("1.0", "Выпуск 01\n")
-        self.series_text.configure(state=tk.NORMAL)
+        entry.pack(fill=tk.X, pady=(4, 0), ipady=8)
+        ttk.Label(
+            series_frame,
+            text="Например: Выпуск 01 — Основы монтажа",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(4, 0))
 
         # Модель Gemini
         model_frame = self._add_section(right_col, "Модель Gemini")
@@ -556,7 +552,7 @@ class App:
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
         self.settings.cover_horizontal = self.cover_h_var.get()
         self.settings.cover_vertical = self.cover_v_var.get()
-        self.settings.series_name = self.series_text.get("1.0", tk.END).strip().split("\n")[0]
+        self.settings.series_name = self.series_var.get()
         self.settings.gemini_model = self.model_var.get()
 
         log.info(f"[GUI] audio_path = {self.settings.audio_path}")
