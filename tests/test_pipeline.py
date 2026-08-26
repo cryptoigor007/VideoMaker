@@ -20,7 +20,7 @@ class TestSettings(unittest.TestCase):
     def test_settings_defaults(self):
         """Настройки по умолчанию."""
         s = Settings()
-        assert s.gemini_model == "gemini-2.5-flash"
+        assert s.gemini_model == "gemini-3.6-flash"
         assert s.h_enable_hooks is True
         assert s.v_enable_subtitles is True
         assert s.s_enable_intro is False

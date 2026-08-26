@@ -113,11 +113,11 @@ class App:
         ttk.Entry(settings_frame, textvariable=self.series_var, width=30).pack(side=tk.LEFT, padx=5)
 
         ttk.Label(settings_frame, text="Модель Gemini:").pack(side=tk.LEFT, padx=(20, 0))
-        self.model_var = tk.StringVar(value="gemini-2.5-flash")
+        self.model_var = tk.StringVar(value="gemini-3.6-flash")
         model_combo = ttk.Combobox(
             settings_frame,
             textvariable=self.model_var,
-            values=["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
+            values=["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.6-flash-lite"],
             state="readonly",
             width=25,
         )
