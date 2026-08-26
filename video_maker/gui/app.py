@@ -271,14 +271,20 @@ class App:
             self.log_text.insert(tk.END, msg + "\n")
             self.log_text.see(tk.END)
             self.log_text.configure(state=tk.DISABLED)
-        self.root.after(0, _write)
+        try:
+            self.root.after(0, _write)
+        except RuntimeError:
+            pass
 
     def _set_progress(self, value: float) -> None:
         """Потокобезопасное обновление прогресса."""
         def _update():
             self.progress_var.set(value)
             self.progress_label.configure(text=f"{value:.0f}%")
-        self.root.after(0, _update)
+        try:
+            self.root.after(0, _update)
+        except RuntimeError:
+            pass
 
     # --- Запуск пайплайна ---
 
