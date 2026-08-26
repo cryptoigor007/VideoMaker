@@ -308,7 +308,8 @@ class App:
             [("Папка:", "imo_folder_var", "dir", [])],
         )
 
-        cover_frame = self._add_section(left_col, "Обложки")
+        # Обложки — РАСТЯНУТЫ ДО НИЗА
+        cover_frame = self._add_section(left_col, "Обложки", expand=True)
         row1 = ttk.Frame(cover_frame)
         row1.pack(fill=tk.X, pady=(0, 4))
         self._add_browse_row(row1, "Горизонтальная:", "cover_h_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
@@ -317,22 +318,6 @@ class App:
         self._add_browse_row(row2, "Вертикальная:  ", "cover_v_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
 
         # ─── Правая колонка ─────────────────────────────────────────────
-
-        # Название серии — ВЫСОКИЙ ВВОД
-        series_frame = self._add_section(right_col, "Название серии")
-        series_frame.configure(padding=8)
-        self.series_var = tk.StringVar()
-        entry = ttk.Entry(
-            series_frame,
-            textvariable=self.series_var,
-            font=("SF Pro Text", 11),
-        )
-        entry.pack(fill=tk.X, pady=(4, 0), ipady=8)
-        ttk.Label(
-            series_frame,
-            text="Например: Выпуск 01 — Основы монтажа",
-            font=("SF Pro Text", 9),
-        ).pack(anchor="w", pady=(4, 0))
 
         # Модель Gemini
         model_frame = self._add_section(right_col, "Модель Gemini")
@@ -370,6 +355,22 @@ class App:
                 var = tk.BooleanVar(value=default)
                 setattr(self, f"{prefix}_{key}", var)
                 ttk.Checkbutton(row, text=key.capitalize(), variable=var).pack(side=tk.LEFT, padx=2)
+
+        # Название серии — ВНИЗУ, РАСТЯНУТО ДО НИЗА ОБЛОЖЕК
+        series_frame = self._add_section(right_col, "Название серии", expand=True)
+        series_frame.configure(padding=8)
+        self.series_var = tk.StringVar()
+        entry = ttk.Entry(
+            series_frame,
+            textvariable=self.series_var,
+            font=("SF Pro Text", 11),
+        )
+        entry.pack(fill=tk.X, pady=(4, 0), ipady=8)
+        ttk.Label(
+            series_frame,
+            text="Например: Выпуск 01 — Основы монтажа",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(4, 0))
 
         # === Кнопка запуска ===
         btn_frame = ttk.Frame(self.main_frame)
