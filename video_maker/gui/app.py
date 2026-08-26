@@ -275,6 +275,55 @@ class App:
         self.notebook.add(self.tab_imo, text="  Intro / Middle / Outro  ")
         self._build_imo_tab(self.tab_imo)
 
+        # === Кнопка запуска ===
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X, pady=(12, 8))
+        self.start_btn = ttk.Button(
+            btn_frame, text="  СОЗДАТЬ ВИДЕО  ", style="Accent.TButton", command=self._start
+        )
+        self.start_btn.pack()
+
+        # === Прогресс ===
+        progress_frame = ttk.Frame(self.main_frame)
+        progress_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = ttk.Progressbar(
+            progress_frame, variable=self.progress_var, maximum=100,
+            style="Custom.Horizontal.TProgressbar",
+        )
+        self.progress_bar.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 12))
+
+        self.progress_label = ttk.Label(progress_frame, text="0%", style="Progress.TLabel", width=6)
+        self.progress_label.pack(side=tk.LEFT)
+
+        self.time_label = ttk.Label(progress_frame, text="", style="Progress.TLabel", width=12)
+        self.time_label.pack(side=tk.LEFT, padx=(8, 0))
+
+        # === Лог ===
+        log_frame = self._add_section(self.main_frame, "Лог", expand=True)
+        log_frame.configure(padding=4)
+
+        self.log_text = tk.Text(
+            log_frame,
+            height=10,
+            state=tk.DISABLED,
+            wrap=tk.WORD,
+            bg=COLORS["log_bg"],
+            fg=COLORS["text_dim"],
+            insertbackground=COLORS["text"],
+            selectbackground=COLORS["primary"],
+            font=("SF Mono", 10),
+            borderwidth=0,
+            highlightthickness=0,
+            padx=8,
+            pady=8,
+        )
+        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+        log_scrollbar.pack(side="right", fill="y")
+        self.log_text.pack(fill="both", expand=True)
+
         log.info("[GUI] _build_ui(): интерфейс построен")
 
     def _build_main_tab(self, parent) -> None:
@@ -380,55 +429,6 @@ class App:
             text="Например: Выпуск 01 — Основы монтажа",
             font=("SF Pro Text", 9),
         ).pack(anchor="w", pady=(4, 0))
-
-        # === Кнопка запуска ===
-        btn_frame = ttk.Frame(self.main_frame)
-        btn_frame.pack(fill=tk.X, pady=(12, 8))
-        self.start_btn = ttk.Button(
-            btn_frame, text="  СОЗДАТЬ ВИДЕО  ", style="Accent.TButton", command=self._start
-        )
-        self.start_btn.pack()
-
-        # === Прогресс ===
-        progress_frame = ttk.Frame(self.main_frame)
-        progress_frame.pack(fill=tk.X, pady=(0, 8))
-
-        self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(
-            progress_frame, variable=self.progress_var, maximum=100,
-            style="Custom.Horizontal.TProgressbar",
-        )
-        self.progress_bar.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 12))
-
-        self.progress_label = ttk.Label(progress_frame, text="0%", style="Progress.TLabel", width=6)
-        self.progress_label.pack(side=tk.LEFT)
-
-        self.time_label = ttk.Label(progress_frame, text="", style="Progress.TLabel", width=12)
-        self.time_label.pack(side=tk.LEFT, padx=(8, 0))
-
-        # === Лог ===
-        log_frame = self._add_section(self.main_frame, "Лог", expand=True)
-        log_frame.configure(padding=4)
-
-        self.log_text = tk.Text(
-            log_frame,
-            height=10,
-            state=tk.DISABLED,
-            wrap=tk.WORD,
-            bg=COLORS["log_bg"],
-            fg=COLORS["text_dim"],
-            insertbackground=COLORS["text"],
-            selectbackground=COLORS["primary"],
-            font=("SF Mono", 10),
-            borderwidth=0,
-            highlightthickness=0,
-            padx=8,
-            pady=8,
-        )
-        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        log_scrollbar.pack(side="right", fill="y")
-        self.log_text.pack(fill="both", expand=True)
 
     def _build_imo_tab(self, parent) -> None:
         """Вкладка Intro / Middle / Outro для каждого формата."""
