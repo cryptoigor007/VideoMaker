@@ -78,6 +78,15 @@ class App:
         ttk.Entry(bgm_frame, textvariable=self.bgm_var, width=50).pack(side=tk.LEFT, padx=5)
         ttk.Button(bgm_frame, text="Выбрать", command=self._choose_bgm).pack(side=tk.LEFT)
 
+        # === Секция: Вывод ===
+        output_frame = ttk.LabelFrame(main_frame, text="Папка вывода", padding=5)
+        output_frame.pack(fill=tk.X, pady=(0, 5))
+
+        self.output_var = tk.StringVar()
+        ttk.Label(output_frame, text="Папка:").pack(side=tk.LEFT)
+        ttk.Entry(output_frame, textvariable=self.output_var, width=50).pack(side=tk.LEFT, padx=5)
+        ttk.Button(output_frame, text="Выбрать", command=self._choose_output).pack(side=tk.LEFT)
+
         # === Секция: Intro/Middle/Outro ===
         imo_frame = ttk.LabelFrame(main_frame, text="Intro / Middle / Outro", padding=5)
         imo_frame.pack(fill=tk.X, pady=(0, 5))
@@ -247,6 +256,11 @@ class App:
         if path:
             self.bgm_var.set(path)
 
+    def _choose_output(self) -> None:
+        path = filedialog.askdirectory(title="Выбрать папку вывода")
+        if path:
+            self.output_var.set(path)
+
     def _choose_imo(self) -> None:
         path = filedialog.askdirectory(title="Выбрать папку Intro/Middle/Outro")
         if path:
@@ -337,7 +351,7 @@ class App:
         self.settings.add_bgm = self.add_bgm_var.get()
 
         # Валидация
-        self.settings.output_folder = os.path.dirname(self.settings.audio_path) if self.settings.audio_path else ""
+        self.settings.output_folder = self.output_var.get() or (os.path.dirname(self.settings.audio_path) if self.settings.audio_path else "")
         errors = self.settings.validate()
         if errors:
             messagebox.showerror("Ошибки", "\n".join(errors))
