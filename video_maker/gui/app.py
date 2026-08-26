@@ -50,7 +50,9 @@ class App:
         log.info("[GUI] Создание корневого окна Tk()")
 
         self.root.title("ВидеоМейкер")
-        self.root.geometry("960x780")
+        # Полноэкранное окно по высоте
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"960x{screen_h - 60}")
         self.root.minsize(860, 680)
         self.root.configure(bg=COLORS["bg"])
         log.info("[GUI] Окно настроено: 960x780, min 860x680")
@@ -316,13 +318,14 @@ class App:
 
         # ─── Правая колонка ─────────────────────────────────────────────
 
-        # Название серии — ПРОСТОЙ ВВОД С ПОДСКАЗКОЙ
+        # Название серии — ВЫСОКАЯ СЕКЦИЯ
         series_frame = self._add_section(right_col, "Название серии")
+        series_frame.configure(padding=12)
         self.series_var = tk.StringVar()
-        entry = ttk.Entry(series_frame, textvariable=self.series_var, font=("SF Pro Text", 11))
-        entry.pack(fill=tk.X, pady=(4, 0))
+        entry = ttk.Entry(series_frame, textvariable=self.series_var, font=("SF Pro Text", 12))
+        entry.pack(fill=tk.X, pady=(4, 8))
         ttk.Label(series_frame, text="Например: Выпуск 01 — Основы монтажа",
-                  font=("SF Pro Text", 9)).pack(anchor="w", pady=(4, 0))
+                  font=("SF Pro Text", 9)).pack(anchor="w", pady=(0, 4))
 
         # Модель Gemini
         model_frame = self._add_section(right_col, "Модель Gemini")

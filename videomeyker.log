@@ -37,3 +37,55 @@
 2026-08-26 23:07:45,913 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
 2026-08-26 23:07:45,913 [INFO] __main__: App создан — запуск mainloop()
 2026-08-26 23:07:45,914 [INFO] __main__: mainloop() начат
+2026-08-26 23:18:46,054 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-26 23:18:46,061 [INFO] video_maker.gui.app: [GUI] ║ WM_DELETE_WINDOW — пользователь закрывает окно ║
+2026-08-26 23:18:46,061 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-26 23:18:46,061 [INFO] video_maker.gui.app: [GUI] Уничтожение корневого окна...
+2026-08-26 23:18:46,089 [INFO] video_maker.gui.app: [GUI] root.destroy() выполнен
+2026-08-26 23:18:46,089 [INFO] video_maker.gui.app: [GUI] Завершение главного цикла mainloop()...
+2026-08-26 23:18:46,089 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-26 23:18:46,089 [INFO] video_maker.gui.app: [GUI] ║             ПРИЛОЖЕНИЕ ЗАКРЫТО               ║
+2026-08-26 23:18:46,089 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-26 23:18:46,091 [INFO] __main__: mainloop() завершён
+2026-08-26 23:18:46,092 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:18:46,092 [INFO] __main__: ║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                ║
+2026-08-26 23:18:46,092 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:18:59,234 [INFO] __main__: ╔══════════════════════════════════════════════╗
+2026-08-26 23:18:59,235 [INFO] __main__: ║           ВИДЕОМЕЙКЕР — ЗАПУСК               ║
+2026-08-26 23:18:59,235 [INFO] __main__: ╚══════════════════════════════════════════════╝
+2026-08-26 23:18:59,235 [INFO] __main__: Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:18:59,235 [INFO] __main__: PID: 89435
+2026-08-26 23:18:59,235 [INFO] __main__: Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:18:59,235 [INFO] __main__: Лог-файл: /Users/dreamstore/video_maker/videomeyker.log
+2026-08-26 23:18:59,235 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-26 23:18:59,700 [INFO] __main__: Tk() создан: .
+2026-08-26 23:18:59,700 [INFO] __main__: Импорт App...
+2026-08-26 23:18:59,762 [INFO] __main__: Создание App(root)...
+2026-08-26 23:18:59,762 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:18:59,762 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-26 23:18:59,762 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-26 23:18:59,762 [INFO] video_maker.gui.app: [GUI] PID: 89435
+2026-08-26 23:18:59,762 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-26 23:18:59,763 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-26 23:18:59,764 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-26 23:18:59,765 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-26 23:18:59,766 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-26 23:18:59,766 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-26 23:18:59,766 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-26 23:18:59,766 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-26 23:18:59,779 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-26 23:18:59,779 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] _load_settings(): загрузка из .env
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-26 23:18:59,780 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-26 23:18:59,780 [INFO] __main__: App создан — запуск mainloop()
+2026-08-26 23:18:59,780 [INFO] __main__: mainloop() начат
