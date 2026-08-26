@@ -387,11 +387,8 @@ class App:
         self.time_label.pack(side=tk.LEFT, padx=(8, 0))
 
         # === Лог — ЗАНИМАЕТ ВСЁ ОСТАВШЕЕСЯ МЕСТО ===
-        log_frame = self._add_section(self.main_frame, "Лог")
+        log_frame = self._add_section(self.main_frame, "Лог", expand=True)
         log_frame.configure(padding=4)
-        # Лог растягивается на весь остаток высоты
-        self.main_frame.columnconfigure(0, weight=1)
-        self.main_frame.rowconfigure(self.main_frame.grid_size()[0] - 1, weight=1)
 
         self.log_text = tk.Text(
             log_frame,
@@ -417,9 +414,12 @@ class App:
 
     # ─── Хелперы ──────────────────────────────────────────────────────────
 
-    def _add_section(self, parent, title: str) -> ttk.Frame:
+    def _add_section(self, parent, title: str, expand: bool = False) -> ttk.Frame:
         frame = ttk.LabelFrame(parent, text=title, style="Card.TLabelframe", padding=8)
-        frame.pack(fill=tk.X, pady=(0, 8))
+        if expand:
+            frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        else:
+            frame.pack(fill=tk.X, pady=(0, 8))
         return frame
 
     def _add_file_section(self, parent, title: str, fields: list) -> None:
