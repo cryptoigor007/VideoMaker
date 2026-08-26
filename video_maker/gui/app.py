@@ -123,6 +123,12 @@ class App:
         )
         model_combo.pack(side=tk.LEFT, padx=5)
 
+        self.voice_enhance_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(settings_frame, text="Усилить голос", variable=self.voice_enhance_var).pack(side=tk.LEFT, padx=(20, 0))
+
+        self.add_bgm_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(settings_frame, text="Добавить BGM", variable=self.add_bgm_var).pack(side=tk.LEFT, padx=5)
+
         # === Чекбоксы ===
         checks_frame = ttk.LabelFrame(main_frame, text="Этапы обработки", padding=5)
         checks_frame.pack(fill=tk.X, pady=(0, 5))
@@ -325,6 +331,10 @@ class App:
         self.settings.s_enable_hooks = self.s_hooks.get()
         self.settings.s_enable_subtitles = self.s_subs.get()
         self.settings.s_enable_strong_words = self.s_strong.get()
+
+        # Настройки аудио
+        self.settings.voice_enhance = self.voice_enhance_var.get()
+        self.settings.add_bgm = self.add_bgm_var.get()
 
         # Валидация
         self.settings.output_folder = os.path.dirname(self.settings.audio_path) if self.settings.audio_path else ""
