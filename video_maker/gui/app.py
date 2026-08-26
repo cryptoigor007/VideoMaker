@@ -365,7 +365,7 @@ class App:
             textvariable=self.series_var,
             font=("SF Pro Text", 11),
         )
-        entry.pack(fill=tk.X, pady=(4, 0), ipady=8)
+        entry.pack(fill=tk.BOTH, expand=True, pady=(4, 0), ipady=8)
         ttk.Label(
             series_frame,
             text="Например: Выпуск 01 — Основы монтажа",
