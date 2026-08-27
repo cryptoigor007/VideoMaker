@@ -56,9 +56,6 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
     )
     return logging.getLogger(__name__)
 
-
-DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
-
 # Настройка логирования — ВСЁ в файл + консоль
 log = setup_logging()
 
