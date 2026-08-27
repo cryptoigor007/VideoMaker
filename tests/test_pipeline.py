@@ -39,14 +39,35 @@ class TestSettings(unittest.TestCase):
 
     def test_settings_validate_ok(self):
         """Валидация: всё задано → нет ошибок."""
-        s = Settings(
-            gemini_api_key="test",
-            audio_path="/tmp/test.mp3",
-            broll_horizontal="/tmp/broll_h",
-            output_folder="/tmp/out",
-        )
-        errors = s.validate()
-        assert len(errors) == 0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = os.path.join(tmpdir, "test.mp3")
+            broll_h = os.path.join(tmpdir, "broll_h")
+            out_dir = os.path.join(tmpdir, "out")
+            os.makedirs(broll_h)
+            os.makedirs(out_dir)
+            with open(audio_path, "w") as f:
+                f.write("dummy")
+
+            s = Settings(
+                gemini_api_key="test",
+                audio_path=audio_path,
+                broll_horizontal=broll_h,
+                output_folder=out_dir,
+                v_enable_intro=False,
+                v_enable_middle=False,
+                v_enable_outro=False,
+                v_enable_hooks=False,
+                v_enable_subtitles=False,
+                v_enable_strong_words=False,
+                s_enable_intro=False,
+                s_enable_middle=False,
+                s_enable_outro=False,
+                s_enable_hooks=False,
+                s_enable_subtitles=False,
+                s_enable_strong_words=False,
+            )
+            errors = s.validate()
+            assert len(errors) == 0
 
 
 class TestPipelineContext(unittest.TestCase):
@@ -123,6 +144,8 @@ class TestShortsCutter(unittest.TestCase):
                     {"start": 20, "end": 35, "title": "Short 2"},
                 ]
             },
+            voice_enhance=False,
+            add_bgm=False,
         )
         cutter = ShortsCutter()
         with patch("video_maker.engines.video.cut_segment") as mock_cut, \
@@ -149,6 +172,8 @@ class TestFinalHorizontal(unittest.TestCase):
         ctx = PipelineContext(
             master_horizontal="/tmp/master_16x9.mp4",
             analysis={"subtitles": [], "hook": {}},
+            voice_enhance=False,
+            add_bgm=False,
         )
         branch = FinalHorizontal()
         with patch("video_maker.engines.subtitles.burn_subtitles") as mock_sub:
@@ -166,6 +191,8 @@ class TestFinalVertical(unittest.TestCase):
         ctx = PipelineContext(
             master_vertical="/tmp/master_9x16.mp4",
             analysis={"subtitles": [], "hook": {}},
+            voice_enhance=False,
+            add_bgm=False,
         )
         branch = FinalVertical()
         with patch("video_maker.engines.subtitles.burn_subtitles") as mock_sub:
@@ -185,6 +212,8 @@ class TestPipelineFlow(unittest.TestCase):
             broll_horizontal="/tmp/broll_h",
             output_folder="/tmp/out",
             vertical_background="/tmp/bg.jpg",
+            voice_enhance=False,
+            add_bgm=False,
         )
         master = MasterBuilder()
         with patch("video_maker.engines.video.collect_video_files", return_value=["/tmp/v.mp4"]), \
@@ -211,6 +240,8 @@ class TestPipelineFlow(unittest.TestCase):
                     {"start": 0, "end": 15, "title": "Short 1"},
                 ],
             },
+            voice_enhance=False,
+            add_bgm=False,
         )
 
         fv = FinalVertical()

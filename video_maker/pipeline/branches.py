@@ -50,10 +50,64 @@ class FinalHorizontal(Stage):
                 log_fn=ctx.log,
             )
 
+        # Аудио пост-обработка: voice_enhance и BGM (только если включены чекбоксы)
+        if ctx.voice_enhance or (ctx.add_bgm and ctx.bgm_folder):
+            current = self._apply_audio_post(current, ctx, output_path)
+
         ctx.final_horizontal = current
         ctx.log(f"[HORIZONTAL] final_16x9.mp4: {ctx.final_horizontal}")
         ctx.progress = 65.0
         return ctx
+
+    def _apply_audio_post(self, video_path: str, ctx: PipelineContext, output_path: str) -> str:
+        """Применить voice_enhance и BGM к финальному видео."""
+        current = video_path
+
+        # Voice enhance — применяем к аудиодорожке
+        if ctx.voice_enhance:
+            from ..engines.audio import voice_enhance_filter
+            tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced.aac")
+            os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
+            # Извлекаем аудио, улучшаем, кладем обратно
+            current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
+
+        # BGM — накладываем фоновую музыку
+        if ctx.add_bgm and ctx.bgm_folder:
+            from ..engines.audio import mix_bgm
+            current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log)
+
+        return current
+
+    def _extract_enhance_replace_audio(self, video_path: str, enhanced_audio_path: str, ctx: PipelineContext) -> str:
+        """Извлечь аудио, улучшить, заменить в видео."""
+        from ..engines.audio import voice_enhance_filter, replace_audio
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
+            orig_audio = tmp.name
+
+        try:
+            # Извлекаем оригинальное аудио
+            import subprocess
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                orig_audio,
+            ]
+            subprocess.run(cmd, capture_output=True, check=True)
+
+            # Улучшаем аудио
+            voice_enhance_filter(orig_audio, enhanced_audio_path, log_fn=ctx.log)
+
+            # Заменяем аудио в видео
+            return replace_audio(video_path, enhanced_audio_path, video_path + ".ve.mp4", log_fn=ctx.log)
+        finally:
+            for p in (orig_audio, enhanced_audio_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 class FinalVertical(Stage):
@@ -97,7 +151,57 @@ class FinalVertical(Stage):
                 log_fn=ctx.log,
             )
 
+        # Аудио пост-обработка: voice_enhance и BGM (только если включены чекбоксы)
+        if ctx.voice_enhance or (ctx.add_bgm and ctx.bgm_folder):
+            current = self._apply_audio_post(current, ctx, output_path)
+
         ctx.final_vertical = current
         ctx.log(f"[VERTICAL] final_9x16.mp4: {ctx.final_vertical}")
         ctx.progress = 75.0
         return ctx
+
+    def _apply_audio_post(self, video_path: str, ctx: PipelineContext, output_path: str) -> str:
+        """Применить voice_enhance и BGM к финальному видео."""
+        current = video_path
+
+        # Voice enhance
+        if ctx.voice_enhance:
+            from ..engines.audio import voice_enhance_filter
+            tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced_v.aac")
+            os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
+            current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
+
+        # BGM
+        if ctx.add_bgm and ctx.bgm_folder:
+            from ..engines.audio import mix_bgm
+            current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log)
+
+        return current
+
+    def _extract_enhance_replace_audio(self, video_path: str, enhanced_audio_path: str, ctx: PipelineContext) -> str:
+        """Извлечь аудио, улучшить, заменить в видео."""
+        from ..engines.audio import voice_enhance_filter, replace_audio
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
+            orig_audio = tmp.name
+
+        try:
+            import subprocess
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                orig_audio,
+            ]
+            subprocess.run(cmd, capture_output=True, check=True)
+
+            voice_enhance_filter(orig_audio, enhanced_audio_path, log_fn=ctx.log)
+
+            return replace_audio(video_path, enhanced_audio_path, video_path + ".ve.mp4", log_fn=ctx.log)
+        finally:
+            for p in (orig_audio, enhanced_audio_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass

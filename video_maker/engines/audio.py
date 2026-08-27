@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import subprocess
-import tempfile
 
 log = logging.getLogger(__name__)
 
@@ -65,13 +65,39 @@ def replace_audio(
     return output_path
 
 
+def voice_enhance_filter(audio_path: str, output_path: str, log_fn=None) -> str:
+    """Улучшение голоса: highpass, lowpass, компрессия, лимитер."""
+    _log = log_fn or log.info
+    _log("[АУДИО] Улучшение голоса (voice_enhance)...")
+
+    # Фильтр: highpass 80Hz, lowpass 14kHz, компрессор, де-эссер, лимитер
+    af = (
+        "highpass=f=80,"
+        "lowpass=f=14000,"
+        "acompressor=threshold=-18dB:ratio=3:attack=5:release=50:makeup=2,"
+        "deesser=i=0.4:m=0.4:f=0.5,"
+        "alimiter=limit=0.95"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", audio_path,
+        "-af", af,
+        "-c:a", "aac", "-b:a", "192k",
+        "-ar", "48000",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
+    return output_path
+
+
 def mix_bgm(
     video_path: str,
     bgm_folder: str,
     output_path: str,
     log_fn=None,
 ) -> str:
-    """Смешать голос с BGM (sidechain compression)."""
+    """Смешать голос с BGM (sidechain compression) — луп до конца видео."""
     _log = log_fn or log.info
     _log("[АУДИО] Смешивание с BGM...")
 
@@ -84,14 +110,18 @@ def mix_bgm(
         _log("[АУДИО] BGM файлы не найдены, пропускаем")
         return video_path
 
-    import random
     bgm_file = random.choice(bgm_files)
 
+    # Получаем длительность видео для обрезки BGM
+    video_dur = probe_duration(video_path)
+
+    # BGM: бесконечный луп -> громкость -18 LUFS -> обрезка по длине видео
     filter_complex = (
-        "[1:a]aloop=loop=-1:size=2e9,atrim=0:300,"
-        "loudnorm=I=-18:TP=-3:LRA=11[bgm];"
-        "[0:a][bgm]amix=inputs=2:duration=first:"
-        "weights=1 0.3:dropout_transition=3[out]"
+        f"[1:a]aloop=loop=-1:size=2e9,"
+        f"loudnorm=I=-18:TP=-3:LRA=11,"
+        f"atrim=0:{video_dur},"
+        f"apad=whole_dur={video_dur}[bgm];"
+        f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3[out]"
     )
 
     cmd = [

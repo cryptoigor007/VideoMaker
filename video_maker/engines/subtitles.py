@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
+import subprocess
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,37 @@ def _ffmpeg_bin() -> str:
     except Exception:
         pass
     return "ffmpeg"
+
+
+def _filter_and_shift_events(events: list[dict], clip: dict | None) -> list[dict]:
+    """Фильтровать события по clip диапазону и сдвинуть тайминги."""
+    if not clip:
+        return events
+
+    clip_start = clip.get("start", 0)
+    clip_end = clip.get("end", 0)
+    clip_dur = clip_end - clip_start
+
+    filtered = []
+    for ev in events:
+        ev_start = ev["start"]
+        ev_end = ev["end"]
+
+        # Проверяем пересечение с clip
+        if ev_end <= clip_start or ev_start >= clip_end:
+            continue  # Событие полностью вне клипа
+
+        # Сдвигаем тайминги относительно начала клипа
+        new_start = max(0, ev_start - clip_start)
+        new_end = min(clip_dur, ev_end - clip_start)
+
+        if new_end > new_start:
+            new_ev = ev.copy()
+            new_ev["start"] = new_start
+            new_ev["end"] = new_end
+            filtered.append(new_ev)
+
+    return filtered
 
 
 def burn_subtitles(
@@ -104,6 +135,10 @@ def burn_subtitles(
                     "style": "Strong",
                 })
 
+    # Фильтруем и сдвигаем события если передан clip
+    if clip:
+        events = _filter_and_shift_events(events, clip)
+
     if not events:
         _log("[СУБТИТРЫ] Нет событий для наложения")
         return video_path
@@ -121,7 +156,6 @@ def burn_subtitles(
         "-c:a", "copy",
         output_path,
     ]
-    import subprocess
     subprocess.run(cmd, capture_output=True, check=True)
 
     return output_path

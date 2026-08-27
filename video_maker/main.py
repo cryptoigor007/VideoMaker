@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import sys
+import types
 import tkinter as tk
 
 # Настройка логирования — ВСЁ в файл + консоль
@@ -19,7 +20,11 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Перехват необработанных исключений
-def _excepthook(exc_type, exc_value, exc_tb):
+def _excepthook(
+    exc_type: type[BaseException],
+    exc_value: BaseException,
+    exc_tb: types.TracebackType | None,
+) -> None:
     import traceback
     log.error("╔══════════════════════════════════════════════╗")
     log.error("║      НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ              ║")
@@ -32,14 +37,14 @@ def _excepthook(exc_type, exc_value, exc_tb):
 sys.excepthook = _excepthook
 
 # Перехват SIGINT (Ctrl+C)
-def _sigint_handler(signum, frame):
+def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
     log.warning("Получен SIGINT (Ctrl+C) — завершение...")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, _sigint_handler)
 
 # Перехват SIGTERM
-def _sigterm_handler(signum, frame):
+def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
     log.warning("Получен SIGTERM — завершение...")
     sys.exit(0)
 
@@ -65,7 +70,7 @@ def main() -> None:
         from .gui.app import App
 
         log.info("Создание App(root)...")
-        app = App(root)
+        _ = App(root)
         log.info("App создан — запуск mainloop()")
 
         log.info("mainloop() начат")
@@ -74,7 +79,7 @@ def main() -> None:
 
     except KeyboardInterrupt:
         log.warning("KeyboardInterrupt — завершение")
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError) as e:  # noqa: BLE001 - top-level pipeline catch
         log.error(f"Критическая ошибка: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()

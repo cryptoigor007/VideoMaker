@@ -17,6 +17,7 @@ class PipelineContext:
     # Входные данные
     audio_path: str = ""
     broll_horizontal: str = ""
+    broll_vertical: str = ""
     bgm_folder: str = ""
     intro_middle_outro_folder: str = ""
     vertical_background: str = ""
@@ -36,13 +37,19 @@ class PipelineContext:
     shorts: list[str] = field(default_factory=list)
 
     # Настройки
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = ""
     gemini_api_key: str = ""
     gemini_api_keys: list = field(default_factory=list)
     whisper_model: str = "base"
+    whisperx_path: str = ""
+    whisper_language: str = "ru"
+    whisper_device: str = "auto"
+    whisper_compute_type: str = "auto"
     voice_enhance: bool = True
     add_bgm: bool = True
     intro_gemini: bool = True
+    keep_temp_files: bool = False
+    target_lufs: float = -14.0
 
     # Чекбоксы
     h_enable_intro: bool = False
@@ -119,6 +126,10 @@ class TranscribeStage(Stage):
         ctx.transcription = transcribe(
             ctx.audio_path,
             model_name=ctx.whisper_model,
+            whisperx_path=ctx.whisperx_path,
+            language=ctx.whisper_language,
+            device=ctx.whisper_device,
+            compute_type=ctx.whisper_compute_type,
             log_fn=ctx.log,
         )
         ctx.log(f"[WHISPER] Готово: {len(ctx.transcription.get('segments', []))} сегментов")

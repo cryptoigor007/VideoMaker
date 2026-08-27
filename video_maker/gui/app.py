@@ -61,7 +61,9 @@ class App:
         log.info(f"[GUI] Настройки загружены: model={self.settings.gemini_model}, "
                  f"whisper={self.settings.whisper_model}")
 
+        self.model_var = tk.StringVar(value=self.settings.gemini_model)
         self.running = False
+        self.cancel_event = threading.Event()
         log.info("[GUI] self.running = False")
 
         # Привязываем закрытие окна
@@ -258,8 +260,10 @@ class App:
         # === Заголовок ===
         header = ttk.Frame(self.main_frame)
         header.pack(fill=tk.X, pady=(0, 12))
-        ttk.Label(header, text="ВидеоМейкер", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="Создание видео из аудио + B-roll", style="Subtitle.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(header, text="ВидеоМейкер", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text="Создание видео из аудио + B-roll", style="Subtitle.TLabel").pack(side=tk.LEFT, padx=(12, 0))
+        settings_btn = ttk.Button(header, text="⚙", width=3, command=self._open_settings)
+        settings_btn.pack(side=tk.RIGHT)
 
         # === Вкладки ===
         self.notebook = ttk.Notebook(self.main_frame)
@@ -299,6 +303,7 @@ class App:
 
         broll_frame = self._add_section(left_col, "B-roll видео")
         self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
+        self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
 
         self._add_file_section(
             left_col, "Фон для вертикального видео",
@@ -326,26 +331,46 @@ class App:
 
         # ─── Правая колонка ─────────────────────────────────────────────
 
-        # Модель Gemini
-        model_frame = self._add_section(right_col, "Модель Gemini")
-        self.model_var = tk.StringVar(value="gemini-3.6-flash")
-        model_combo = ttk.Combobox(
-            model_frame,
-            textvariable=self.model_var,
-            values=["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.6-flash-lite"],
-            state="readonly",
-            font=("SF Pro Text", 10),
-        )
-        model_combo.pack(fill=tk.X, pady=(4, 0))
-
         # Настройки аудио
         audio_settings = self._add_section(right_col, "Настройки аудио")
         self.voice_enhance_var = tk.BooleanVar(value=True)
         self.add_bgm_var = tk.BooleanVar(value=True)
         self.intro_gemini_var = tk.BooleanVar(value=True)
+        self.keep_temp_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(audio_settings, text="Усилить голос", variable=self.voice_enhance_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
+
+        # WhisperX настройки
+        whisper_frame = self._add_section(right_col, "WhisperX (транскрибация)")
+        
+        # Language
+        lang_row = ttk.Frame(whisper_frame)
+        lang_row.pack(fill=tk.X, pady=2)
+        ttk.Label(lang_row, text="Язык:", width=14).pack(side=tk.LEFT)
+        self.whisper_lang_var = tk.StringVar(value="ru")
+        ttk.Combobox(lang_row, textvariable=self.whisper_lang_var,
+                     values=["ru", "en", "auto"], state="readonly", width=10).pack(side=tk.LEFT)
+        
+        # Device
+        dev_row = ttk.Frame(whisper_frame)
+        dev_row.pack(fill=tk.X, pady=2)
+        ttk.Label(dev_row, text="Устройство:", width=14).pack(side=tk.LEFT)
+        self.whisper_dev_var = tk.StringVar(value="auto")
+        ttk.Combobox(dev_row, textvariable=self.whisper_dev_var,
+                     values=["auto", "cpu", "mps", "cuda"], state="readonly", width=10).pack(side=tk.LEFT)
+        
+        # Compute type
+        comp_row = ttk.Frame(whisper_frame)
+        comp_row.pack(fill=tk.X, pady=2)
+        ttk.Label(comp_row, text="Compute type:", width=14).pack(side=tk.LEFT)
+        self.whisper_comp_var = tk.StringVar(value="auto")
+        ttk.Combobox(comp_row, textvariable=self.whisper_comp_var,
+                     values=["auto", "int8", "float16", "float32"], state="readonly", width=10).pack(side=tk.LEFT)
+        
+        # WhisperX path
+        self._add_browse_row(whisper_frame, "WhisperX путь:", "whisperx_path_var", "file", [("Исполняемые", "*")])
 
         # Этапы обработки
         checks_frame = self._add_section(right_col, "Этапы обработки")
@@ -381,13 +406,25 @@ class App:
             font=("SF Pro Text", 9),
         ).pack(anchor="w", pady=(4, 0))
 
+        # LUFS цель
+        lufs_frame = self._add_section(right_col, "Громкость (LUFS)")
+        lufs_frame.configure(padding=8)
+        ttk.Label(lufs_frame, text="Целевой LUFS:", width=14).pack(side=tk.LEFT)
+        self.target_lufs_var = tk.StringVar(value="-14.0")
+        ttk.Entry(lufs_frame, textvariable=self.target_lufs_var, width=8, font=("SF Pro Text", 11)).pack(side=tk.LEFT)
+        ttk.Label(lufs_frame, text="(YouTube: -14, TikTok: -14, TV: -24)").pack(side=tk.LEFT, padx=(8, 0))
+
         # === Кнопка запуска ===
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill=tk.X, pady=(12, 8))
         self.start_btn = ttk.Button(
             btn_frame, text="  СОЗДАТЬ ВИДЕО  ", style="Accent.TButton", command=self._start
         )
-        self.start_btn.pack()
+        self.start_btn.pack(side=tk.LEFT)
+        self.cancel_btn = ttk.Button(
+            btn_frame, text="  ОТМЕНА  ", style="TButton", command=self._cancel_pipeline, state=tk.DISABLED
+        )
+        self.cancel_btn.pack(side=tk.LEFT, padx=(8, 0))
 
         # === Прогресс ===
         progress_frame = ttk.Frame(parent)
@@ -572,6 +609,53 @@ class App:
     def _choose_audio(self) -> None:
         self._browse_file(self.audio_var, "audio_var", [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg")])
 
+    # ─── Настройки ───────────────────────────────────────────────────────
+
+    def _open_settings(self) -> None:
+        """Открыть окно настроек."""
+        win = tk.Toplevel(self.root)
+        win.title("Настройки")
+        win.geometry("450x320")
+        win.configure(bg=COLORS["bg"])
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Модель Gemini
+        ttk.Label(frame, text="Модель Gemini:", style="Section.TLabel").pack(anchor="w")
+        model_combo = ttk.Combobox(
+            frame,
+            textvariable=self.model_var,
+            values=["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.6-flash-lite"],
+            state="readonly",
+            font=("SF Pro Text", 10),
+        )
+        model_combo.pack(fill=tk.X, pady=(4, 12))
+
+        # API ключи
+        ttk.Label(frame, text="API ключи Gemini (через запятую):", style="Section.TLabel").pack(anchor="w")
+        keys_str = ", ".join(self.settings.gemini_api_keys) if self.settings.gemini_api_keys else self.settings.gemini_api_key
+        self._settings_keys_var = tk.StringVar(value=keys_str)
+        keys_entry = ttk.Entry(frame, textvariable=self._settings_keys_var, font=("SF Pro Text", 10))
+        keys_entry.pack(fill=tk.X, pady=(4, 12))
+
+        # Кнопка сохранить
+        def save():
+            self.settings.gemini_model = self.model_var.get()
+            raw = self._settings_keys_var.get().strip()
+            if raw:
+                keys = [k.strip() for k in raw.split(",") if k.strip()]
+                self.settings.gemini_api_keys = keys
+                self.settings.gemini_api_key = keys[0] if keys else ""
+            log.info(f"[SETTINGS] Модель: {self.settings.gemini_model}, ключей: {len(self.settings.gemini_api_keys)}")
+            win.destroy()
+
+        ttk.Button(frame, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X, pady=(8, 0))
+
+    # ─── Выбор файлов ────────────────────────────────────────────────────
+
     def _choose_broll_h(self) -> None:
         self._browse_dir(self.broll_h_var, "broll_h_var")
 
@@ -637,6 +721,7 @@ class App:
         log.info("[GUI] Сбор настроек из GUI...")
         self.settings.audio_path = self.audio_var.get()
         self.settings.broll_horizontal = self.broll_h_var.get()
+        self.settings.broll_vertical = self.broll_v_var.get()
         self.settings.vertical_background = self.bg_var.get()
         self.settings.bgm_folder = self.bgm_var.get()
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
@@ -646,14 +731,30 @@ class App:
         self.settings.gemini_model = self.model_var.get()
         self.settings.intro_gemini = self.intro_gemini_var.get()
 
+        # WhisperX settings
+        self.settings.whisperx_path = self.whisperx_path_var.get()
+        self.settings.whisper_language = self.whisper_lang_var.get()
+        self.settings.whisper_device = self.whisper_dev_var.get()
+        self.settings.whisper_compute_type = self.whisper_comp_var.get()
+
+        # Other settings
+        self.settings.keep_temp_files = self.keep_temp_var.get()
+        self.settings.target_lufs = float(self.target_lufs_var.get() or -14.0)
+
         log.info(f"[GUI] audio_path = {self.settings.audio_path}")
         log.info(f"[GUI] broll_horizontal = {self.settings.broll_horizontal}")
+        log.info(f"[GUI] broll_vertical = {self.settings.broll_vertical}")
         log.info(f"[GUI] vertical_background = {self.settings.vertical_background}")
         log.info(f"[GUI] bgm_folder = {self.settings.bgm_folder}")
         log.info(f"[GUI] imo_folder = {self.settings.intro_middle_outro_folder}")
         log.info(f"[GUI] output_folder = {self.output_var.get() or '(auto)'}")
         log.info(f"[GUI] gemini_model = {self.settings.gemini_model}")
         log.info(f"[GUI] series_name = {self.settings.series_name}")
+        log.info(f"[GUI] whisper_language = {self.settings.whisper_language}")
+        log.info(f"[GUI] whisper_device = {self.settings.whisper_device}")
+        log.info(f"[GUI] whisper_compute_type = {self.settings.whisper_compute_type}")
+        log.info(f"[GUI] keep_temp_files = {self.settings.keep_temp_files}")
+        log.info(f"[GUI] target_lufs = {self.settings.target_lufs}")
 
         self.settings.h_enable_intro = self.h_intro.get()
         self.settings.h_enable_middle = self.h_middle.get()
@@ -694,7 +795,9 @@ class App:
         log.info("[GUI] Валидация пройдена — запуск пайплайна")
         self.running = True
         self.start_btn.configure(state=tk.DISABLED)
-        log.info("[GUI] self.running = True, кнопка заблокирована")
+        self.cancel_btn.configure(state=tk.NORMAL)
+        self.cancel_event.clear()
+        log.info("[GUI] self.running = True, кнопка Старт заблокирована, Отмена включена")
 
         thread = threading.Thread(target=self._run_pipeline, daemon=True)
         log.info(f"[GUI] Создан поток пайплайна: {thread.name}")
@@ -719,6 +822,7 @@ class App:
             ctx = PipelineContext(
                 audio_path=self.settings.audio_path,
                 broll_horizontal=self.settings.broll_horizontal,
+                broll_vertical=self.settings.broll_vertical,
                 bgm_folder=self.settings.bgm_folder,
                 intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
                 vertical_background=self.settings.vertical_background,
@@ -730,9 +834,15 @@ class App:
                 gemini_api_key=self.settings.gemini_api_key,
                 gemini_api_keys=self.settings.gemini_api_keys,
                 whisper_model=self.settings.whisper_model,
+                whisperx_path=self.settings.whisperx_path,
+                whisper_language=self.settings.whisper_language,
+                whisper_device=self.settings.whisper_device,
+                whisper_compute_type=self.settings.whisper_compute_type,
                 voice_enhance=self.settings.voice_enhance,
                 add_bgm=self.settings.add_bgm,
                 intro_gemini=self.settings.intro_gemini,
+                keep_temp_files=self.settings.keep_temp_files,
+                target_lufs=self.settings.target_lufs,
                 h_enable_intro=self.settings.h_enable_intro,
                 h_enable_middle=self.settings.h_enable_middle,
                 h_enable_outro=self.settings.h_enable_outro,
@@ -766,9 +876,12 @@ class App:
                 ("FinalizeStage", FinalizeStage()),
             ]
 
-            log.info(f"[PIPELINE] {len(stages)} стадий准备就绪")
+            log.info(f"[PIPELINE] {len(stages)} стадий готово")
 
             for name, stage in stages:
+                if self.cancel_event.is_set():
+                    ctx.log("[PIPELINE] Отмена по запросу пользователя")
+                    return
                 log.info(f"\n{'─'*48}")
                 log.info(f"  СТАДИЯ: {name} — {stage.name()}")
                 log.info(f"{'─'*48}")
@@ -800,7 +913,16 @@ class App:
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
             self.running = False
+            self.cancel_event.clear()
             self.root.after(0, lambda: self.start_btn.configure(state=tk.NORMAL))
+            self.root.after(0, lambda: self.cancel_btn.configure(state=tk.DISABLED))
+
+    def _cancel_pipeline(self) -> None:
+        """Отменить выполнение пайплайна."""
+        log.info("[GUI] Нажата кнопка ОТМЕНА — установка флага отмены")
+        self.cancel_event.set()
+        self._log("\n  ОТМЕНА: остановка после текущей стадии...")
+        self.cancel_btn.configure(state=tk.DISABLED)
 
     def _load_settings(self) -> None:
         """Загрузить сохранённые настройки."""

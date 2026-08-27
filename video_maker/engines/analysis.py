@@ -70,7 +70,7 @@ def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool =
     """Построить промпт для анализа."""
     timings = "\n".join(
         f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
-        for s in segments[:200]
+        for s in segments
     )
 
     intro_section = ""
