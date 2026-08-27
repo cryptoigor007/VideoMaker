@@ -8,13 +8,14 @@ import types
 
 DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
 
+
 def setup_logging(log_file: str | None = None) -> logging.Logger:
     """Настроить логирование. Если log_file не задан — используем дефолтный."""
     if log_file is None:
         log_file = DEFAULT_LOG_FILE
-    
+
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    
+
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -30,6 +31,7 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
 # Настройка логирования — ВСЁ в файл + консоль
 log = setup_logging()
 
+
 # Перехват необработанных исключений
 def _excepthook(
     exc_type: type[BaseException],
@@ -37,9 +39,9 @@ def _excepthook(
     exc_tb: types.TracebackType | None,
 ) -> None:
     import traceback
-    log.error("╔══════════════════════════════════════════════╗")
+    log.error("╔═══════════════════════════════════════════════╗")
     log.error("║      НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ              ║")
-    log.error("╚══════════════════════════════════════════════╝")
+    log.error("╚═══════════════════════════════════════════════╝")
     log.error(f"Тип: {exc_type.__name__}")
     log.error(f"Сообщение: {exc_value}")
     for line in traceback.format_tb(exc_tb):
@@ -47,10 +49,12 @@ def _excepthook(
 
 sys.excepthook = _excepthook
 
+
 # Перехват SIGINT (Ctrl+C)
 def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
     log.warning("Получен SIGINT (Ctrl+C) — завершение...")
     sys.exit(0)
+
 
 signal.signal(signal.SIGINT, _sigint_handler)
 
@@ -59,14 +63,15 @@ def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
     log.warning("Получен SIGTERM — завершение...")
     sys.exit(0)
 
+
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def main() -> None:
     """Запуск приложения."""
-    log.info("╔══════════════════════════════════════════════╗")
-    log.info("║           ВИДЕОМЕЙКЕР — ЗАПУСК               ║")
-    log.info("╚══════════════════════════════════════════════╝")
+    log.info("╔════════════════════════════════════════════════════════════════════════════════════╗")
+    log.info("║           ВИДЕОМЕЙКЕР — ЗАПУСК                                               ║")
+    log.info("╚════════════════════════════════════════════════════════════════════════════════════╝")
     log.info(f"Python: {sys.version}")
     log.info(f"PID: {os.getpid()}")
     log.info(f"Рабочая папка: {os.getcwd()}")
@@ -77,11 +82,17 @@ def main() -> None:
         root = tk.Tk()
         log.info(f"Tk() создан: {root}")
 
+        # Принудительно показываем окно на переднем плане (macOS)
+        root.lift()
+        root.attributes('-topmost', True)
+        root.after_idle(root.attributes, '-topmost', False)
+        root.focus_force()
+
         log.info("Импорт App...")
         from .gui.app import App
 
         log.info("Создание App(root)...")
-        _ = App(root)
+        app = App(root)
         log.info("App создан — запуск mainloop()")
 
         log.info("mainloop() начат")
@@ -95,9 +106,10 @@ def main() -> None:
         import traceback
         traceback.print_exc()
     finally:
-        log.info("╔══════════════════════════════════════════════╗")
-        log.info("║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                ║")
-        log.info("╚══════════════════════════════════════════════╝")
+        log.info("╔═══════════════════════════════════════════════════════════════════════════════════╗")
+        log.info("║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                                                ║")
+        log.info("╚═══════════════════════════════════════════════════════════════════════════════╝")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

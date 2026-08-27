@@ -50,6 +50,21 @@ class App:
         log.info("[GUI] Создание корневого окна Tk()")
 
         self.root.title("ВидеоМейкер")
+        # Иконка приложения
+        try:
+            # Создаём простую иконку программно
+            icon_img = tk.PhotoImage(width=32, height=32)
+            # Рисуем простую иконку (прямоугольник с треугольником play)
+            for y in range(32):
+                for x in range(32):
+                    if 8 <= x <= 24 and 8 <= y <= 24:
+                        if x - 8 < 17 and y - 8 < 17:
+                            icon_img.put("#6366F1", (x, y))
+                    elif 10 <= x <= 22 and 10 <= y <= 22 and x - 10 <= y - 10 and x - 10 + y - 10 <= 16:
+                        icon_img.put("#FFFFFF", (x, y))
+            self.root.iconphoto(True, icon_img)
+        except Exception:
+            pass
         # Полноэкранное окно по высоте
         screen_h = self.root.winfo_screenheight()
         self.root.geometry(f"960x{screen_h - 60}")
