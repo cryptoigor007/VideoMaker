@@ -6,10 +6,12 @@ import sys
 import types
 import tkinter as tk
 
+DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
+
 def setup_logging(log_file: str | None = None) -> logging.Logger:
     """Настроить логирование. Если log_file не задан — используем дефолтный."""
     if log_file is None:
-        log_file = os.path.expanduser("~/video_maker/videomeyker.log")
+        log_file = DEFAULT_LOG_FILE
     
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     
@@ -68,7 +70,7 @@ def main() -> None:
     log.info(f"Python: {sys.version}")
     log.info(f"PID: {os.getpid()}")
     log.info(f"Рабочая папка: {os.getcwd()}")
-    log.info(f"Лог-файл: {log_file}")
+    log.info(f"Лог-файл: {DEFAULT_LOG_FILE}")
 
     try:
         log.info("Создание корневого окна Tk()...")
@@ -88,7 +90,7 @@ def main() -> None:
 
     except KeyboardInterrupt:
         log.warning("KeyboardInterrupt — завершение")
-    except (RuntimeError, OSError, ValueError) as e:  # noqa: BLE001 - top-level pipeline catch
+    except (RuntimeError, OSError, ValueError) as e:
         log.error(f"Критическая ошибка: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()

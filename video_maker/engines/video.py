@@ -6,6 +6,7 @@ import os
 import random
 import subprocess
 import tempfile
+import uuid
 
 log = logging.getLogger(__name__)
 
@@ -279,10 +280,12 @@ def add_intro_outro_mid(
     enable_outro: bool = False,
     output_dir: str = "",
     log_fn=None,
+    analysis: dict | None = None,
 ) -> str:
     """Добавить интро/аутро/мидл к видео (умная вставка middle).
     Аудио сохраняется из исходного video_path (replace_audio после склейки).
-    Разрешение подстраивается под исходное видео."""
+    Разрешение подстраивается под исходное видео.
+    Если передан analysis с middle timing — используется он, иначе середина видео."""
     _log = log_fn or log.info
     _log("[ВИДЕО] Добавление интро/аутро/мидл...")
 
@@ -297,6 +300,17 @@ def add_intro_outro_mid(
     # Получаем разрешение и длительность основного видео
     main_w, main_h, _ = _ffprobe_video_info(video_path)
     main_dur = probe_duration(video_path)
+
+    # Определяем точку вставки middle
+    if analysis and enable_middle:
+        middle_timing = analysis.get("middle", [])
+        if middle_timing and isinstance(middle_timing, list) and len(middle_timing) > 0:
+            mid_point = float(middle_timing[0].get("start", main_dur / 2))
+            _log(f"[ВИДЕО] Middle timing из analysis: {mid_point:.1f}s")
+        else:
+            mid_point = main_dur / 2
+    else:
+        mid_point = main_dur / 2
 
     # Собираем пути к файлам
     intro_path = ""
@@ -337,29 +351,19 @@ def add_intro_outro_mid(
 
     # Строим filter_complex для склейки
     # Middle вставляется в середину основного видео
-    parts = []
     inputs = [video_path]
     input_idx = 1
 
     if intro_path:
-        parts.append(f"[{input_idx}:v]")
         inputs.append(intro_path)
         input_idx += 1
 
     # Основное видео разбиваем на две части для вставки middle
     if middle_path:
-        mid_point = main_dur / 2
-        parts.append(f"[0:v]trim=0:{mid_point},setpts=PTS-STARTPTS[v_main1]")
-        parts.append(f"[{input_idx}:v]")
         inputs.append(middle_path)
         input_idx += 1
-        parts.append(f"[0:v]trim={mid_point}:{main_dur},setpts=PTS-STARTPTS[v_main2]")
-        parts.append("[v_main1][v_main2]concat=n=2:v=1:a=0[v_main]")
-    else:
-        parts.append("[0:v]")
 
     if outro_path:
-        parts.append(f"[{input_idx}:v]")
         inputs.append(outro_path)
         input_idx += 1
 
@@ -373,11 +377,11 @@ def add_intro_outro_mid(
         if intro_path:
             filter_parts.append(f"[{idx}:v]{scale_filter}[v_intro];")
             idx += 1
-        filter_parts.append(f"[0:v]trim=0:{main_dur/2},setpts=PTS-STARTPTS[v_main1];")
+        filter_parts.append(f"[0:v]trim=0:{mid_point},setpts=PTS-STARTPTS[v_main1];")
         if middle_path:
             filter_parts.append(f"[{idx}:v]{scale_filter}[v_mid];")
             idx += 1
-        filter_parts.append(f"[0:v]trim={main_dur/2}:{main_dur},setpts=PTS-STARTPTS[v_main2];")
+        filter_parts.append(f"[0:v]trim={mid_point}:{main_dur},setpts=PTS-STARTPTS[v_main2];")
         concat_inputs = []
         if intro_path:
             concat_inputs.append("[v_intro]")
@@ -406,7 +410,7 @@ def add_intro_outro_mid(
         filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]")
         filter_complex = "".join(filter_parts)
 
-    output_path = os.path.join(output_dir, "with_intro_outro.mp4")
+    output_path = os.path.join(output_dir, f"with_intro_outro_{uuid.uuid4().hex[:8]}.mp4")
 
     cmd = [
         ffmpeg, "-y",

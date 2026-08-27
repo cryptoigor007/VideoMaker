@@ -50,6 +50,7 @@ class PipelineContext:
     intro_gemini: bool = True
     keep_temp_files: bool = False
     target_lufs: float = -14.0
+    vstack_top_ratio: float = 0.6
 
     # Чекбоксы
     h_enable_intro: bool = False

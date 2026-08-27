@@ -850,6 +850,7 @@ class App:
                 intro_gemini=self.settings.intro_gemini,
                 keep_temp_files=self.settings.keep_temp_files,
                 target_lufs=self.settings.target_lufs,
+                vstack_top_ratio=self.settings.vstack_top_ratio,
                 h_enable_intro=self.settings.h_enable_intro,
                 h_enable_middle=self.settings.h_enable_middle,
                 h_enable_outro=self.settings.h_enable_outro,

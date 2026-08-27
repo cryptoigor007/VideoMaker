@@ -51,7 +51,7 @@ def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool =
 - Если не видишь подходящего момента — верни start=0, end=0
 """
 
-    return f"""Ты — опытный контент-стратег для YouTube Shorts.{series_context}
+    return f"""Ты — опытный контент-стратег для YouTube Shorts. Канал: «Точка наблюдения». Сериал: «Тайный кризис человечества».{series_context}
 
 Твоя задача: разобрать транскрипцию длинного видео и подготовить всё для создания Shorts.
 
@@ -62,6 +62,7 @@ def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool =
 - Заголовок до 40 символов, интригующий
 - Описание с призывом к действию (CTA)
 - 5-8 релевантных хештегов
+- Самопроверка: оцените каждый клип по 10-балльной шкале (внутренне), оставьте только ≥ 8/10
 
 {intro_section}
 Текст с таймингами:
