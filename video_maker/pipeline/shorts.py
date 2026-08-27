@@ -20,9 +20,9 @@ class ShortsCutter(Stage):
     ) -> str | None:
         """Создать один Short из промежуточного вертикального видео.
         Возвращает None если клип невалиден (пропуск)."""
-        from ..engines.video import cut_segment
-        from ..engines.subtitles import burn_subtitles
         from ..engines.audio import probe_duration
+        from ..engines.subtitles import burn_subtitles
+        from ..engines.video import cut_segment
 
         start = clip.get("start", 0)
         end = clip.get("end", 0)

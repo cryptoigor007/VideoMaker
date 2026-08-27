@@ -5,7 +5,6 @@ import logging
 import os
 import random
 import subprocess
-import tempfile
 import uuid
 
 log = logging.getLogger(__name__)
@@ -120,8 +119,7 @@ def fit_video_to_duration(
     # Создаем файл списка для concat demuxer
     list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
     with open(list_path, "w") as f:
-        for nf in normalized_files:
-            f.write(f"file '{nf}'\n")
+        f.writelines(f"file '{nf}'\n" for nf in normalized_files)
 
     # Concat demuxer
     cmd = [

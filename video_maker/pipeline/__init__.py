@@ -1,12 +1,17 @@
 """Пайплайн — классы-стадии обработки видео."""
-from .stages import AudioStage, TranscribeStage, GeminiStage
-from .master import MasterBuilder
 from .branches import FinalHorizontal, FinalVertical
-from .shorts import ShortsCutter
 from .finalize import FinalizeStage
+from .master import MasterBuilder
+from .shorts import ShortsCutter
+from .stages import AudioStage, GeminiStage, TranscribeStage
 
 __all__ = [
-    "AudioStage", "TranscribeStage", "GeminiStage",
-    "MasterBuilder", "FinalHorizontal", "FinalVertical",
-    "ShortsCutter", "FinalizeStage",
+    "AudioStage",
+    "FinalHorizontal",
+    "FinalVertical",
+    "FinalizeStage",
+    "GeminiStage",
+    "MasterBuilder",
+    "ShortsCutter",
+    "TranscribeStage",
 ]

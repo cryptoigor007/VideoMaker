@@ -6,8 +6,8 @@ import os
 import sys
 import threading
 import time
-import traceback
 import tkinter as tk
+import traceback
 from tkinter import filedialog, messagebox, ttk
 
 from ..config.settings import Settings
@@ -813,16 +813,16 @@ class App:
 
     def _run_pipeline(self) -> None:
         """Выполнить пайплайн в отдельном потоке."""
-        log.info(f"[PIPELINE] ═══════════════════════════════════════════════")
+        log.info("[PIPELINE] ═══════════════════════════════════════════════")
         log.info(f"[PIPELINE] Поток пайплайна запущен: {threading.current_thread().name}")
         log.info(f"[PIPELINE] PID: {os.getpid()}")
 
         try:
-            from ..pipeline.stages import AudioStage, TranscribeStage, GeminiStage
-            from ..pipeline.master import MasterBuilder
             from ..pipeline.branches import FinalHorizontal, FinalVertical
-            from ..pipeline.shorts import ShortsCutter
             from ..pipeline.finalize import FinalizeStage
+            from ..pipeline.master import MasterBuilder
+            from ..pipeline.shorts import ShortsCutter
+            from ..pipeline.stages import AudioStage, GeminiStage, TranscribeStage
 
             log.info("[PIPELINE] Все модули пайплайна импортированы")
 
@@ -909,12 +909,12 @@ class App:
             log.info("[PIPELINE] ═══════════════════════════════════════════════")
 
         except Exception as e:
-            log.error(f"[PIPELINE] ╔══════════════════════════════════════════════╗")
-            log.error(f"[PIPELINE] ║            ОШИБКА В ПАЙПЛАЙНЕ                ║")
-            log.error(f"[PIPELINE] ╚══════════════════════════════════════════════╝")
+            log.error("[PIPELINE] ╔══════════════════════════════════════════════╗")
+            log.error("[PIPELINE] ║            ОШИБКА В ПАЙПЛАЙНЕ                ║")
+            log.error("[PIPELINE] ╚══════════════════════════════════════════════╝")
             log.error(f"[PIPELINE] Тип: {type(e).__name__}")
             log.error(f"[PIPELINE] Сообщение: {e}")
-            log.error(f"[PIPELINE] Traceback:")
+            log.error("[PIPELINE] Traceback:")
             for line in traceback.format_exc().splitlines():
                 log.error(f"[PIPELINE]   {line}")
             self._log(f"\n  ОШИБКА: {e}")

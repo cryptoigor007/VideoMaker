@@ -3,8 +3,8 @@ import logging
 import os
 import signal
 import sys
-import types
 import tkinter as tk
+import types
 
 DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
 

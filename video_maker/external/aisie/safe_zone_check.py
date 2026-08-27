@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from advanced_text_features import AdvancedTextEngine
 from moviepy import ColorClip, CompositeVideoClip
 from PIL import Image, ImageDraw, ImageFont
+from text_style_utils import HOOK_TYPES, VISUAL_WEIGHTS
 
-from advanced_text_features import AdvancedTextEngine
 from .placement import PROFILES, Obstacles, PlacementEngine
 from .timing import TimingEngine
-from text_style_utils import HOOK_TYPES, VISUAL_WEIGHTS
 
 OUT = Path(__file__).resolve().parent.parent / "asie_safezone_tests"
 OUT.mkdir(exist_ok=True)

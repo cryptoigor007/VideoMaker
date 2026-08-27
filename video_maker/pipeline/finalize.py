@@ -1,7 +1,6 @@
 """FinalizeStage — финализация: копирование, замер громкости, метаданные, очистка."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -38,7 +37,7 @@ class FinalizeStage(Stage):
             # Применяем loudnorm перед копированием
             loudnorm_path = final_path + ".loudnorm.mp4"
             from ..engines.audio import apply_loudnorm
-            ctx.log(f"[ФИНАЛ] Применение loudnorm к final_16x9.mp4...")
+            ctx.log("[ФИНАЛ] Применение loudnorm к final_16x9.mp4...")
             apply_loudnorm(ctx.final_horizontal, loudnorm_path, target_lufs=ctx.target_lufs, log_fn=ctx.log)
             shutil.copy2(loudnorm_path, final_path)
             os.remove(loudnorm_path)
@@ -50,7 +49,7 @@ class FinalizeStage(Stage):
             final_path = os.path.join(ctx.output_folder, "final_9x16.mp4")
             loudnorm_path = final_path + ".loudnorm.mp4"
             from ..engines.audio import apply_loudnorm
-            ctx.log(f"[ФИНАЛ] Применение loudnorm к final_9x16.mp4...")
+            ctx.log("[ФИНАЛ] Применение loudnorm к final_9x16.mp4...")
             apply_loudnorm(ctx.final_vertical, loudnorm_path, target_lufs=ctx.target_lufs, log_fn=ctx.log)
             shutil.copy2(loudnorm_path, final_path)
             os.remove(loudnorm_path)
@@ -84,7 +83,7 @@ class FinalizeStage(Stage):
 
     def _measure_and_log_lufs(self, video_path: str, ctx: PipelineContext) -> None:
         """Замерить LUFS и залогировать предупреждение при отклонении."""
-        from ..engines.audio import measure_loudness, judge_loudness
+        from ..engines.audio import judge_loudness, measure_loudness
 
         loudness = measure_loudness(video_path)
         if loudness:

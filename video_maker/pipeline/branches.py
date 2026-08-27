@@ -65,7 +65,6 @@ class FinalHorizontal(Stage):
 
         # Voice enhance — применяем к аудиодорожке
         if ctx.voice_enhance:
-            from ..engines.audio import voice_enhance_filter
             tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced.aac")
             os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
             # Извлекаем аудио, улучшаем, кладем обратно
@@ -80,8 +79,9 @@ class FinalHorizontal(Stage):
 
     def _extract_enhance_replace_audio(self, video_path: str, enhanced_audio_path: str, ctx: PipelineContext) -> str:
         """Извлечь аудио, улучшить, заменить в видео."""
-        from ..engines.audio import voice_enhance_filter, replace_audio
         import tempfile
+
+        from ..engines.audio import replace_audio, voice_enhance_filter
 
         with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
             orig_audio = tmp.name
@@ -166,7 +166,6 @@ class FinalVertical(Stage):
 
         # Voice enhance
         if ctx.voice_enhance:
-            from ..engines.audio import voice_enhance_filter
             tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced_v.aac")
             os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
             current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
@@ -180,8 +179,9 @@ class FinalVertical(Stage):
 
     def _extract_enhance_replace_audio(self, video_path: str, enhanced_audio_path: str, ctx: PipelineContext) -> str:
         """Извлечь аудио, улучшить, заменить в видео."""
-        from ..engines.audio import voice_enhance_filter, replace_audio
         import tempfile
+
+        from ..engines.audio import replace_audio, voice_enhance_filter
 
         with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
             orig_audio = tmp.name

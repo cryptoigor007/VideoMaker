@@ -159,7 +159,6 @@ def apply_loudnorm(
     result = subprocess.run(cmd1, capture_output=True, text=True)
     
     # Parse JSON from stderr
-    import re
     json_match = re.search(r"\{.*\}", result.stderr, re.DOTALL)
     if json_match:
         try:

@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
-from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +182,7 @@ def analyze(
                 if key_index + 1 < len(keys):
                     key_index += 1
                     if log_fn:
-                        log_fn(f"[GEMINI] Ключ недействителен, переключаюсь на следующий...")
+                        log_fn("[GEMINI] Ключ недействителен, переключаюсь на следующий...")
                     continue
                 raise RuntimeError("Недействительный Gemini API ключ. Проверьте ключ в Google AI Studio.") from e
 
@@ -197,7 +195,7 @@ def analyze(
                 if attempt < 1:
                     attempt += 1
                     if log_fn:
-                        log_fn(f"[GEMINI] Ошибка парсинга JSON, повторный запрос с строгими требованиями...")
+                        log_fn("[GEMINI] Ошибка парсинга JSON, повторный запрос с строгими требованиями...")
                     prompt += "\n\nВАЖНО: Верни ТОЛЬКО валидный JSON без markdown, без комментариев, без лишнего текста."
                     time.sleep(2.0)
                     continue
