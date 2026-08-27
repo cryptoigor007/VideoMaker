@@ -6,18 +6,27 @@ import sys
 import types
 import tkinter as tk
 
-# Настройка логирования — ВСЁ в файл + консоль
-log_file = os.path.expanduser("~/video_maker/videomeyker.log")
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_file, encoding="utf-8"),
-    ],
-)
+def setup_logging(log_file: str | None = None) -> logging.Logger:
+    """Настроить логирование. Если log_file не задан — используем дефолтный."""
+    if log_file is None:
+        log_file = os.path.expanduser("~/video_maker/videomeyker.log")
+    
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file, encoding="utf-8"),
+        ],
+        force=True,  # Переконфигурировать даже если уже настроено
+    )
+    return logging.getLogger(__name__)
 
-log = logging.getLogger(__name__)
+
+# Настройка логирования — ВСЁ в файл + консоль
+log = setup_logging()
 
 # Перехват необработанных исключений
 def _excepthook(

@@ -61,7 +61,7 @@ def fit_video_to_duration(
     audio_file: str = "",
     log_fn=None,
 ) -> str:
-    """Нарезать и склеить видео под целевую длительность через concat demuxer."""
+    """Нарезать и склеить видео под целевую длительность через concat demuxer с pre-scale."""
     _log = log_fn or log.info
     _log(f"[ВИДЕО] Склейка {len(video_files)} файлов под {target_duration:.1f} сек")
 
@@ -93,13 +93,36 @@ def fit_video_to_duration(
             if total_dur >= target_duration:
                 break
 
+    # Pre-scale: нормализуем все клипы к единому разрешению 1920x1080@30fps перед concat
+    # Это избегает проблем с concat demuxer при разных кодеках/разрешениях
+    normalized_files = []
+    tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    
+    for i, vf in enumerate(selected):
+        norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
+        # Получаем исходное разрешение
+        src_w, src_h, _ = _ffprobe_video_info(vf)
+        # Нормализуем к 1920x1080 с сохранением пропорций
+        cmd_norm = [
+            ffmpeg, "-y",
+            "-i", vf,
+            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
+            "-c:v", "libx264", "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            "-an",
+            norm_path,
+        ]
+        subprocess.run(cmd_norm, capture_output=True, check=True)
+        normalized_files.append(norm_path)
+
     # Создаем файл списка для concat demuxer
     list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
     with open(list_path, "w") as f:
-        for vf in selected:
-            f.write(f"file '{vf}'\n")
+        for nf in normalized_files:
+            f.write(f"file '{nf}'\n")
 
-    # Concat demuxer с перекодированием для нормализации
+    # Concat demuxer
     cmd = [
         ffmpeg, "-y",
         "-f", "concat", "-safe", "0",
@@ -113,9 +136,14 @@ def fit_video_to_duration(
     ]
     subprocess.run(cmd, capture_output=True, check=True)
 
-    # Удаляем временный файл списка
+    # Удаляем временные файлы
+    for p in [list_path] + normalized_files:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
     try:
-        os.remove(list_path)
+        os.rmdir(tmp_dir)
     except OSError:
         pass
 
@@ -135,10 +163,12 @@ def vstack_video_image(
     background_path: str,
     output_path: str,
     log_fn=None,
+    top_ratio: float = 0.6,
 ) -> str:
-    """vstack: видео сверху + фон/изображение снизу (9:16) с динамическим разрешением."""
+    """vstack: видео сверху + фон/изображение снизу (9:16) с динамическим разрешением.
+    top_ratio: пропорция верхней части (0.0-1.0), по умолчанию 0.6 (60% верха, 40% низ)."""
     _log = log_fn or log.info
-    _log("[ВИДЕО] Создание вертикального видео (vstack)")
+    _log(f"[ВИДЕО] Создание вертикального видео (vstack), top_ratio={top_ratio}")
 
     ffmpeg = _ffmpeg_bin()
 
@@ -150,8 +180,7 @@ def vstack_video_image(
     target_h = int(main_w * 16 / 9)  # 9:16 aspect ratio
 
     # Высота верхней части (основное видео) и нижней (фон)
-    # Делим пропорционально: верх ~ 60%, низ ~ 40% (можно настроить)
-    top_h = int(target_h * 0.6)
+    top_h = int(target_h * top_ratio)
     bottom_h = target_h - top_h
 
     # Проверяем расширение фона
@@ -206,6 +235,14 @@ def vstack_video_image(
         ]
 
     subprocess.run(cmd, capture_output=True, check=True)
+
+    # Восстанавливаем аудио из исходного видео (master_16x9)
+    from .audio import replace_audio
+    tmp_out = output_path + ".tmp.mp4"
+    os.rename(output_path, tmp_out)
+    replace_audio(tmp_out, video_path, output_path, log_fn=_log)
+    os.remove(tmp_out)
+
     return output_path
 
 
@@ -243,7 +280,9 @@ def add_intro_outro_mid(
     output_dir: str = "",
     log_fn=None,
 ) -> str:
-    """Добавить интро/аутро/мидл к видео (умная вставка middle)."""
+    """Добавить интро/аутро/мидл к видео (умная вставка middle).
+    Аудио сохраняется из исходного video_path (replace_audio после склейки).
+    Разрешение подстраивается под исходное видео."""
     _log = log_fn or log.info
     _log("[ВИДЕО] Добавление интро/аутро/мидл...")
 
@@ -255,7 +294,8 @@ def add_intro_outro_mid(
         output_dir = os.path.dirname(video_path)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Получаем длительность основного видео
+    # Получаем разрешение и длительность основного видео
+    main_w, main_h, _ = _ffprobe_video_info(video_path)
     main_dur = probe_duration(video_path)
 
     # Собираем пути к файлам
@@ -323,17 +363,19 @@ def add_intro_outro_mid(
         inputs.append(outro_path)
         input_idx += 1
 
-    # Собираем итоговый filter_complex
+    # Собираем итоговый filter_complex с динамическим разрешением
+    scale_filter = f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2"
+
     if middle_path:
         # Сложная схема с middle в середине
         filter_parts = []
         idx = 1
         if intro_path:
-            filter_parts.append(f"[{idx}:v]scale={1920}:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v_intro];")
+            filter_parts.append(f"[{idx}:v]{scale_filter}[v_intro];")
             idx += 1
         filter_parts.append(f"[0:v]trim=0:{main_dur/2},setpts=PTS-STARTPTS[v_main1];")
         if middle_path:
-            filter_parts.append(f"[{idx}:v]scale={1920}:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v_mid];")
+            filter_parts.append(f"[{idx}:v]{scale_filter}[v_mid];")
             idx += 1
         filter_parts.append(f"[0:v]trim={main_dur/2}:{main_dur},setpts=PTS-STARTPTS[v_main2];")
         concat_inputs = []
@@ -344,7 +386,7 @@ def add_intro_outro_mid(
             concat_inputs.append("[v_mid]")
         concat_inputs.append("[v_main2]")
         if outro_path:
-            filter_parts.append(f"[{idx}:v]scale={1920}:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v_outro];")
+            filter_parts.append(f"[{idx}:v]{scale_filter}[v_outro];")
             concat_inputs.append("[v_outro]")
         filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]")
         filter_complex = "".join(filter_parts)
@@ -354,12 +396,12 @@ def add_intro_outro_mid(
         idx = 1
         concat_inputs = []
         if intro_path:
-            filter_parts.append(f"[{idx}:v]scale={1920}:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v_intro];")
+            filter_parts.append(f"[{idx}:v]{scale_filter}[v_intro];")
             concat_inputs.append("[v_intro]")
             idx += 1
         concat_inputs.append("[0:v]")
         if outro_path:
-            filter_parts.append(f"[{idx}:v]scale={1920}:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v_outro];")
+            filter_parts.append(f"[{idx}:v]{scale_filter}[v_outro];")
             concat_inputs.append("[v_outro]")
         filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]")
         filter_complex = "".join(filter_parts)
@@ -374,23 +416,19 @@ def add_intro_outro_mid(
         "-c:v", "libx264", "-preset", "fast",
         "-pix_fmt", "yuv420p",
         "-r", "30",
-        "-an",  # аудио наложим отдельно
         output_path,
     ]
     subprocess.run(cmd, capture_output=True, check=True)
 
+    # Восстанавливаем аудио из исходного видео
+    from .audio import replace_audio
+    tmp_out = output_path + ".tmp.mp4"
+    os.rename(output_path, tmp_out)
+    replace_audio(tmp_out, video_path, output_path, log_fn=_log)
+    os.remove(tmp_out)
+
     return output_path
 
 
-def probe_duration(path: str) -> float:
-    """Получить длительность медиафайла в секундах."""
-    import json
-    cmd = [
-        "ffprobe", "-v", "quiet",
-        "-print_format", "json",
-        "-show_format",
-        path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    data = json.loads(result.stdout)
-    return float(data["format"]["duration"])
+# probe_duration перенесен в engines/audio.py для дедупликации
+from .audio import probe_duration

@@ -113,5 +113,6 @@ class MasterBuilder(Stage):
             background_path=ctx.vertical_background,
             output_path=output_path,
             log_fn=ctx.log,
+            top_ratio=getattr(ctx, 'vstack_top_ratio', 0.6),
         )
         return output_path

@@ -15,30 +15,11 @@ class ShortsCutter(Stage):
     def name(self) -> str:
         return "Shorts"
 
-    def run(self, ctx: PipelineContext) -> PipelineContext:
-        ctx.log("[SHORTS] Нарезка Shorts из промежуточного вертикального видео...")
-
-        clips = ctx.analysis.get("clips_for_shorts", [])
-        if not clips:
-            ctx.log("[SHORTS] Нет клипов для Shorts, пропускаем")
-            ctx.progress = 90.0
-            return ctx
-
-        output_dir = os.path.join(ctx.output_folder, "_tmp", "shorts")
-        os.makedirs(output_dir, exist_ok=True)
-
-        for i, clip in enumerate(clips, 1):
-            short_path = self._create_short(ctx, clip, i, output_dir)
-            ctx.shorts.append(short_path)
-            ctx.log(f"[SHORTS] short_{i:03d}.mp4: {short_path}")
-
-        ctx.progress = 90.0
-        return ctx
-
     def _create_short(
         self, ctx: PipelineContext, clip: dict, index: int, output_dir: str
-    ) -> str:
-        """Создать один Short из промежуточного вертикального видео."""
+    ) -> str | None:
+        """Создать один Short из промежуточного вертикального видео.
+        Возвращает None если клип невалиден (пропуск)."""
         from ..engines.video import cut_segment
         from ..engines.subtitles import burn_subtitles
         from ..engines.audio import probe_duration
@@ -51,7 +32,10 @@ class ShortsCutter(Stage):
         video_duration = probe_duration(ctx.master_vertical)
         if start >= video_duration:
             ctx.log(f"[SHORTS] Клип {index}: start ({start:.1f}) >= длительность видео ({video_duration:.1f}), пропускаем")
-            return ctx.master_vertical
+            return None
+        if duration <= 0:
+            ctx.log(f"[SHORTS] Клип {index}: невалидная длительность ({duration:.1f}), пропускаем")
+            return None
         if end > video_duration:
             end = video_duration
             duration = end - start
@@ -100,6 +84,29 @@ class ShortsCutter(Stage):
         self._write_metadata(clip, meta_path)
 
         return current
+
+    def run(self, ctx: PipelineContext) -> PipelineContext:
+        ctx.log("[SHORTS] Нарезка Shorts из промежуточного вертикального видео...")
+
+        clips = ctx.analysis.get("clips_for_shorts", [])
+        if not clips:
+            ctx.log("[SHORTS] Нет клипов для Shorts, пропускаем")
+            ctx.progress = 90.0
+            return ctx
+
+        output_dir = os.path.join(ctx.output_folder, "_tmp", "shorts")
+        os.makedirs(output_dir, exist_ok=True)
+
+        for i, clip in enumerate(clips, 1):
+            short_path = self._create_short(ctx, clip, i, output_dir)
+            if short_path:
+                ctx.shorts.append(short_path)
+                ctx.log(f"[SHORTS] short_{i:03d}.mp4: {short_path}")
+            else:
+                ctx.log(f"[SHORTS] Клип {i} пропущен")
+
+        ctx.progress = 90.0
+        return ctx
 
     def _write_metadata(self, clip: dict, path: str) -> None:
         """Записать метаданные Short (название, описание, хештеги)."""

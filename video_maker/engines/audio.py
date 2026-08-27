@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,65 @@ def mix_bgm(
         "-filter_complex", filter_complex,
         "-map", "0:v", "-map", "[out]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-ar", "48000",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
+    return output_path
+
+
+def apply_loudnorm(
+    video_path: str,
+    output_path: str,
+    target_lufs: float = -14.0,
+    log_fn=None,
+) -> str:
+    """Применить loudnorm к итоговому видео (two-pass для точности)."""
+    _log = log_fn or log.info
+    _log(f"[АУДИО] Loudnorm: target={target_lufs} LUFS")
+
+    # First pass: measure
+    cmd1 = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:print_format=json",
+        "-f", "null", "-",
+    ]
+    result = subprocess.run(cmd1, capture_output=True, text=True)
+    
+    # Parse JSON from stderr
+    import re
+    json_match = re.search(r"\{.*\}", result.stderr, re.DOTALL)
+    if json_match:
+        try:
+            loudnorm_data = json.loads(json_match.group())
+            measured_i = loudnorm_data.get("input_i", -14.0)
+            measured_tp = loudnorm_data.get("input_tp", -1.5)
+            measured_lra = loudnorm_data.get("input_lra", 11.0)
+            measured_thresh = loudnorm_data.get("input_thresh", -20.0)
+            offset = loudnorm_data.get("target_offset", 0.0)
+            
+            _log(f"[АУДИО] Measured: I={measured_i:.1f} LUFS, TP={measured_tp:.1f}, LRA={measured_lra:.1f}")
+            
+            # Second pass: apply with measured values
+            filter_str = (
+                f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:"
+                f"measured_I={measured_i}:measured_TP={measured_tp}:"
+                f"measured_LRA={measured_lra}:measured_thresh={measured_thresh}:"
+                f"offset={offset}:linear=true:print_format=summary"
+            )
+        except (json.JSONDecodeError, KeyError) as e:
+            _log(f"[АУДИО] Loudnorm parse error: {e}, fallback to single pass")
+            filter_str = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
+    else:
+        filter_str = f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-af", filter_str,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
         "-ar", "48000",
         output_path,
     ]

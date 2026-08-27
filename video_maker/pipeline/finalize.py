@@ -32,25 +32,41 @@ class FinalizeStage(Stage):
             shutil.copy2(ctx.master_vertical, final_path)
             ctx.log(f"[ФИНАЛ] master_9x16.mp4 → {final_path}")
 
-        # Копируем final_16x9
+        # Копируем final_16x9 с loudnorm
         if ctx.final_horizontal and os.path.exists(ctx.final_horizontal):
             final_path = os.path.join(ctx.output_folder, "final_16x9.mp4")
-            shutil.copy2(ctx.final_horizontal, final_path)
+            # Применяем loudnorm перед копированием
+            loudnorm_path = final_path + ".loudnorm.mp4"
+            from ..engines.audio import apply_loudnorm
+            ctx.log(f"[ФИНАЛ] Применение loudnorm к final_16x9.mp4...")
+            apply_loudnorm(ctx.final_horizontal, loudnorm_path, target_lufs=ctx.target_lufs, log_fn=ctx.log)
+            shutil.copy2(loudnorm_path, final_path)
+            os.remove(loudnorm_path)
             ctx.log(f"[ФИНАЛ] final_16x9.mp4 → {final_path}")
             self._measure_and_log_lufs(final_path, ctx)
 
-        # Копируем final_9x16
+        # Копируем final_9x16 с loudnorm
         if ctx.final_vertical and os.path.exists(ctx.final_vertical):
             final_path = os.path.join(ctx.output_folder, "final_9x16.mp4")
-            shutil.copy2(ctx.final_vertical, final_path)
+            loudnorm_path = final_path + ".loudnorm.mp4"
+            from ..engines.audio import apply_loudnorm
+            ctx.log(f"[ФИНАЛ] Применение loudnorm к final_9x16.mp4...")
+            apply_loudnorm(ctx.final_vertical, loudnorm_path, target_lufs=ctx.target_lufs, log_fn=ctx.log)
+            shutil.copy2(loudnorm_path, final_path)
+            os.remove(loudnorm_path)
             ctx.log(f"[ФИНАЛ] final_9x16.mp4 → {final_path}")
             self._measure_and_log_lufs(final_path, ctx)
 
-        # Копируем Shorts
+        # Копируем Shorts с loudnorm
         for i, short_path in enumerate(ctx.shorts, 1):
             if os.path.exists(short_path):
                 final_path = os.path.join(ctx.output_folder, f"short_{i:03d}.mp4")
-                shutil.copy2(short_path, final_path)
+                loudnorm_path = final_path + ".loudnorm.mp4"
+                from ..engines.audio import apply_loudnorm
+                ctx.log(f"[ФИНАЛ] Применение loudnorm к short_{i:03d}.mp4...")
+                apply_loudnorm(short_path, loudnorm_path, target_lufs=ctx.target_lufs, log_fn=ctx.log)
+                shutil.copy2(loudnorm_path, final_path)
+                os.remove(loudnorm_path)
                 ctx.log(f"[ФИНАЛ] short_{i:03d}.mp4 → {final_path}")
                 self._measure_and_log_lufs(final_path, ctx)
 

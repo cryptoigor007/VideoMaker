@@ -786,6 +786,13 @@ class App:
         )
         log.info(f"[GUI] output_folder (final) = {self.settings.output_folder}")
 
+        # Переконфигурировать логирование в выходную папку
+        log_file = os.path.join(self.settings.output_folder, "videomeyker.log")
+        from video_maker.main import setup_logging
+        setup_logging(log_file)
+        log = logging.getLogger(__name__)
+        log.info(f"[GUI] Логирование перенастроено в {log_file}")
+
         errors = self.settings.validate()
         if errors:
             log.error(f"[GUI] Ошибки валидации: {errors}")
@@ -896,7 +903,7 @@ class App:
             self._log("  ГОТОВО!")
             self._log("═"*48)
             self._set_progress(100)
-            log.info("[PIPELINE] ═══════════════════════════════════════════════")
+            log.info("[PIPELINE] ══════════════════════════════════════════════")
             log.info("[PIPELINE] ВСЕ СТАДИИ ЗАВЕРШЕНЫ УСПЕШНО")
             log.info("[PIPELINE] ═══════════════════════════════════════════════")
 
@@ -910,6 +917,8 @@ class App:
             for line in traceback.format_exc().splitlines():
                 log.error(f"[PIPELINE]   {line}")
             self._log(f"\n  ОШИБКА: {e}")
+            # Показать ошибку в GUI
+            self.root.after(0, lambda: messagebox.showerror("Ошибка пайплайна", f"{type(e).__name__}: {e}"))
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
             self.running = False
@@ -918,13 +927,57 @@ class App:
             self.root.after(0, lambda: self.cancel_btn.configure(state=tk.DISABLED))
 
     def _cancel_pipeline(self) -> None:
-        """Отменить выполнение пайплайна."""
-        log.info("[GUI] Нажата кнопка ОТМЕНА — установка флага отмены")
+        """Отменить выполнение пайплайна + убить ffmpeg процессы."""
+        log.info("[GUI] Нажата кнопка ОТМЕНА — установка флага отмены + убийство ffmpeg")
         self.cancel_event.set()
-        self._log("\n  ОТМЕНА: остановка после текущей стадии...")
+        self._log("\n  ОТМЕНА: остановка после текущей стадии + убийство ffmpeg...")
         self.cancel_btn.configure(state=tk.DISABLED)
+        # Убить все ffmpeg процессы пользователя
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'] and 'ffmpeg' in proc.info['name'].lower():
+                    try:
+                        proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except ImportError:
+            # psutil не установлен — fallback на pkill
+            import subprocess
+            subprocess.run(["pkill", "-f", "ffmpeg"], capture_output=True)
+        except Exception as e:
+            log.warning(f"[GUI] Не удалось убить ffmpeg: {e}")
 
     def _load_settings(self) -> None:
-        """Загрузить сохранённые настройки."""
-        log.info("[GUI] _load_settings(): загрузка из .env")
-        pass
+        """Загрузить сохранённые настройки из JSON."""
+        settings_file = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+        if os.path.exists(settings_file):
+            try:
+                import json
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Применяем настройки к GUI
+                for key, value in data.items():
+                    if hasattr(self, f"{key}_var"):
+                        getattr(self, f"{key}_var").set(value)
+                    elif hasattr(self, key):
+                        setattr(self, key, value)
+                log.info(f"[GUI] Настройки загружены из {settings_file}")
+            except Exception as e:
+                log.warning(f"[GUI] Ошибка загрузки настроек: {e}")
+
+    def _save_settings(self) -> None:
+        """Сохранить текущие настройки в JSON."""
+        settings_file = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+        try:
+            import json
+            data = {}
+            # Собираем настройки из GUI
+            for attr in dir(self):
+                if attr.endswith("_var") and isinstance(getattr(self, attr), tk.Variable):
+                    data[attr[:-4]] = getattr(self, attr).get()
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            log.info(f"[GUI] Настройки сохранены в {settings_file}")
+        except Exception as e:
+            log.warning(f"[GUI] Ошибка сохранения настроек: {e}")

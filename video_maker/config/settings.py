@@ -68,6 +68,7 @@ class Settings:
     # Прочее
     keep_temp_files: bool = False
     target_lufs: float = -14.0
+    vstack_top_ratio: float = 0.6  # P3-31: пропорция верхней части при vstack (0.0-1.0)
 
     @classmethod
     def from_env(cls) -> "Settings":
