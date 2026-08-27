@@ -83,16 +83,16 @@ def main() -> None:
         log.info(f"Tk() создан: {root}")
 
         # Принудительно показываем окно на переднем плане (macOS)
-        root.lift()
-        root.attributes('-topmost', True)
-        root.after_idle(root.attributes, '-topmost', False)
-        root.focus_force()
+        root.lift()  # type: ignore[attr-defined]
+        root.attributes('-topmost', True)  # type: ignore[attr-defined]
+        root.after_idle(root.attributes, '-topmost', False)  # type: ignore[attr-defined]
+        root.focus_force()  # type: ignore[attr-defined]
 
         log.info("Импорт App...")
         from .gui.app import App
 
         log.info("Создание App(root)...")
-        app = App(root)
+        _ = App(root)
         log.info("App создан — запуск mainloop()")
 
         log.info("mainloop() начат")
