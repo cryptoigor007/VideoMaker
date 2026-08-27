@@ -2,11 +2,40 @@
 import logging
 import os
 import signal
+import subprocess
 import sys
 import tkinter as tk
 import types
 
 DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
+
+
+def _bring_window_to_front(root: tk.Tk) -> None:
+    """Агрессивно вывести окно на передний план (macOS)."""
+    try:
+        # Стандартные Tkinter методы
+        root.lift()  # type: ignore[attr-defined]
+        root.attributes('-topmost', True)  # type: ignore[attr-defined]
+        root.after_idle(root.attributes, '-topmost', False)  # type: ignore[attr-defined]
+        root.focus_force()  # type: ignore[attr-defined]
+        root.update_idletasks()  # type: ignore[attr-defined]
+        
+        # macOS: используем AppleScript для принудительного вывода на передний план
+        if sys.platform == "darwin":
+            script = '''
+            tell application "System Events"
+                set frontmost of process "Python" to true
+            end tell
+            '''
+            subprocess.run(["osascript", "-e", script], capture_output=True, check=False)
+            
+            # Альтернативный способ через Tk
+            root.wm_attributes('-topmost', 1)  # type: ignore[attr-defined]
+            root.after_idle(lambda: root.wm_attributes('-topmost', 0))  # type: ignore[attr-defined]
+            root.update_idletasks()  # type: ignore[attr-defined]
+            
+    except (subprocess.SubprocessError, OSError, tk.TclError) as e:
+        logging.getLogger(__name__).warning(f"Не удалось вывести окно на передний план: {e}")
 
 
 def setup_logging(log_file: str | None = None) -> logging.Logger:
@@ -39,9 +68,9 @@ def _excepthook(
     exc_tb: types.TracebackType | None,
 ) -> None:
     import traceback
-    log.error("╔═══════════════════════════════════════════════╗")
+    log.error("╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
     log.error("║      НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ              ║")
-    log.error("╚═══════════════════════════════════════════════╝")
+    log.error("╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
     log.error(f"Тип: {exc_type.__name__}")
     log.error(f"Сообщение: {exc_value}")
     for line in traceback.format_tb(exc_tb):
@@ -63,15 +92,14 @@ def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
     log.warning("Получен SIGTERM — завершение...")
     sys.exit(0)
 
-
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
 def main() -> None:
     """Запуск приложения."""
-    log.info("╔════════════════════════════════════════════════════════════════════════════════════╗")
+    log.info("╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
     log.info("║           ВИДЕОМЕЙКЕР — ЗАПУСК                                               ║")
-    log.info("╚════════════════════════════════════════════════════════════════════════════════════╝")
+    log.info("╚═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
     log.info(f"Python: {sys.version}")
     log.info(f"PID: {os.getpid()}")
     log.info(f"Рабочая папка: {os.getcwd()}")
@@ -83,10 +111,7 @@ def main() -> None:
         log.info(f"Tk() создан: {root}")
 
         # Принудительно показываем окно на переднем плане (macOS)
-        root.lift()  # type: ignore[attr-defined]
-        root.attributes('-topmost', True)  # type: ignore[attr-defined]
-        root.after_idle(root.attributes, '-topmost', False)  # type: ignore[attr-defined]
-        root.focus_force()  # type: ignore[attr-defined]
+        _bring_window_to_front(root)
 
         log.info("Импорт App...")
         from .gui.app import App
@@ -106,9 +131,9 @@ def main() -> None:
         import traceback
         traceback.print_exc()
     finally:
-        log.info("╔═══════════════════════════════════════════════════════════════════════════════════╗")
+        log.info("╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
         log.info("║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                                                ║")
-        log.info("╚═══════════════════════════════════════════════════════════════════════════════╝")
+        log.info("╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
         sys.exit(0)
 
 
