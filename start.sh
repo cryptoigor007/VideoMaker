@@ -1,3 +1,6 @@
 #!/bin/bash
-cd /Users/dreamstore/video_maker
-PYTHONPATH=/Users/dreamstore/video_maker /Users/dreamstore/video_maker/.venv/bin/python -m video_maker.main
+cd "$(dirname "$0")"
+source .venv/bin/activate 2>/dev/null || true
+echo "Starting VideoMaker..."
+echo "Log file: ~/video_maker/videomeyker.log"
+python -m video_maker.main 2>&1 | tee -a "$HOME/video_maker/videomeyker.log"

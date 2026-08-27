@@ -96,6 +96,9 @@ class App:
         self._build_ui()
         log.info("[GUI] _build_ui() завершён")
 
+        # Запуск heartbeat для мониторинга состояния окна
+        self._heartbeat()
+
         log.info("[GUI] Вызов _load_settings()...")
         self._load_settings()
         log.info("[GUI] _load_settings() завершён")
@@ -963,6 +966,18 @@ class App:
             subprocess.run(["pkill", "-f", "ffmpeg"], capture_output=True)
         except Exception as e:
             log.warning(f"[GUI] Не удалось убить ffmpeg: {e}")
+
+    def _heartbeat(self) -> None:
+        """Heartbeat для отслеживания состояния окна (каждые 5 секунд)."""
+        if not self.root.winfo_exists():
+            return
+        log.info(
+            "LIFECYCLE heartbeat visible=%s viewable=%s geometry=%s",
+            self.root.winfo_viewable(),
+            self.root.winfo_ismapped(),
+            self.root.geometry(),
+        )
+        self.root.after(5000, self._heartbeat)
 
     def _load_settings(self) -> None:
         """Загрузить сохранённые настройки из JSON."""

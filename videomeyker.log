@@ -1009,3 +1009,37 @@
 2026-08-27 22:50:40,723 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
 2026-08-27 22:50:40,724 [INFO] __main__: App создан — запуск mainloop()
 2026-08-27 22:50:40,724 [INFO] __main__: mainloop() начат
+2026-08-28 00:26:56,497 [INFO] __main__: LIFECYCLE start pid=45474 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-28 00:26:56,497 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-28 00:26:57,231 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-28 00:26:57,879 [INFO] __main__: Импорт App...
+2026-08-28 00:26:57,920 [INFO] __main__: Создание App(root)...
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] PID: 45474
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-28 00:26:57,920 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-28 00:26:57,928 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-28 00:26:57,928 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-28 00:26:57,928 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-28 00:26:57,928 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-28 00:26:57,928 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-28 00:26:57,929 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+34+64
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-28 00:26:57,952 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-28 00:26:57,952 [INFO] __main__: LIFECYCLE app_created
+2026-08-28 00:26:58,021 [INFO] __main__: LIFECYCLE window geometry=960x1458+34+30 screen=2560x1600
+2026-08-28 00:26:58,021 [INFO] __main__: LIFECYCLE mainloop_enter

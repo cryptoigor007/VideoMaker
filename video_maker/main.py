@@ -57,6 +57,8 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
     return logging.getLogger(__name__)
 
 
+DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
+
 # Настройка логирования — ВСЁ в файл + консоль
 log = setup_logging()
 
@@ -68,9 +70,9 @@ def _excepthook(
     exc_tb: types.TracebackType | None,
 ) -> None:
     import traceback
-    log.error("╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
+    log.error("╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
     log.error("║      НЕОБРАБОТАННОЕ ИСКЛЮЧЕНИЕ              ║")
-    log.error("╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
+    log.error("╚════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
     log.error(f"Тип: {exc_type.__name__}")
     log.error(f"Сообщение: {exc_value}")
     for line in traceback.format_tb(exc_tb):
@@ -81,7 +83,7 @@ sys.excepthook = _excepthook
 
 # Перехват SIGINT (Ctrl+C)
 def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
-    log.warning("Получен SIGINT (Ctrl+C) — завершение...")
+    log.warning("LIFECYCLE signal SIGINT")
     sys.exit(0)
 
 
@@ -89,7 +91,7 @@ signal.signal(signal.SIGINT, _sigint_handler)
 
 # Перехват SIGTERM
 def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
-    log.warning("Получен SIGTERM — завершение...")
+    log.warning("LIFECYCLE signal SIGTERM")
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, _sigterm_handler)
@@ -97,18 +99,12 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 
 def main() -> None:
     """Запуск приложения."""
-    log.info("╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
-    log.info("║           ВИДЕОМЕЙКЕР — ЗАПУСК                                               ║")
-    log.info("╚═════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
-    log.info(f"Python: {sys.version}")
-    log.info(f"PID: {os.getpid()}")
-    log.info(f"Рабочая папка: {os.getcwd()}")
-    log.info(f"Лог-файл: {DEFAULT_LOG_FILE}")
-
+    log.info("LIFECYCLE start pid=%s cwd=%s python=%s", os.getpid(), os.getcwd(), sys.version.split()[0])
+    
     try:
         log.info("Создание корневого окна Tk()...")
         root = tk.Tk()
-        log.info(f"Tk() создан: {root}")
+        log.info(f"LIFECYCLE tk_created root={root}")
 
         # Принудительно показываем окно на переднем плане (macOS)
         _bring_window_to_front(root)
@@ -118,11 +114,20 @@ def main() -> None:
 
         log.info("Создание App(root)...")
         _ = App(root)
-        log.info("App создан — запуск mainloop()")
+        log.info("LIFECYCLE app_created")
 
-        log.info("mainloop() начат")
+        # окно: размер и позиция (видно, не уехало ли за экран)
+        root.update_idletasks()
+        log.info(
+            "LIFECYCLE window geometry=%s screen=%sx%s",
+            root.geometry(),
+            root.winfo_screenwidth(),
+            root.winfo_screenheight(),
+        )
+
+        log.info("LIFECYCLE mainloop_enter")
         root.mainloop()
-        log.info("mainloop() завершён")
+        log.info("LIFECYCLE mainloop_exit")
 
     except KeyboardInterrupt:
         log.warning("KeyboardInterrupt — завершение")
@@ -131,9 +136,7 @@ def main() -> None:
         import traceback
         traceback.print_exc()
     finally:
-        log.info("╔════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗")
-        log.info("║          ПРИЛОЖЕНИЕ ЗАВЕРШЕНО                                                ║")
-        log.info("╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝")
+        log.info("LIFECYCLE process_end")
         sys.exit(0)
 
 
