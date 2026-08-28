@@ -8,6 +8,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import json
 from tkinter import filedialog, messagebox, ttk
 
 from ..config.settings import Settings
@@ -49,6 +50,9 @@ PATH_VARS = [
     "cover_v_var",
     "whisperx_path_var",
     "output_var",
+    "h_intro_path", "h_mid_path", "h_outro_path",
+    "v_intro_path", "v_mid_path", "v_outro_path",
+    "s_intro_path", "s_mid_path", "s_outro_path",
 ]
 
 OTHER_VARS = [
@@ -56,21 +60,23 @@ OTHER_VARS = [
     "model_var",
     "whisper_lang_var",
     "whisper_dev_var",
-    "whisper_compute_var",
+    "whisper_comp_var",
     "target_lufs_var",
-    "voice_enhance_var",
-    "add_bgm_var",
-    "intro_gemini_var",
-    "keep_temp_var",
+    "h_intro_duration", "h_intro_position", "h_intro_custom_time",
+    "h_mid_position", "h_mid_custom_time",
+    "h_outro_duration", "h_outro_position", "h_outro_custom_time",
+    "v_intro_duration", "v_intro_position", "v_intro_custom_time",
+    "v_mid_position", "v_mid_custom_time",
+    "v_outro_duration", "v_outro_position", "v_outro_custom_time",
+    "s_intro_duration", "s_intro_position", "s_intro_custom_time",
+    "s_mid_position", "s_mid_custom_time",
+    "s_outro_duration", "s_outro_position", "s_outro_custom_time",
 ]
 
 BOOL_VARS = [
-    "h_enable_intro", "h_enable_middle", "h_enable_outro",
-    "h_enable_hooks", "h_enable_subtitles", "h_enable_strong_words",
-    "v_enable_intro", "v_enable_middle", "v_enable_outro",
-    "v_enable_hooks", "v_enable_subtitles", "v_enable_strong_words",
-    "s_enable_intro", "s_enable_middle", "s_enable_outro",
-    "s_enable_hooks", "s_enable_subtitles", "s_enable_strong_words",
+    "h_intro", "h_middle", "h_outro", "h_hooks", "h_subs", "h_strong",
+    "v_intro", "v_middle", "v_outro", "v_hooks", "v_subs", "v_strong",
+    "s_intro", "s_middle", "s_outro", "s_hooks", "s_subs", "s_strong",
     "voice_enhance_var", "add_bgm_var", "intro_gemini_var", "keep_temp_var",
 ]
 
@@ -153,6 +159,7 @@ class App:
 
     def _on_close(self) -> None:
         """Обработчик закрытия окна."""
+        log.info("[GUI] WM_DELETE_WINDOW running=%s", self.running)
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
         log.info("[GUI] ║ WM_DELETE_WINDOW — пользователь закрывает окно ║")
         log.info("[GUI] ╚══════════════════════════════════════════════╝")
@@ -167,12 +174,18 @@ class App:
             if not answer:
                 log.info("[GUI] Отмена закрытия — окно остаётся открытым")
                 return
+            self.cancel_event.set()
+            self._kill_ffmpeg_processes()
 
+        # Всегда: и при running=False
+        self._save_settings()
         log.info("[GUI] Уничтожение корневого окна...")
+        try:
+            self.root.quit()
+        except Exception:
+            pass
         self.root.destroy()
         log.info("[GUI] root.destroy() выполнен")
-
-        log.info("[GUI] Завершение главного цикла mainloop()...")
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
         log.info("[GUI] ║             ПРИЛОЖЕНИЕ ЗАКРЫТО               ║")
         log.info("[GUI] ╚══════════════════════════════════════════════╝")
@@ -368,6 +381,11 @@ class App:
         self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
 
         self._add_file_section(
+            left_col, "Intro / Middle / Outro",
+            [("Папка:", "imo_folder_var", "dir", [])],
+        )
+
+        self._add_file_section(
             left_col, "Фон для вертикального видео",
             [("Файл:", "bg_var", "file", [("Изображения/Видео", "*.jpg *.jpeg *.png *.mp4 *.mov")])],
         )
@@ -551,7 +569,6 @@ class App:
             intro_frame = ttk.Frame(section)
             intro_frame.pack(fill=tk.X, pady=(0, 8))
             ttk.Label(intro_frame, text="Intro:", style="Section.TLabel", width=8).pack(side=tk.LEFT)
-            imo_folder = getattr(self, "imo_folder_var", None)
             intro_path_var = tk.StringVar()
             setattr(self, f"{prefix}_intro_path", intro_path_var)
             ttk.Entry(intro_frame, textvariable=intro_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
@@ -720,6 +737,7 @@ class App:
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
             log.info(f"[SETTINGS] Модель: {self.settings.gemini_model}, ключей: {len(self.settings.gemini_api_keys)}")
+            self._save_settings()  # model only; API keys not in persistence lists
             win.destroy()
 
         ttk.Button(frame, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X, pady=(8, 0))
@@ -855,6 +873,9 @@ class App:
             os.path.dirname(self.settings.audio_path) if self.settings.audio_path else ""
         )
         log.info(f"[GUI] output_folder (final) = {self.settings.output_folder}")
+
+        # Persist GUI state before validate / pipeline
+        self._save_settings()
 
         # Переконфигурировать логирование в выходную папку
         log_file = os.path.join(self.settings.output_folder, "videomeyker.log")
@@ -1002,21 +1023,7 @@ class App:
         self.cancel_event.set()
         self._log("\n  ОТМЕНА: остановка после текущей стадии + убийство ffmpeg...")
         self.cancel_btn.configure(state=tk.DISABLED)
-        # Убить все ffmpeg процессы пользователя
-        try:
-            import psutil
-            for proc in psutil.process_iter(['pid', 'name']):
-                if proc.info['name'] and 'ffmpeg' in proc.info['name'].lower():
-                    try:
-                        proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-        except ImportError:
-            # psutil не установлен — fallback на pkill
-            import subprocess
-            subprocess.run(["pkill", "-f", "ffmpeg"], capture_output=True)
-        except Exception as e:
-            log.warning(f"[GUI] Не удалось убить ffmpeg: {e}")
+        self._kill_ffmpeg_processes()
 
     def _heartbeat(self) -> None:
         """Heartbeat для отслеживания состояния окна (каждые 5 секунд)."""
@@ -1055,35 +1062,66 @@ class App:
             self._save_settings()
             log.info(f"[WHISPER] Manual path set: {path}")
 
+    def _kill_ffmpeg_processes(self) -> None:
+        """Убить процессы ffmpeg пользователя."""
+        try:
+            import psutil
+            for proc in psutil.process_iter(["pid", "name"]):
+                if proc.info["name"] and "ffmpeg" in proc.info["name"].lower():
+                    try:
+                        proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except ImportError:
+            import subprocess
+            subprocess.run(["pkill", "-f", "ffmpeg"], capture_output=True)
+        except Exception as e:
+            log.warning("[GUI] Не удалось убить ffmpeg: %s", e)
+
     def _load_settings(self) -> None:
-        settings_file = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
-        if not os.path.exists(settings_file):
+        """Загрузить настройки из JSON. Только .set() на tk-переменные."""
+        if not os.path.exists(SETTINGS_FILE):
             return
         try:
-            import json
-            with open(settings_file, "r", encoding="utf-8") as f:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for key, value in data.items():
-                if hasattr(self, f"{key}_var"):
-                    getattr(self, f"{key}_var").set(value.strip() if isinstance(value, str) else value)
-                elif hasattr(self, key):
-                    setattr(self, key, value.strip() if isinstance(value, str) else value)
-            log.info(f"[GUI] Настройки загружены из {settings_file}")
+                if isinstance(value, str):
+                    value = value.strip()
+                # 1) атрибут = key (h_intro, h_intro_path, ...)
+                if hasattr(self, key):
+                    obj = getattr(self, key)
+                    if hasattr(obj, "set"):
+                        obj.set(value)
+                        continue
+                # 2) атрибут = key + "_var" (audio → audio_var)
+                var_name = f"{key}_var"
+                if hasattr(self, var_name):
+                    obj = getattr(self, var_name)
+                    if hasattr(obj, "set"):
+                        obj.set(value)
+                        continue
+            log.info("[GUI] Настройки загружены из %s", SETTINGS_FILE)
         except Exception as e:
-            log.warning(f"[GUI] Ошибка загрузки настроек: {e}")
+            log.warning("[GUI] Ошибка загрузки настроек: %s", e)
 
     def _save_settings(self) -> None:
         """Сохранить текущие настройки в JSON."""
         try:
             data = {}
             for name in PATH_VARS + OTHER_VARS + BOOL_VARS:
-                if hasattr(self, name):
-                    var = getattr(self, name)
-                    if hasattr(var, "get"):
-                        value = var.get()
-                        data[name[:-4]] = value.strip() if isinstance(value, str) else value
+                if not hasattr(self, name):
+                    continue
+                var = getattr(self, name)
+                if not hasattr(var, "get"):
+                    continue
+                value = var.get()
+                if isinstance(value, str):
+                    value = value.strip()
+                key = name[:-4] if name.endswith("_var") else name
+                data[key] = value
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            log.info(f"[GUI] Настройки сохранены в {SETTINGS_FILE}")
+            log.info("[GUI] Настройки сохранены в %s", SETTINGS_FILE)
         except Exception as e:
-            log.warning(f"[GUI] Ошибка сохранения настроек: {e}")
+            log.warning("[GUI] Ошибка сохранения настроек: %s", e)

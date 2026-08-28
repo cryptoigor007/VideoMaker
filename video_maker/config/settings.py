@@ -92,7 +92,7 @@ class Settings:
     def validate(self) -> list[str]:
         """Проверить настройки, вернуть список ошибок."""
         errors = []
-        if not self.gemini_api_key:
+        if not self.gemini_api_key and not self.gemini_api_keys:
             errors.append("Не задан Gemini API ключ")
         if not self.audio_path:
             errors.append("Не выбран аудиофайл")
