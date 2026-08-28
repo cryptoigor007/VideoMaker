@@ -178,7 +178,7 @@ def apply_loudnorm(
             measured_thresh = loudnorm_data.get("input_thresh", -20.0)
             offset = loudnorm_data.get("target_offset", 0.0)
             
-            _log(f"[АУДИО] Measured: I={measured_i:.1f} LUFS, TP={measured_tp:.1f}, LRA={measured_lra:.1f}")
+            _log(f"[АУДИО] Measured: I={float(measured_i):.1f} LUFS, TP={float(measured_tp):.1f}, LRA={float(measured_lra):.1f}")
             
             # Second pass: apply with measured values
             filter_str = (
