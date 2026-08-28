@@ -1,4 +1,4 @@
-"""Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро."""
+"""Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
 from __future__ import annotations
 
 import logging
@@ -34,13 +34,25 @@ def _ffprobe_video_info(video_path: str) -> tuple[int, int, float]:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
-    stream = data["streams"][0]
-    width = stream["width"]
-    height = stream["height"]
-    # Парсим fps из строки типа "30000/1001"
+    
+    streams = data.get("streams")
+    if not streams:
+        raise ValueError(f"Не удалось найти видеопоток в файле {video_path}")
+        
+    stream = streams[0]
+    width = stream.get("width", 3840)
+    height = stream.get("height", 2160)
+    
     fps_str = stream.get("r_frame_rate", "30/1")
-    num, den = map(int, fps_str.split("/"))
-    fps = num / den if den else 30.0
+    if "/" in fps_str:
+        num, den = map(int, fps_str.split("/"))
+        fps = num / den if den != 0 else 30.0
+    else:
+        try:
+            fps = float(fps_str)
+        except ValueError:
+            fps = 30.0
+
     return width, height, fps
 
 
@@ -61,20 +73,18 @@ def fit_video_to_duration(
     audio_file: str = "",
     log_fn=None,
 ) -> str:
-    """Нарезать и склеить видео под целевую длительность через concat demuxer с pre-scale."""
+    """Нарезать и склеить видео под целевую длительность в 4K (3840x2160) с ускорением M1."""
     _log = log_fn or log.info
-    _log(f"[ВИДЕО] Склейка {len(video_files)} файлов под {target_duration:.1f} сек")
+    _log(f"[ВИДЕО 4K M1] Склейка {len(video_files)} файлов под {target_duration:.1f} сек")
 
     if not video_files:
         raise FileNotFoundError("Нет видеофайлов для склейки")
 
     ffmpeg = _ffmpeg_bin()
 
-    # Перемешиваем файлы для случайного порядка
     shuffled = video_files.copy()
     random.shuffle(shuffled)
 
-    # Собираем файлы до покрытия target_duration
     selected = []
     total_dur = 0.0
     for vf in shuffled:
@@ -84,7 +94,6 @@ def fit_video_to_duration(
         if total_dur >= target_duration:
             break
 
-    # Если одного прохода не хватило — зацикливаем список
     while total_dur < target_duration:
         for vf in shuffled:
             dur = probe_duration(vf)
@@ -93,49 +102,47 @@ def fit_video_to_duration(
             if total_dur >= target_duration:
                 break
 
-    # Pre-scale: нормализуем все клипы к единому разрешению 1920x1080@30fps перед concat
-    # Это избегает проблем с concat demuxer при разных кодеках/разрешениях
     normalized_files = []
     tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
     os.makedirs(tmp_dir, exist_ok=True)
     
     for i, vf in enumerate(selected):
         norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
-        # Получаем исходное разрешение
-        src_w, src_h, _ = _ffprobe_video_info(vf)
-        # Нормализуем к 1920x1080 с сохранением пропорций
         cmd_norm = [
             ffmpeg, "-y",
             "-i", vf,
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30",
-            "-c:v", "libx264", "-preset", "fast",
+            "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
+            "-c:v", "h264_videotoolbox", "-b:v", "20M",
             "-pix_fmt", "yuv420p",
             "-an",
             norm_path,
         ]
-        subprocess.run(cmd_norm, capture_output=True, check=True)
+        res = subprocess.run(cmd_norm, capture_output=True, text=True)
+        if res.returncode != 0:
+            _log(f"[ВИДЕО] Ошибка нормализации клипа {vf}: {res.stderr}")
+            raise RuntimeError(f"Norm failed: {res.stderr}")
         normalized_files.append(norm_path)
 
-    # Создаем файл списка для concat demuxer
     list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
     with open(list_path, "w") as f:
         f.writelines(f"file '{nf}'\n" for nf in normalized_files)
 
-    # Concat demuxer
     cmd = [
         ffmpeg, "-y",
         "-f", "concat", "-safe", "0",
         "-i", list_path,
         "-t", str(target_duration),
-        "-c:v", "libx264", "-preset", "fast",
+        "-c:v", "h264_videotoolbox", "-b:v", "20M",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         "-an",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        _log(f"[ВИДЕО] Ошибка concat: {res.stderr}")
+        raise RuntimeError(f"Concat failed: {res.stderr}")
 
-    # Удаляем временные файлы
     for p in [list_path] + normalized_files:
         try:
             os.remove(p)
@@ -146,7 +153,6 @@ def fit_video_to_duration(
     except OSError:
         pass
 
-    # Накладываем аудио если есть
     if audio_file and os.path.exists(audio_file):
         from .audio import replace_audio
         tmp_out = output_path + ".tmp.mp4"
@@ -157,6 +163,12 @@ def fit_video_to_duration(
     return output_path
 
 
+def _even(n: int) -> int:
+    """Округлить до чётного (требуется для yuv420p / libx264)."""
+    n = int(n)
+    return n if n % 2 == 0 else n - 1
+
+
 def vstack_video_image(
     video_path: str,
     background_path: str,
@@ -164,59 +176,49 @@ def vstack_video_image(
     log_fn=None,
     top_ratio: float = 0.6,
 ) -> str:
-    """vstack: видео сверху + фон/изображение снизу (9:16) с динамическим разрешением.
-    top_ratio: пропорция верхней части (0.0-1.0), по умолчанию 0.6 (60% верха, 40% низ)."""
+    """vstack: видео сверху + фон/изображение снизу (4K 2160x3840) с ускорением M1."""
     _log = log_fn or log.info
-    _log(f"[ВИДЕО] Создание вертикального видео (vstack), top_ratio={top_ratio}")
+    _log(f"[ВИДЕО 4K M1] Создание вертикального видео (vstack), top_ratio={top_ratio}")
 
     ffmpeg = _ffmpeg_bin()
 
-    # Получаем разрешение основного видео
-    main_w, main_h, _ = _ffprobe_video_info(video_path)
+    target_w = 2160
+    target_h = 3840
+    top_h = _even(int(target_h * top_ratio))
+    bottom_h = _even(target_h - top_h)
+    target_h = top_h + bottom_h
 
-    # Целевое разрешение 9:16 на основе ширины основного видео
-    target_w = main_w
-    target_h = int(main_w * 16 / 9)  # 9:16 aspect ratio
+    _log(f"[ВИДЕО 4K] vstack size={target_w}x{target_h} top={top_h} bottom={bottom_h}")
 
-    # Высота верхней части (основное видео) и нижней (фон)
-    top_h = int(target_h * top_ratio)
-    bottom_h = target_h - top_h
-
-    # Проверяем расширение фона
     ext = os.path.splitext(background_path)[1].lower()
     if ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif"):
-        # Изображение → конвертируем в видео нужной длительности
         from .audio import probe_duration
         dur = probe_duration(video_path)
-
-        filter_complex = (
-            f"[0:v]scale={target_w}:{top_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2[v0];"
-            f"[1:v]scale={target_w}:{bottom_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2,"
-            f"loop=loop=-1:size=1:start,trim=duration={dur}[v1];"
-            f"[v0][v1]vstack=inputs=2[out]"
-        )
 
         cmd = [
             ffmpeg, "-y",
             "-i", video_path,
-            "-i", background_path,
-            "-filter_complex", filter_complex,
+            "-loop", "1", "-i", background_path,
+            "-filter_complex", (
+                f"[0:v]scale={target_w}:{top_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];"
+                f"[1:v]scale={target_w}:{bottom_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];"
+                f"[v0][v1]vstack=inputs=2[out]"
+            ),
             "-map", "[out]",
-            "-c:v", "libx264", "-preset", "fast",
+            "-c:v", "h264_videotoolbox", "-b:v", "20M",
             "-pix_fmt", "yuv420p",
             "-r", "30",
             "-t", str(dur),
             output_path,
         ]
     else:
-        # Видео → vstack напрямую
         filter_complex = (
             f"[0:v]scale={target_w}:{top_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2[v0];"
+            f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];"
             f"[1:v]scale={target_w}:{bottom_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2[v1];"
+            f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];"
             f"[v0][v1]vstack=inputs=2[out]"
         )
 
@@ -226,16 +228,19 @@ def vstack_video_image(
             "-i", background_path,
             "-filter_complex", filter_complex,
             "-map", "[out]",
-            "-c:v", "libx264", "-preset", "fast",
+            "-c:v", "h264_videotoolbox", "-b:v", "20M",
             "-pix_fmt", "yuv420p",
             "-r", "30",
             "-shortest",
             output_path,
         ]
 
-    subprocess.run(cmd, capture_output=True, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "")[-800:]
+        _log(f"[ВИДЕО] vstack ffmpeg error: {err}")
+        raise RuntimeError(f"vstack failed (exit {result.returncode}): {err}")
 
-    # Восстанавливаем аудио из исходного видео (master_16x9)
     from .audio import replace_audio
     tmp_out = output_path + ".tmp.mp4"
     os.rename(output_path, tmp_out)
@@ -252,7 +257,7 @@ def cut_segment(
     output_path: str,
     log_fn=None,
 ) -> str:
-    """Обрезать сегмент из видео."""
+    """Ообрезать сегмент из видео."""
     _log = log_fn or log.info
     _log(f"[ВИДЕО] Обрезка: {start:.1f} — {start + duration:.1f}")
 
@@ -262,11 +267,14 @@ def cut_segment(
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "libx264", "-preset", "fast",
+        "-c:v", "h264_videotoolbox", "-b:v", "20M",
         "-c:a", "aac",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        _log(f"[ВИДЕО] Ошибка обрезки: {res.stderr}")
+        raise RuntimeError(f"cut_segment failed: {res.stderr}")
     return output_path
 
 
@@ -283,13 +291,9 @@ def add_intro_outro_mid(
     explicit_middle: str = "",
     explicit_outro: str = "",
 ) -> str:
-    """Добавить интро/аутро/мидл к видео (умная вставка middle).
-    Аудио сохраняется из исходного video_path (replace_audio после склейки).
-    Разрешение подстраивается под исходное видео.
-    Если передан analysis с middle timing — используется он, иначе середина видео.
-    explicit_* — явные пути из GUI (приоритет над автопоиском в папке)."""
+    """Добавить интро/аутро/мидл к видео."""
     _log = log_fn or log.info
-    _log("[ВИДЕО] Добавление интро/аутро/мидл...")
+    _log("[ВИДЕО 4K M1] Добавление интро/аутро/мидл...")
 
     if not (enable_intro or enable_middle or enable_outro):
         return video_path
@@ -299,11 +303,9 @@ def add_intro_outro_mid(
         output_dir = os.path.dirname(video_path)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Получаем разрешение и длительность основного видео
     main_w, main_h, _ = _ffprobe_video_info(video_path)
     main_dur = probe_duration(video_path)
 
-    # Определяем точку вставки middle
     if analysis and enable_middle:
         middle_timing = analysis.get("middle", [])
         if middle_timing and isinstance(middle_timing, list) and len(middle_timing) > 0:
@@ -314,17 +316,9 @@ def add_intro_outro_mid(
     else:
         mid_point = main_dur / 2
 
-    # Собираем пути к файлам: явные из GUI → автопоиск в папке
-    intro_path = ""
-    middle_path = ""
-    outro_path = ""
-
-    if explicit_intro and os.path.isfile(explicit_intro):
-        intro_path = explicit_intro
-    if explicit_middle and os.path.isfile(explicit_middle):
-        middle_path = explicit_middle
-    if explicit_outro and os.path.isfile(explicit_outro):
-        outro_path = explicit_outro
+    intro_path = explicit_intro if explicit_intro and os.path.isfile(explicit_intro) else ""
+    middle_path = explicit_middle if explicit_middle and os.path.isfile(explicit_middle) else ""
+    outro_path = explicit_outro if explicit_outro and os.path.isfile(explicit_outro) else ""
 
     folder_files: list[str] = []
     if intro_outro_folder and os.path.isdir(intro_outro_folder):
@@ -332,8 +326,6 @@ def add_intro_outro_mid(
             folder_files = os.listdir(intro_outro_folder)
         except OSError as e:
             _log(f"[ВИДЕО] Не удалось прочитать папку intro/middle/outro: {e}")
-    elif intro_outro_folder:
-        _log(f"[ВИДЕО] Папка intro/middle/outro не найдена: {intro_outro_folder}")
 
     if enable_intro and not intro_path and folder_files:
         intro_candidates = [
@@ -362,34 +354,22 @@ def add_intro_outro_mid(
         if outro_candidates:
             outro_path = outro_candidates[0]
 
-    # Если нет файлов для добавления — возвращаем исходное
     if not (intro_path or middle_path or outro_path):
         _log("[ВИДЕО] Файлы интро/мидл/аутро не найдены, пропускаем")
         return video_path
 
-    # Строим filter_complex для склейки
-    # Middle вставляется в середину основного видео
     inputs = [video_path]
-    input_idx = 1
 
     if intro_path:
         inputs.append(intro_path)
-        input_idx += 1
-
-    # Основное видео разбиваем на две части для вставки middle
     if middle_path:
         inputs.append(middle_path)
-        input_idx += 1
-
     if outro_path:
         inputs.append(outro_path)
-        input_idx += 1
 
-    # Собираем итоговый filter_complex с динамическим разрешением
     scale_filter = f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2"
 
     if middle_path:
-        # Сложная схема с middle в середине
         filter_parts = []
         idx = 1
         if intro_path:
@@ -413,7 +393,6 @@ def add_intro_outro_mid(
         filter_parts.append(f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]")
         filter_complex = "".join(filter_parts)
     else:
-        # Простая схема: intro + main + outro
         filter_parts = []
         idx = 1
         concat_inputs = []
@@ -435,14 +414,16 @@ def add_intro_outro_mid(
         *[arg for inp in inputs for arg in ("-i", inp)],
         "-filter_complex", filter_complex,
         "-map", "[outv]",
-        "-c:v", "libx264", "-preset", "fast",
+        "-c:v", "h264_videotoolbox", "-b:v", "20M",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        _log(f"[ВИДЕО] Ошибка добавления intro/outro: {res.stderr}")
+        raise RuntimeError(f"add_intro_outro_mid failed: {res.stderr}")
 
-    # Восстанавливаем аудио из исходного видео
     from .audio import replace_audio
     tmp_out = output_path + ".tmp.mp4"
     os.rename(output_path, tmp_out)
@@ -452,5 +433,4 @@ def add_intro_outro_mid(
     return output_path
 
 
-# probe_duration перенесен в engines/audio.py для дедупликации
 from .audio import probe_duration
