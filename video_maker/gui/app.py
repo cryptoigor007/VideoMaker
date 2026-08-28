@@ -35,6 +35,45 @@ COLORS = {
     "log_bg":       "#0D1117",
 }
 
+# ─── Settings persistence ───────────────────────────────────────────────
+SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+
+PATH_VARS = [
+    "audio_var",
+    "broll_h_var",
+    "broll_v_var",
+    "bg_var",
+    "bgm_var",
+    "imo_folder_var",
+    "cover_h_var",
+    "cover_v_var",
+    "whisperx_path_var",
+    "output_var",
+]
+
+OTHER_VARS = [
+    "series_var",
+    "model_var",
+    "whisper_lang_var",
+    "whisper_dev_var",
+    "whisper_compute_var",
+    "target_lufs_var",
+    "voice_enhance_var",
+    "add_bgm_var",
+    "intro_gemini_var",
+    "keep_temp_var",
+]
+
+BOOL_VARS = [
+    "h_enable_intro", "h_enable_middle", "h_enable_outro",
+    "h_enable_hooks", "h_enable_subtitles", "h_enable_strong_words",
+    "v_enable_intro", "v_enable_middle", "v_enable_outro",
+    "v_enable_hooks", "v_enable_subtitles", "v_enable_strong_words",
+    "s_enable_intro", "s_enable_middle", "s_enable_outro",
+    "s_enable_hooks", "s_enable_subtitles", "s_enable_strong_words",
+    "voice_enhance_var", "add_bgm_var", "intro_gemini_var", "keep_temp_var",
+]
+
 
 class App:
     """Главное окно приложения ВидеоМейкер."""
@@ -79,6 +118,8 @@ class App:
         self.model_var = tk.StringVar(value=self.settings.gemini_model)
         self.running = False
         self.cancel_event = threading.Event()
+        self.whisperx_path_var = tk.StringVar(value=self.settings.whisperx_path)
+        self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
         log.info("[GUI] self.running = False")
 
         # Привязываем закрытие окна
@@ -102,6 +143,9 @@ class App:
         log.info("[GUI] Вызов _load_settings()...")
         self._load_settings()
         log.info("[GUI] _load_settings() завершён")
+
+        # Автопоиск whisperx после загрузки настроек
+        self._find_whisperx()
 
         log.info("[GUI] ═══════════════════════════════════════════════")
         log.info("[GUI] App.__init__() ЗАВЕРШЁН — окно готово")
@@ -387,8 +431,14 @@ class App:
         ttk.Combobox(comp_row, textvariable=self.whisper_comp_var,
                      values=["auto", "int8", "float16", "float32"], state="readonly", width=10).pack(side=tk.LEFT)
         
-        # WhisperX path
-        self._add_browse_row(whisper_frame, "WhisperX путь:", "whisperx_path_var", "file", [("Исполняемые", "*")])
+        # WhisperX status (read-only, auto-detected)
+        status_row = ttk.Frame(whisper_frame)
+        status_row.pack(fill=tk.X, pady=2)
+        ttk.Label(status_row, text="WhisperX:", width=14).pack(side=tk.LEFT)
+        self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
+        ttk.Label(status_row, textvariable=self.whisperx_status_var, foreground=COLORS["text_dim"]).pack(side=tk.LEFT)
+        ttk.Button(status_row, text="Найти", width=8, command=self._find_whisperx).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(status_row, text="Вручную", width=8, command=lambda: self._browse_whisperx()).pack(side=tk.LEFT)
 
         # Этапы обработки
         checks_frame = self._add_section(right_col, "Этапы обработки")
@@ -608,8 +658,9 @@ class App:
         path = filedialog.askdirectory()
         log.info(f"[GUI] Выбрана папка: {path or '(пусто)'}")
         if path:
-            var.set(path)
+            var.set(path.strip())
             log.info(f"[GUI] {name} = {path}")
+            self._save_settings()
 
     def _browse_file(self, var: tk.StringVar, name: str, filetypes=None) -> None:
         log.info(f"[GUI] Диалог выбора файла: {name}")
@@ -619,8 +670,9 @@ class App:
         path = filedialog.askopenfilename(filetypes=types)
         log.info(f"[GUI] Выбран файл: {path or '(пусто)'}")
         if path:
-            var.set(path)
+            var.set(path.strip())
             log.info(f"[GUI] {name} = {path}")
+            self._save_settings()
 
     # ─── Файловые диалоги (обратная совместимость) ────────────────────────
 
@@ -808,7 +860,6 @@ class App:
         log_file = os.path.join(self.settings.output_folder, "videomeyker.log")
         from video_maker.main import setup_logging
         setup_logging(log_file)
-        log = logging.getLogger(__name__)
         log.info(f"[GUI] Логирование перенастроено в {log_file}")
 
         errors = self.settings.validate()
@@ -979,36 +1030,60 @@ class App:
         )
         self.root.after(5000, self._heartbeat)
 
+    def _find_whisperx(self) -> None:
+        """Найти whisperx и обновить статус."""
+        from ..engines.whisperx_resolve import resolve_whisperx
+        path = resolve_whisperx(self.whisperx_path_var.get().strip())
+        if path:
+            self.whisperx_path_var.set(path)
+            self.whisperx_status_var.set(f"✓ {path}")
+            self._save_settings()
+            log.info(f"[WHISPER] Found: {path}")
+        else:
+            self.whisperx_status_var.set("✗ Не найден")
+            log.warning("[WHISPER] Not found")
+
+    def _browse_whisperx(self) -> None:
+        """Ручной выбор whisperx бинарника."""
+        path = filedialog.askopenfilename(
+            title="Выберите whisperx",
+            filetypes=[("Исполняемые файлы", "*"), ("Все файлы", "*.*")]
+        )
+        if path:
+            self.whisperx_path_var.set(path.strip())
+            self.whisperx_status_var.set(f"✓ {path}")
+            self._save_settings()
+            log.info(f"[WHISPER] Manual path set: {path}")
+
     def _load_settings(self) -> None:
-        """Загрузить сохранённые настройки из JSON."""
         settings_file = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
-        if os.path.exists(settings_file):
-            try:
-                import json
-                with open(settings_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                # Применяем настройки к GUI
-                for key, value in data.items():
-                    if hasattr(self, f"{key}_var"):
-                        getattr(self, f"{key}_var").set(value)
-                    elif hasattr(self, key):
-                        setattr(self, key, value)
-                log.info(f"[GUI] Настройки загружены из {settings_file}")
-            except Exception as e:
-                log.warning(f"[GUI] Ошибка загрузки настроек: {e}")
+        if not os.path.exists(settings_file):
+            return
+        try:
+            import json
+            with open(settings_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for key, value in data.items():
+                if hasattr(self, f"{key}_var"):
+                    getattr(self, f"{key}_var").set(value.strip() if isinstance(value, str) else value)
+                elif hasattr(self, key):
+                    setattr(self, key, value.strip() if isinstance(value, str) else value)
+            log.info(f"[GUI] Настройки загружены из {settings_file}")
+        except Exception as e:
+            log.warning(f"[GUI] Ошибка загрузки настроек: {e}")
 
     def _save_settings(self) -> None:
         """Сохранить текущие настройки в JSON."""
-        settings_file = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
         try:
-            import json
             data = {}
-            # Собираем настройки из GUI
-            for attr in dir(self):
-                if attr.endswith("_var") and isinstance(getattr(self, attr), tk.Variable):
-                    data[attr[:-4]] = getattr(self, attr).get()
-            with open(settings_file, "w", encoding="utf-8") as f:
+            for name in PATH_VARS + OTHER_VARS + BOOL_VARS:
+                if hasattr(self, name):
+                    var = getattr(self, name)
+                    if hasattr(var, "get"):
+                        value = var.get()
+                        data[name[:-4]] = value.strip() if isinstance(value, str) else value
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            log.info(f"[GUI] Настройки сохранены в {settings_file}")
+            log.info(f"[GUI] Настройки сохранены в {SETTINGS_FILE}")
         except Exception as e:
             log.warning(f"[GUI] Ошибка сохранения настроек: {e}")

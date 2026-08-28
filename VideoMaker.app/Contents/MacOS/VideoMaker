@@ -1,0 +1,5 @@
+#!/bin/bash
+cd "$(dirname "$0")/../.."
+export PYTHONPATH="/Users/dreamstore/video_maker:${PYTHONPATH}"
+source .venv/bin/activate 2>/dev/null || true
+python -m video_maker.main 2>&1 | tee -a "$HOME/video_maker/videomeyker.log"

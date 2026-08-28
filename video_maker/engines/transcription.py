@@ -5,24 +5,13 @@ import json
 import logging
 import os
 import platform
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
+from .whisperx_resolve import resolve_whisperx
+
 log = logging.getLogger(__name__)
-
-
-def _find_whisperx() -> str | None:
-    """Найти бинарник whisperx."""
-    candidates = [
-        shutil.which("whisperx"),
-        str(Path.home() / "whisperx" / "bin" / "whisperx"),
-    ]
-    for c in candidates:
-        if c and Path(c).exists():
-            return c
-    return None
 
 
 def _resolve_device_compute(device: str, compute_type: str) -> tuple[str, str]:
@@ -57,10 +46,13 @@ def transcribe(
     _log = log_fn or log.info
     _log(f"[WHISPER] Модель: {model_name}")
 
-    whisper_bin = whisperx_path or _find_whisperx()
+    # Resolve whisperx path: explicit -> saved -> auto-detect
+    whisper_bin = resolve_whisperx(whisperx_path)
     if not whisper_bin:
         raise RuntimeError(
-            "WhisperX не найден. Установите whisperx или укажите whisperx_path."
+            "WhisperX не найден.\n"
+            "Установите: pip install whisperx\n"
+            "Или укажите whisperx_path в настройках."
         )
 
     _log(f"[WHISPER] Бинарник: {whisper_bin}")
