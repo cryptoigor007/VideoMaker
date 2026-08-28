@@ -119,37 +119,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def _filter_and_shift_events(events: list[dict], clip: dict | None) -> list[dict]:
-    """Фильтровать события по clip диапазону и сдвинуть тайминги."""
-    if not clip:
-        return events
-
-    clip_start = clip.get("start", 0)
-    clip_end = clip.get("end", 0)
-    clip_dur = clip_end - clip_start
-
-    filtered = []
-    for ev in events:
-        ev_start = ev["start"]
-        ev_end = ev["end"]
-
-        # Проверяем пересечение с clip
-        if ev_end <= clip_start or ev_start >= clip_end:
-            continue  # Событие полностью вне клипа
-
-        # Сдвигаем тайминги относительно начала клипа
-        new_start = max(0, ev_start - clip_start)
-        new_end = min(clip_dur, ev_end - clip_start)
-
-        if new_end > new_start:
-            new_ev = ev.copy()
-            new_ev["start"] = new_start
-            new_ev["end"] = new_end
-            filtered.append(new_ev)
-
-    return filtered
-
-
 def _escape_ass_path(path: str) -> str:
     """Экранировать путь для ASS фильтра ffmpeg."""
     # ASS фильтр требует экранирования двоеточия, обратного слэша и запятых
@@ -168,18 +137,18 @@ def burn_subtitles(
     output_path: str = "",
     log_fn=None,
     transcription: dict = None,
-    use_aisie: bool = False,
+    use_aisie: bool = True,
 ) -> str:
     """Наложить субтитры и хуки на видео через ASS.
     Поддерживает динамическое разрешение, хуки с явными таймингами, strong_words без forced upper.
-    Опционально: улучшение через AISIE pipeline (требует transcription)."""
+    AISIE pipeline включён по умолчанию (требует transcription)."""
     _log = log_fn or log.info
     _log("[СУБТИТРЫ] Наложение субтитров...")
 
     if not output_path:
         output_path = video_path + ".subtitled.mp4"
 
-    # AISIE enhancement (опционально)
+    # AISIE enhancement (всегда, если есть transcription)
     if use_aisie and transcription:
         try:
             from .aisie_integration import enhance_analysis_with_aisie

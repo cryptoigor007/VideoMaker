@@ -25,6 +25,17 @@ class PipelineContext:
     output_folder: str = ""
     series_name: str = ""
 
+    # Явные пути Intro/Middle/Outro из вкладки GUI (приоритет над автопоиском в папке)
+    h_intro_path: str = ""
+    h_mid_path: str = ""
+    h_outro_path: str = ""
+    v_intro_path: str = ""
+    v_mid_path: str = ""
+    v_outro_path: str = ""
+    s_intro_path: str = ""
+    s_mid_path: str = ""
+    s_outro_path: str = ""
+
     # Результаты стадий
     audio_duration: float = 0.0
     transcription: dict = field(default_factory=dict)
@@ -154,6 +165,7 @@ class GeminiStage(Stage):
             api_keys=ctx.gemini_api_keys,
             model_name=ctx.gemini_model,
             intro_gemini=ctx.intro_gemini,
+            series_name=ctx.series_name,
             log_fn=ctx.log,
         )
         ctx.log("[GEMINI] Пакет ANALYSIS готов")

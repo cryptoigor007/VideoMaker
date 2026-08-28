@@ -53,7 +53,7 @@ cp .env.example .env
 ```
 
 ## Логи
-Логи сохраняются в `~/video_maker/videomeyker.log`
+Логи сохраняются в `~/video_maker/videomaker.log`
 
 ## Тесты
 ```bash

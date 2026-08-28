@@ -7,7 +7,7 @@ import sys
 import tkinter as tk
 import types
 
-DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomeyker.log")
+DEFAULT_LOG_FILE = os.path.expanduser("~/video_maker/videomaker.log")
 
 
 def _bring_window_to_front(root: tk.Tk) -> None:

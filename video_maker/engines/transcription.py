@@ -35,7 +35,7 @@ def _resolve_device_compute(device: str, compute_type: str) -> tuple[str, str]:
 
 def transcribe(
     audio_path: str,
-    model_name: str = "large-v3",
+    model_name: str = "base",
     whisperx_path: str = "",
     language: str = "ru",
     device: str = "auto",

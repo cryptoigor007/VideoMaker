@@ -15,5 +15,6 @@ from .placement import (  # noqa: F401
 )
 from .scoring import AttentionResult, AttentionScorer  # noqa: F401
 from .timing import SemanticGroup, TimingEngine  # noqa: F401
+from .styles import HOOK_TYPES, VISUAL_WEIGHTS  # noqa: F401
 from .validate import Issue, StyleValidator  # noqa: F401
 

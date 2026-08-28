@@ -279,11 +279,15 @@ def add_intro_outro_mid(
     output_dir: str = "",
     log_fn=None,
     analysis: dict | None = None,
+    explicit_intro: str = "",
+    explicit_middle: str = "",
+    explicit_outro: str = "",
 ) -> str:
     """Добавить интро/аутро/мидл к видео (умная вставка middle).
     Аудио сохраняется из исходного video_path (replace_audio после склейки).
     Разрешение подстраивается под исходное видео.
-    Если передан analysis с middle timing — используется он, иначе середина видео."""
+    Если передан analysis с middle timing — используется он, иначе середина видео.
+    explicit_* — явные пути из GUI (приоритет над автопоиском в папке)."""
     _log = log_fn or log.info
     _log("[ВИДЕО] Добавление интро/аутро/мидл...")
 
@@ -310,33 +314,49 @@ def add_intro_outro_mid(
     else:
         mid_point = main_dur / 2
 
-    # Собираем пути к файлам
+    # Собираем пути к файлам: явные из GUI → автопоиск в папке
     intro_path = ""
     middle_path = ""
     outro_path = ""
 
-    if enable_intro:
+    if explicit_intro and os.path.isfile(explicit_intro):
+        intro_path = explicit_intro
+    if explicit_middle and os.path.isfile(explicit_middle):
+        middle_path = explicit_middle
+    if explicit_outro and os.path.isfile(explicit_outro):
+        outro_path = explicit_outro
+
+    folder_files: list[str] = []
+    if intro_outro_folder and os.path.isdir(intro_outro_folder):
+        try:
+            folder_files = os.listdir(intro_outro_folder)
+        except OSError as e:
+            _log(f"[ВИДЕО] Не удалось прочитать папку intro/middle/outro: {e}")
+    elif intro_outro_folder:
+        _log(f"[ВИДЕО] Папка intro/middle/outro не найдена: {intro_outro_folder}")
+
+    if enable_intro and not intro_path and folder_files:
         intro_candidates = [
             os.path.join(intro_outro_folder, f)
-            for f in os.listdir(intro_outro_folder)
+            for f in folder_files
             if f.lower().startswith("intro") and f.lower().endswith((".mp4", ".mov"))
         ]
         if intro_candidates:
             intro_path = intro_candidates[0]
 
-    if enable_middle:
+    if enable_middle and not middle_path and folder_files:
         middle_candidates = [
             os.path.join(intro_outro_folder, f)
-            for f in os.listdir(intro_outro_folder)
+            for f in folder_files
             if f.lower().startswith("middle") and f.lower().endswith((".mp4", ".mov"))
         ]
         if middle_candidates:
             middle_path = middle_candidates[0]
 
-    if enable_outro:
+    if enable_outro and not outro_path and folder_files:
         outro_candidates = [
             os.path.join(intro_outro_folder, f)
-            for f in os.listdir(intro_outro_folder)
+            for f in folder_files
             if f.lower().startswith("outro") and f.lower().endswith((".mp4", ".mov"))
         ]
         if outro_candidates:

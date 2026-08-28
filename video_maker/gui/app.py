@@ -58,6 +58,7 @@ PATH_VARS = [
 OTHER_VARS = [
     "series_var",
     "model_var",
+    "whisper_model_var",
     "whisper_lang_var",
     "whisper_dev_var",
     "whisper_comp_var",
@@ -424,6 +425,19 @@ class App:
 
         # WhisperX настройки
         whisper_frame = self._add_section(right_col, "WhisperX (транскрибация)")
+
+        # Model size
+        model_row = ttk.Frame(whisper_frame)
+        model_row.pack(fill=tk.X, pady=2)
+        ttk.Label(model_row, text="Модель:", width=14).pack(side=tk.LEFT)
+        self.whisper_model_var = tk.StringVar(value=self.settings.whisper_model or "base")
+        ttk.Combobox(
+            model_row,
+            textvariable=self.whisper_model_var,
+            values=["tiny", "base", "small", "medium", "large-v2", "large-v3"],
+            state="readonly",
+            width=12,
+        ).pack(side=tk.LEFT)
         
         # Language
         lang_row = ttk.Frame(whisper_frame)
@@ -821,13 +835,18 @@ class App:
 
         # WhisperX settings
         self.settings.whisperx_path = self.whisperx_path_var.get()
+        self.settings.whisper_model = self.whisper_model_var.get() or "base"
         self.settings.whisper_language = self.whisper_lang_var.get()
         self.settings.whisper_device = self.whisper_dev_var.get()
         self.settings.whisper_compute_type = self.whisper_comp_var.get()
 
         # Other settings
         self.settings.keep_temp_files = self.keep_temp_var.get()
-        self.settings.target_lufs = float(self.target_lufs_var.get() or -14.0)
+        try:
+            self.settings.target_lufs = float(self.target_lufs_var.get().strip() or -14.0)
+        except (ValueError, TypeError, AttributeError):
+            self.settings.target_lufs = -14.0
+            log.warning("[GUI] Некорректный target_lufs, используем -14.0")
 
         log.info(f"[GUI] audio_path = {self.settings.audio_path}")
         log.info(f"[GUI] broll_horizontal = {self.settings.broll_horizontal}")
@@ -878,7 +897,7 @@ class App:
         self._save_settings()
 
         # Переконфигурировать логирование в выходную папку
-        log_file = os.path.join(self.settings.output_folder, "videomeyker.log")
+        log_file = os.path.join(self.settings.output_folder, "videomaker.log")
         from video_maker.main import setup_logging
         setup_logging(log_file)
         log.info(f"[GUI] Логирование перенастроено в {log_file}")
@@ -959,6 +978,15 @@ class App:
                 s_enable_hooks=self.settings.s_enable_hooks,
                 s_enable_subtitles=self.settings.s_enable_subtitles,
                 s_enable_strong_words=self.settings.s_enable_strong_words,
+                h_intro_path=self._var_get("h_intro_path"),
+                h_mid_path=self._var_get("h_mid_path"),
+                h_outro_path=self._var_get("h_outro_path"),
+                v_intro_path=self._var_get("v_intro_path"),
+                v_mid_path=self._var_get("v_mid_path"),
+                v_outro_path=self._var_get("v_outro_path"),
+                s_intro_path=self._var_get("s_intro_path"),
+                s_mid_path=self._var_get("s_mid_path"),
+                s_outro_path=self._var_get("s_outro_path"),
                 log_callback=self._log,
             )
             log.info("[PIPELINE] PipelineContext создан")
@@ -1063,20 +1091,31 @@ class App:
             log.info(f"[WHISPER] Manual path set: {path}")
 
     def _kill_ffmpeg_processes(self) -> None:
-        """Убить процессы ffmpeg пользователя."""
+        """Убить только дочерние ffmpeg-процессы текущего процесса (не все ffmpeg в системе)."""
         try:
             import psutil
-            for proc in psutil.process_iter(["pid", "name"]):
-                if proc.info["name"] and "ffmpeg" in proc.info["name"].lower():
-                    try:
-                        proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+            current = psutil.Process(os.getpid())
+            for child in current.children(recursive=True):
+                try:
+                    name = (child.name() or "").lower()
+                    if "ffmpeg" in name:
+                        child.kill()
+                        log.info("[GUI] Убит дочерний ffmpeg pid=%s", child.pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
         except ImportError:
-            import subprocess
-            subprocess.run(["pkill", "-f", "ffmpeg"], capture_output=True)
+            # Без psutil — не трогаем чужие ffmpeg (pkill слишком агрессивен)
+            log.warning("[GUI] psutil не установлен — пропуск убийства ffmpeg")
         except Exception as e:
             log.warning("[GUI] Не удалось убить ffmpeg: %s", e)
+
+    def _var_get(self, name: str) -> str:
+        """Безопасно прочитать tk-переменную по имени."""
+        obj = getattr(self, name, None)
+        if obj is not None and hasattr(obj, "get"):
+            val = obj.get()
+            return val.strip() if isinstance(val, str) else str(val or "")
+        return ""
 
     def _load_settings(self) -> None:
         """Загрузить настройки из JSON. Только .set() на tk-переменные."""

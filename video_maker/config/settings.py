@@ -96,17 +96,17 @@ class Settings:
             errors.append("Не задан Gemini API ключ")
         if not self.audio_path:
             errors.append("Не выбран аудиофайл")
-        if not os.path.exists(self.audio_path):
+        elif not os.path.exists(self.audio_path):
             errors.append(f"Аудиофайл не найден: {self.audio_path}")
         if not self.broll_horizontal:
             errors.append("Не выбрана папка B-roll горизонтальный")
-        if not os.path.exists(self.broll_horizontal):
+        elif not os.path.exists(self.broll_horizontal):
             errors.append(f"Папка B-roll горизонтальный не найдена: {self.broll_horizontal}")
         if self.broll_vertical and not os.path.exists(self.broll_vertical):
             errors.append(f"Папка B-roll вертикальный не найдена: {self.broll_vertical}")
         if not self.output_folder:
             errors.append("Не выбрана папка вывода")
-        if not os.path.exists(self.output_folder):
+        elif not os.path.exists(self.output_folder):
             errors.append(f"Папка вывода не найдена: {self.output_folder}")
         if self.bgm_folder and not os.path.exists(self.bgm_folder):
             errors.append(f"Папка BGM не найдена: {self.bgm_folder}")

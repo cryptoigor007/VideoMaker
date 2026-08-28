@@ -35,6 +35,10 @@ class FinalHorizontal(Stage):
                 enable_outro=ctx.h_enable_outro,
                 output_dir=output_dir,
                 log_fn=ctx.log,
+                analysis=ctx.analysis,
+                explicit_intro=ctx.h_intro_path,
+                explicit_middle=ctx.h_mid_path,
+                explicit_outro=ctx.h_outro_path,
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -48,6 +52,8 @@ class FinalHorizontal(Stage):
                 enable_strong_words=ctx.h_enable_strong_words,
                 output_path=output_path,
                 log_fn=ctx.log,
+                transcription=ctx.transcription,
+                use_aisie=True,
             )
 
         # Аудио пост-обработка: voice_enhance и BGM (только если включены чекбоксы)
@@ -136,6 +142,10 @@ class FinalVertical(Stage):
                 enable_outro=ctx.v_enable_outro,
                 output_dir=output_dir,
                 log_fn=ctx.log,
+                analysis=ctx.analysis,
+                explicit_intro=ctx.v_intro_path,
+                explicit_middle=ctx.v_mid_path,
+                explicit_outro=ctx.v_outro_path,
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -149,6 +159,8 @@ class FinalVertical(Stage):
                 enable_strong_words=ctx.v_enable_strong_words,
                 output_path=output_path,
                 log_fn=ctx.log,
+                transcription=ctx.transcription,
+                use_aisie=True,
             )
 
         # Аудио пост-обработка: voice_enhance и BGM (только если включены чекбоксы)
