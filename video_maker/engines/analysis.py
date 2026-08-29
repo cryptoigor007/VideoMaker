@@ -49,46 +49,77 @@ def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool =
 - Если не видишь подходящего момента — верни start=0, end=0
 """
 
-    return f"""Ты — опытный контент-стратег для YouTube Shorts. Канал: «Точка наблюдения». Сериал: «Тайный кризис человечества».{series_context}
+    return f"""Ты — senior short-form content strategist и copywriter для YouTube / TikTok / Reels / YouTube 16:9.
+Канал: «Точка наблюдения». Сериал: «Тайный кризис человечества».{series_context}
 
-Твоя задача: разобрать транскрипцию длинного видео и подготовить всё для создания Shorts.
+Роль: эксперт по retention и packaging. Хуки должны УДЕРЖИВАТЬ внимание:
+pattern interrupt, curiosity gap, contradiction, stakes, identity, open loop.
 
-ТРЕБОВАНИЯ К SHORTS:
-- 4-5 клипов по 15-60 секунд каждый
-- Каждый клип — законченная мысль с хуком в начале
-- Хук — это фраза, которая зацепит внимание за первые 1-2 секунды
-- Заголовок до 40 символов, интригующий
-- Описание с призывом к действию (CTA)
-- 5-8 релевантных хештегов
-- Самопроверка: оцените каждый клип по 10-балльной шкале (внутренне), оставьте только ≥ 8/10
+Критерии сильного хука: конфликт/вопрос за 1с, незакрытый loop, без воды («сегодня поговорим…»).
+
+═══════════════════════════════════════
+1) ХУКИ ДЛЯ ПОЛНОГО ВИДЕО (wide + vertical)
+═══════════════════════════════════════
+- Дай 2–4 хука в точках retention-риска (начало, спад, кульминация).
+- 3–10 слов, почти дословно из транскрипта, ударный порядок слов.
+- Обязательно start и end (сек) — показ 2–3.5с с начала фразы.
+- type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVELATION.
+- visual_weight: L3 или L4.
+
+═══════════════════════════════════════
+2) SHORTS (отдельный продукт под каждую нарезку)
+═══════════════════════════════════════
+- 3–6 клипов по 15–55 секунд, каждый — законченная мысль.
+- У каждого Shorts СВОЙ хук (hook + hook_start + hook_end) — не копируй общий.
+- title ≤ 40 символов, интрига без кликбейта-вранья.
+- description: 1–2 предложения + CTA (вопрос зрителю / «напиши в комментариях»).
+- hashtags: 5–8 штук, смесь нишевых и широких, на языке контента.
+- Внутренняя оценка ≥ 8/10, слабые отбрасывай.
+
+═══════════════════════════════════════
+3) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
+═══════════════════════════════════════
+- strong_words: 5–15 ударных слов/фраз с точным timing (секунды), caps true/false, color #RRGGBB.
+- subtitles: крупные смысловые куски 1.5–4 сек (для fallback), не дроби на каждое слово.
 
 {intro_section}
 Текст с таймингами:
 {timings}
 
-Верни СТРОГИЙ JSON (без markdown, без лишнего текста):
+Верни ТОЛЬКО валидный JSON (без markdown, без пояснений):
 {{
-  "corrected_text": "полный исправленный текст всей транскрипции с нормальной пунктуацией",
+  "corrected_text": "полный исправленный текст с пунктуацией",
+  "hooks": [
+    {{
+      "text": "текст хука",
+      "start": 0.0,
+      "end": 2.5,
+      "type": "CURIOSITY",
+      "visual_weight": "L3"
+    }}
+  ],
+  "hook": {{"text": "главный хук всего ролика", "start": 0.0, "end": 2.5, "timing": 0.0}},
   "clips_for_shorts": [
     {{
-      "text": "полный текст фрагмента для этого Short",
+      "text": "полный текст этого Short",
       "start": 0.0,
-      "end": 15.0,
-      "hook": "хук-фраза дословно из текста",
-      "title": "заголовок до 40 символов",
-      "description": "описание + CTA (вопрос/призыв)",
+      "end": 18.0,
+      "hook": "хук именно этого Short",
+      "hook_start": 0.0,
+      "hook_end": 2.0,
+      "title": "заголовок ≤40",
+      "description": "описание + CTA",
       "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5"
     }}
   ],
-  "hook": {{"text": "главный хук всего видео", "timing": 0.0}},
   "intro": {{"start": 0.0, "end": 3.5}},
-  "middle": [{{"start": 10.0, "end": 20.0}}],
+  "middle": [{{"start": 10.0, "end": 14.0}}],
   "outro": {{"start": 25.0, "end": 30.0}},
   "strong_words": [
-    {{"word": "слово", "timing": 0.0, "caps": true, "color": "#FF6B00"}}
+    {{"word": "слово", "timing": 1.2, "start": 1.2, "end": 2.4, "caps": true, "color": "#FF6B00", "visual_weight": "L2"}}
   ],
   "subtitles": [
-    {{"start": 0.0, "end": 2.0, "text": "текст субтитра", "style": "normal"}}
+    {{"start": 0.0, "end": 2.5, "text": "фраза субтитра", "style": "normal"}}
   ]
 }}"""
 
@@ -251,16 +282,68 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
                     "style": "normal"
                 })
 
+    # Хуки: массив + legacy single hook
+    hooks = data.get("hooks") or []
+    if not hooks:
+        h = data.get("hook") or {}
+        if isinstance(h, dict) and h.get("text"):
+            start = float(h.get("start", h.get("timing", 0)) or 0)
+            end = float(h.get("end", start + 2.5) or (start + 2.5))
+            hooks = [{
+                "text": h.get("text", ""),
+                "start": start,
+                "end": end,
+                "timing": start,
+                "type": h.get("type", "STATEMENT"),
+                "visual_weight": h.get("visual_weight", "L3"),
+            }]
+    else:
+        norm_hooks = []
+        for h in hooks:
+            if not isinstance(h, dict) or not h.get("text"):
+                continue
+            start = float(h.get("start", h.get("timing", 0)) or 0)
+            end = float(h.get("end", start + 2.5) or (start + 2.5))
+            norm_hooks.append({
+                "text": h.get("text", ""),
+                "start": start,
+                "end": end,
+                "timing": start,
+                "type": h.get("type", "STATEMENT"),
+                "visual_weight": h.get("visual_weight", "L3"),
+            })
+        hooks = norm_hooks
+
+    main_hook = data.get("hook") or (hooks[0] if hooks else {"text": "", "timing": 0, "start": 0, "end": 0})
+    if isinstance(main_hook, dict) and "start" not in main_hook:
+        t = float(main_hook.get("timing", 0) or 0)
+        main_hook = {**main_hook, "start": t, "end": float(main_hook.get("end", t + 2.5))}
+
+    # Shorts: нормализуем hook_start/hook_end
+    clips = []
+    for c in data.get("clips_for_shorts") or []:
+        if not isinstance(c, dict):
+            continue
+        hs = float(c.get("hook_start", c.get("start", 0)) or 0)
+        he = float(c.get("hook_end", hs + 2.0) or (hs + 2.0))
+        clips.append({
+            **c,
+            "hook": c.get("hook", ""),
+            "hook_start": hs,
+            "hook_end": he,
+        })
+
     return {
         "corrected_text": corrected_text,
         "segments": segments,
-        "hook": data.get("hook", {"text": "", "timing": 0}),
+        "hook": main_hook,
+        "hooks": hooks,
         "intro": data.get("intro", {"start": 0, "end": 0}),
         "middle": data.get("middle", []),
         "outro": data.get("outro", {"start": 0, "end": 0}),
         "strong_words": data.get("strong_words", []),
         "subtitles": subtitles,
-        "clips_for_shorts": data.get("clips_for_shorts", []),
+        "clips_for_shorts": clips,
     }
 
 
@@ -269,7 +352,8 @@ def _empty_analysis() -> dict:
     return {
         "corrected_text": "",
         "segments": [],
-        "hook": {"text": "", "timing": 0},
+        "hook": {"text": "", "timing": 0, "start": 0, "end": 0},
+        "hooks": [],
         "intro": {"start": 0, "end": 0},
         "middle": [],
         "outro": {"start": 0, "end": 0},

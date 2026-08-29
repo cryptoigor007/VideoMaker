@@ -36,6 +36,17 @@ class PipelineContext:
     s_mid_path: str = ""
     s_outro_path: str = ""
 
+    # Длительности IMO (сек), для картинок
+    h_intro_duration: float = 3.0
+    h_mid_duration: float = 1.0
+    h_outro_duration: float = 3.0
+    v_intro_duration: float = 3.0
+    v_mid_duration: float = 1.0
+    v_outro_duration: float = 3.0
+    s_intro_duration: float = 3.0
+    s_mid_duration: float = 1.0
+    s_outro_duration: float = 3.0
+
     # Результаты стадий
     audio_duration: float = 0.0
     transcription: dict = field(default_factory=dict)
@@ -61,6 +72,8 @@ class PipelineContext:
     keep_temp_files: bool = False
     target_lufs: float = -14.0
     vstack_top_ratio: float = 0.6
+    caption_style: str = "auto_aisie"
+    hook_style: str = "auto_aisie"
 
     # Чекбоксы
     h_enable_intro: bool = False

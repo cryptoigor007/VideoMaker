@@ -41,37 +41,42 @@ def enhance_analysis_with_aisie(
         _log(f"[AISIE] Не удалось импортировать AISIE: {e}")
         return analysis
     
-    # Проверяем платформу
     platform_key = platform
     if platform_key not in PROFILES:
-        _log(f"[AISIE] Неизвестная платформа {platform}, использую youtube_shorts")
-        platform_key = "youtube_shorts"
-    
-    # Подготавливаем сегменты для AISIE
+        # fallback: горизонталь → youtube, иначе shorts
+        platform_key = "youtube_16_9" if video_size[0] >= video_size[1] and "youtube_16_9" in PROFILES else "youtube_shorts"
+        if platform_key not in PROFILES:
+            platform_key = next(iter(PROFILES.keys()))
+        _log(f"[AISIE] Платформа → {platform_key}")
+
     segments = transcription.get("segments", [])
     if not segments:
         _log("[AISIE] Нет сегментов для обработки")
         return analysis
-    
-    # Формат сегментов для AISIE
+
     aisie_segments = []
+    word_timings = []
     for s in segments:
         aisie_segments.append({
             "text": s.get("text", ""),
             "start": s.get("start", 0),
             "end": s.get("end", 0),
         })
-    
-    # Определяем разрешение видео (используем переданный параметр)
-    # Можно было бы прочитать из видео, но пока используем переданный параметр
-    
+        for w in s.get("words") or []:
+            word_timings.append({
+                "word": (w.get("word") or w.get("text") or "").strip(),
+                "start": w.get("start", 0),
+                "end": w.get("end", 0),
+            })
+
     try:
-        _log(f"[AISIE] Запуск pipeline для {platform_key}...")
+        _log(f"[AISIE] Запуск pipeline для {platform_key}, size={video_size}...")
         pipe = AISIEPipeline(platform=platform_key)
         plan = pipe.process(
             segments=aisie_segments,
             video_size=video_size,
-            motion_score=5.0,
+            motion_score=motion_score,
+            word_timings=word_timings or None,
         )
         
         # Добавляем AISIE данные в analysis

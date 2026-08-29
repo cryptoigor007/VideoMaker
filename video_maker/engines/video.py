@@ -112,7 +112,7 @@ def fit_video_to_duration(
             ffmpeg, "-y",
             "-i", vf,
             "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
-            "-c:v", "h264_videotoolbox", "-b:v", "20M",
+            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
             "-pix_fmt", "yuv420p",
             "-an",
             norm_path,
@@ -132,7 +132,7 @@ def fit_video_to_duration(
         "-f", "concat", "-safe", "0",
         "-i", list_path,
         "-t", str(target_duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "20M",
+        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         "-an",
@@ -169,6 +169,18 @@ def _even(n: int) -> int:
     return n if n % 2 == 0 else n - 1
 
 
+
+def _encode_vt_args(width: int = 3840, height: int = 2160) -> list[str]:
+    """Apple VideoToolbox: быстро + высокий bitrate под 4K без soft x264."""
+    pixels = max(1, int(width) * int(height))
+    if pixels >= 3000 * 1600:
+        br = "50M"
+    elif pixels >= 1800 * 1000:
+        br = "25M"
+    else:
+        br = "12M"
+    return ["-c:v", "h264_videotoolbox", "-b:v", br, "-allow_sw", "1", "-pix_fmt", "yuv420p"]
+
 def vstack_video_image(
     video_path: str,
     background_path: str,
@@ -176,62 +188,58 @@ def vstack_video_image(
     log_fn=None,
     top_ratio: float = 0.6,
 ) -> str:
-    """vstack: видео сверху + фон/изображение снизу (4K 2160x3840) с ускорением M1."""
+    """Вертикаль 9:16 2160x3840:
+    - видео +30%, нижняя грань ровно по середине кадра;
+    - картинка только в НИЖНЕЙ половине, её верх — сразу под низом видео;
+    - картинка увеличена на +20% относительно области низа, crop по центру.
+    """
     _log = log_fn or log.info
-    _log(f"[ВИДЕО 4K M1] Создание вертикального видео (vstack), top_ratio={top_ratio}")
+    _log("[ВИДЕО 4K] vertical: video +30% (низ=середина), image bottom +20%")
 
     ffmpeg = _ffmpeg_bin()
+    target_w, target_h = 2160, 3840
+    mid_y = _even(target_h // 2)          # низ видео / верх картинки
+    bottom_h = _even(target_h - mid_y)    # высота нижней зоны
 
-    target_w = 2160
-    target_h = 3840
-    top_h = _even(int(target_h * top_ratio))
-    bottom_h = _even(target_h - top_h)
-    target_h = top_h + bottom_h
+    vid_w = _even(int(target_w * 1.30))
+    # +20% к размеру нижней области, потом crop в bottom_h
+    bg_w = _even(int(target_w * 1.20))
+    bg_h = _even(int(bottom_h * 1.20))
+    _log(
+        f"[ВИДЕО 4K] canvas={target_w}x{target_h} mid_y={mid_y} "
+        f"bottom={bottom_h} vid_w={vid_w} bg_scale={bg_w}x{bg_h}"
+    )
 
-    _log(f"[ВИДЕО 4K] vstack size={target_w}x{target_h} top={top_h} bottom={bottom_h}")
+    # [bg]: заполняет нижнюю половину (верх картинки = mid_y)
+    # [vid]: overlay, низ видео = mid_y
+    filter_complex = (
+        f"[1:v]scale={bg_w}:{bg_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{bottom_h},setsar=1,"
+        f"pad={target_w}:{target_h}:0:{mid_y}:black[bg];"
+        f"[0:v]scale={vid_w}:-2:force_original_aspect_ratio=decrease,setsar=1[vid];"
+        f"[bg][vid]overlay=x=(W-w)/2:y={mid_y}-h:shortest=1[out]"
+    )
 
     ext = os.path.splitext(background_path)[1].lower()
-    if ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif"):
+    if ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"):
         from .audio import probe_duration
         dur = probe_duration(video_path)
-
         cmd = [
-            ffmpeg, "-y",
-            "-i", video_path,
+            ffmpeg, "-y", "-i", video_path,
             "-loop", "1", "-i", background_path,
-            "-filter_complex", (
-                f"[0:v]scale={target_w}:{top_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];"
-                f"[1:v]scale={target_w}:{bottom_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];"
-                f"[v0][v1]vstack=inputs=2[out]"
-            ),
+            "-filter_complex", filter_complex,
             "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "20M",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
-            "-t", str(dur),
+            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-pix_fmt", "yuv420p", "-r", "30", "-t", str(dur),
             output_path,
         ]
     else:
-        filter_complex = (
-            f"[0:v]scale={target_w}:{top_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{top_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];"
-            f"[1:v]scale={target_w}:{bottom_h}:force_original_aspect_ratio=decrease,"
-            f"pad={target_w}:{bottom_h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];"
-            f"[v0][v1]vstack=inputs=2[out]"
-        )
-
         cmd = [
-            ffmpeg, "-y",
-            "-i", video_path,
-            "-i", background_path,
+            ffmpeg, "-y", "-i", video_path, "-i", background_path,
             "-filter_complex", filter_complex,
             "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "20M",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
-            "-shortest",
+            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-pix_fmt", "yuv420p", "-r", "30", "-shortest",
             output_path,
         ]
 
@@ -246,7 +254,6 @@ def vstack_video_image(
     os.rename(output_path, tmp_out)
     replace_audio(tmp_out, video_path, output_path, log_fn=_log)
     os.remove(tmp_out)
-
     return output_path
 
 
@@ -267,8 +274,9 @@ def cut_segment(
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "20M",
-        "-c:a", "aac",
+        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
         output_path,
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
@@ -290,12 +298,16 @@ def add_intro_outro_mid(
     explicit_intro: str = "",
     explicit_middle: str = "",
     explicit_outro: str = "",
+    intro_duration: float = 3.0,
+    middle_duration: float = 1.0,
+    outro_duration: float = 3.0,
 ) -> str:
-    """Добавить интро/аутро/мидл к видео."""
+    """Добавить интро/аутро/мидл к видео (видеофайл или картинка→N сек)."""
     _log = log_fn or log.info
     _log("[ВИДЕО 4K M1] Добавление интро/аутро/мидл...")
 
     if not (enable_intro or enable_middle or enable_outro):
+        _log("[IMO] все флаги выключены — пропуск")
         return video_path
 
     ffmpeg = _ffmpeg_bin()
@@ -316,22 +328,35 @@ def add_intro_outro_mid(
     else:
         mid_point = main_dur / 2
 
+    _log(
+        f"[IMO] flags intro={enable_intro} middle={enable_middle} outro={enable_outro} | "
+        f"folder={intro_outro_folder or '(пусто)'} | "
+        f"explicit_outro={explicit_outro or '(нет)'}"
+    )
+
     intro_path = explicit_intro if explicit_intro and os.path.isfile(explicit_intro) else ""
     middle_path = explicit_middle if explicit_middle and os.path.isfile(explicit_middle) else ""
     outro_path = explicit_outro if explicit_outro and os.path.isfile(explicit_outro) else ""
+    if explicit_outro and not outro_path:
+        _log(f"[IMO] explicit_outro указан, но файл не найден: {explicit_outro}")
 
     folder_files: list[str] = []
     if intro_outro_folder and os.path.isdir(intro_outro_folder):
         try:
             folder_files = os.listdir(intro_outro_folder)
+            _log(f"[IMO] файлов в папке: {len(folder_files)}")
         except OSError as e:
             _log(f"[ВИДЕО] Не удалось прочитать папку intro/middle/outro: {e}")
+    elif enable_outro and not outro_path:
+        _log(f"[IMO] папка IMO отсутствует, outro не из чего взять: {intro_outro_folder}")
+
+    _media = (".mp4", ".mov", ".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
     if enable_intro and not intro_path and folder_files:
         intro_candidates = [
             os.path.join(intro_outro_folder, f)
             for f in folder_files
-            if f.lower().startswith("intro") and f.lower().endswith((".mp4", ".mov"))
+            if f.lower().startswith("intro") and f.lower().endswith(_media)
         ]
         if intro_candidates:
             intro_path = intro_candidates[0]
@@ -340,19 +365,96 @@ def add_intro_outro_mid(
         middle_candidates = [
             os.path.join(intro_outro_folder, f)
             for f in folder_files
-            if f.lower().startswith("middle") and f.lower().endswith((".mp4", ".mov"))
+            if f.lower().startswith("middle") and f.lower().endswith(_media)
         ]
         if middle_candidates:
             middle_path = middle_candidates[0]
 
+    def _match_media(files: list[str], keywords: tuple[str, ...]) -> list[str]:
+        """outro / outtro / ending / end / финал — гибкий поиск."""
+        out = []
+        for f in files:
+            low = f.lower()
+            if not low.endswith(_media):
+                continue
+            stem = os.path.splitext(low)[0]
+            if any(k in stem for k in keywords):
+                out.append(os.path.join(intro_outro_folder, f))
+        return out
+
     if enable_outro and not outro_path and folder_files:
-        outro_candidates = [
-            os.path.join(intro_outro_folder, f)
-            for f in folder_files
-            if f.lower().startswith("outro") and f.lower().endswith((".mp4", ".mov"))
-        ]
+        # 1) по ключевым словам (если есть)
+        outro_candidates = _match_media(
+            folder_files, ("outro", "outtro", "ending", "endcard", "end_card", "финал", "концовка"),
+        )
+        outro_candidates = [c for c in outro_candidates if "intro" not in os.path.basename(c).lower()]
+        # 2) имя может быть ЛЮБЫМ: любой media, не занятый intro/middle
+        if not outro_candidates:
+            used = set()
+            if intro_path:
+                used.add(os.path.abspath(intro_path))
+            if middle_path:
+                used.add(os.path.abspath(middle_path))
+            any_media = []
+            for f in folder_files:
+                low = f.lower()
+                if not low.endswith(_media):
+                    continue
+                # не брать явный intro/middle по ключу, если они ещё не выбраны
+                stem = os.path.splitext(low)[0]
+                if any(k in stem for k in ("intro", "middle", "mid_")) and not intro_path:
+                    continue
+                full = os.path.abspath(os.path.join(intro_outro_folder, f))
+                if full in used:
+                    continue
+                any_media.append(os.path.join(intro_outro_folder, f))
+            outro_candidates = any_media
         if outro_candidates:
-            outro_path = outro_candidates[0]
+            # если несколько — берём последний по имени (часто "конец" кладут отдельно)
+            outro_path = sorted(outro_candidates)[-1]
+            _log(f"[IMO] outro (имя любое): {outro_path}")
+        else:
+            _log(
+                f"[IMO] enable_outro=True, в папке нет media-файлов. "
+                f"Файлы: {folder_files[:20]}. Или укажи путь на вкладке Intro/Outro — имя любое."
+            )
+    elif not enable_outro:
+        _log("[IMO] outro выключен чекбоксом (Outro) для этого формата")
+
+    def _ensure_video(path: str, label: str, duration: float = 1.0) -> str:
+        """Картинка → видео N секунд; видеофайл — как есть."""
+        if not path:
+            return ""
+        if not os.path.isfile(path):
+            _log(f"[IMO] {label}: файл не существует: {path}")
+            return ""
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"):
+            _log(f"[IMO] {label}: видеофайл → {path}")
+            return path
+        dur = max(0.5, float(duration or 1.0))
+        out = os.path.join(output_dir, f"{label}_still_{uuid.uuid4().hex[:8]}.mp4")
+        w, h = _even(main_w), _even(main_h)
+        r = subprocess.run([
+            ffmpeg, "-y", "-loop", "1", "-i", path, "-t", str(dur),
+            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-pix_fmt", "yuv420p", "-r", "30", out,
+        ], capture_output=True, text=True)
+        if r.returncode != 0:
+            _log(f"[IMO] картинка→{dur}с fail {path}: {(r.stderr or '')[-300:]}")
+            return ""
+        _log(f"[IMO] {label}: картинка → {dur}с видео: {out}")
+        return out
+
+    intro_path = _ensure_video(intro_path, "intro", intro_duration) if intro_path else ""
+    middle_path = _ensure_video(middle_path, "middle", middle_duration) if middle_path else ""
+    outro_path = _ensure_video(outro_path, "outro", outro_duration) if outro_path else ""
+
+    _log(
+        f"[IMO] итог путей: intro={intro_path or '—'} | "
+        f"middle={middle_path or '—'} | outro={outro_path or '—'}"
+    )
 
     if not (intro_path or middle_path or outro_path):
         _log("[ВИДЕО] Файлы интро/мидл/аутро не найдены, пропускаем")
@@ -366,6 +468,7 @@ def add_intro_outro_mid(
         inputs.append(middle_path)
     if outro_path:
         inputs.append(outro_path)
+    _log(f"[IMO] concat inputs={len(inputs)} (1=main + overlays)")
 
     scale_filter = f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2"
 
@@ -414,7 +517,7 @@ def add_intro_outro_mid(
         *[arg for inp in inputs for arg in ("-i", inp)],
         "-filter_complex", filter_complex,
         "-map", "[outv]",
-        "-c:v", "h264_videotoolbox", "-b:v", "20M",
+        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         output_path,

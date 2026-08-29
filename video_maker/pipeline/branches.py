@@ -39,6 +39,9 @@ class FinalHorizontal(Stage):
                 explicit_intro=ctx.h_intro_path,
                 explicit_middle=ctx.h_mid_path,
                 explicit_outro=ctx.h_outro_path,
+                intro_duration=float(getattr(ctx, "h_intro_duration", 3) or 3),
+                middle_duration=float(getattr(ctx, "h_mid_duration", 1) or 1),
+                outro_duration=float(getattr(ctx, "h_outro_duration", 3) or 3),
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -52,6 +55,8 @@ class FinalHorizontal(Stage):
                 enable_strong_words=ctx.h_enable_strong_words,
                 output_path=output_path,
                 log_fn=ctx.log,
+                caption_style=getattr(ctx, "caption_style", "auto_aisie"),
+                hook_style=getattr(ctx, "hook_style", "auto_aisie"),
                 transcription=ctx.transcription,
                 use_aisie=True,
             )
@@ -146,6 +151,9 @@ class FinalVertical(Stage):
                 explicit_intro=ctx.v_intro_path,
                 explicit_middle=ctx.v_mid_path,
                 explicit_outro=ctx.v_outro_path,
+                intro_duration=float(getattr(ctx, "v_intro_duration", 3) or 3),
+                middle_duration=float(getattr(ctx, "v_mid_duration", 1) or 1),
+                outro_duration=float(getattr(ctx, "v_outro_duration", 3) or 3),
             )
 
         # Добавляем хуки + субтитры + сильные слова
@@ -159,6 +167,8 @@ class FinalVertical(Stage):
                 enable_strong_words=ctx.v_enable_strong_words,
                 output_path=output_path,
                 log_fn=ctx.log,
+                caption_style=getattr(ctx, "caption_style", "auto_aisie"),
+                hook_style=getattr(ctx, "hook_style", "auto_aisie"),
                 transcription=ctx.transcription,
                 use_aisie=True,
             )

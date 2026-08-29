@@ -358,62 +358,47 @@ class App:
         log.info("[GUI] _build_ui(): интерфейс построен")
 
     def _build_main_tab(self, parent) -> None:
-        """Вкладка основных настроек."""
+        """Вкладка основных настроек: слева настройки, справа чёрное поле серии."""
         columns = ttk.Frame(parent)
         columns.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         columns.columnconfigure(0, weight=3)
         columns.columnconfigure(1, weight=2)
+        columns.rowconfigure(0, weight=1)
 
         left_col = ttk.Frame(columns)
         left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
         right_col = ttk.Frame(columns)
         right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        right_col.rowconfigure(0, weight=1)
+        right_col.columnconfigure(0, weight=1)
 
-        # ─── Левая колонка ──────────────────────────────────────────────
-
+        # ─── Левая колонка: все настройки ───────────────────────────────
         self._add_file_section(
             left_col, "Аудио",
             [("Файл:", "audio_var", "file", [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg")])],
         )
-
         broll_frame = self._add_section(left_col, "B-roll видео")
         self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
         self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
-
         self._add_file_section(
             left_col, "Intro / Middle / Outro",
             [("Папка:", "imo_folder_var", "dir", [])],
         )
-
         self._add_file_section(
             left_col, "Фон для вертикального видео",
             [("Файл:", "bg_var", "file", [("Изображения/Видео", "*.jpg *.jpeg *.png *.mp4 *.mov")])],
         )
-
         self._add_file_section(
             left_col, "Фоновая музыка",
             [("Папка:", "bgm_var", "dir", [])],
         )
-
         self._add_file_section(
             left_col, "Папка вывода",
             [("Папка:", "output_var", "dir", [])],
         )
 
-        # Обложки
-        cover_frame = self._add_section(left_col, "Обложки", expand=True)
-        row1 = ttk.Frame(cover_frame)
-        row1.pack(fill=tk.X, pady=(0, 4))
-        self._add_browse_row(row1, "Горизонтальная:", "cover_h_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
-        row2 = ttk.Frame(cover_frame)
-        row2.pack(fill=tk.X)
-        self._add_browse_row(row2, "Вертикальная:  ", "cover_v_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
-
-        # ─── Правая колонка ─────────────────────────────────────────────
-
-        # Настройки аудио
-        audio_settings = self._add_section(right_col, "Настройки аудио")
+        audio_settings = self._add_section(left_col, "Настройки аудио")
         self.voice_enhance_var = tk.BooleanVar(value=True)
         self.add_bgm_var = tk.BooleanVar(value=True)
         self.intro_gemini_var = tk.BooleanVar(value=True)
@@ -423,96 +408,82 @@ class App:
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
 
-        # WhisperX настройки
-        whisper_frame = self._add_section(right_col, "WhisperX (транскрибация)")
-
-        # Model size
-        model_row = ttk.Frame(whisper_frame)
-        model_row.pack(fill=tk.X, pady=2)
-        ttk.Label(model_row, text="Модель:", width=14).pack(side=tk.LEFT)
-        self.whisper_model_var = tk.StringVar(value=self.settings.whisper_model or "base")
-        ttk.Combobox(
-            model_row,
-            textvariable=self.whisper_model_var,
-            values=["tiny", "base", "small", "medium", "large-v2", "large-v3"],
-            state="readonly",
-            width=12,
-        ).pack(side=tk.LEFT)
-        
-        # Language
-        lang_row = ttk.Frame(whisper_frame)
-        lang_row.pack(fill=tk.X, pady=2)
-        ttk.Label(lang_row, text="Язык:", width=14).pack(side=tk.LEFT)
+        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "base") or "base")
         self.whisper_lang_var = tk.StringVar(value="ru")
-        ttk.Combobox(lang_row, textvariable=self.whisper_lang_var,
-                     values=["ru", "en", "auto"], state="readonly", width=10).pack(side=tk.LEFT)
-        
-        # Device
-        dev_row = ttk.Frame(whisper_frame)
-        dev_row.pack(fill=tk.X, pady=2)
-        ttk.Label(dev_row, text="Устройство:", width=14).pack(side=tk.LEFT)
         self.whisper_dev_var = tk.StringVar(value="auto")
-        ttk.Combobox(dev_row, textvariable=self.whisper_dev_var,
-                     values=["auto", "cpu", "mps", "cuda"], state="readonly", width=10).pack(side=tk.LEFT)
-        
-        # Compute type
-        comp_row = ttk.Frame(whisper_frame)
-        comp_row.pack(fill=tk.X, pady=2)
-        ttk.Label(comp_row, text="Compute type:", width=14).pack(side=tk.LEFT)
         self.whisper_comp_var = tk.StringVar(value="auto")
-        ttk.Combobox(comp_row, textvariable=self.whisper_comp_var,
-                     values=["auto", "int8", "float16", "float32"], state="readonly", width=10).pack(side=tk.LEFT)
-        
-        # WhisperX status (read-only, auto-detected)
-        status_row = ttk.Frame(whisper_frame)
-        status_row.pack(fill=tk.X, pady=2)
-        ttk.Label(status_row, text="WhisperX:", width=14).pack(side=tk.LEFT)
         self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
-        ttk.Label(status_row, textvariable=self.whisperx_status_var, foreground=COLORS["text_dim"]).pack(side=tk.LEFT)
-        ttk.Button(status_row, text="Найти", width=8, command=self._find_whisperx).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(status_row, text="Вручную", width=8, command=lambda: self._browse_whisperx()).pack(side=tk.LEFT)
 
-        # Этапы обработки
-        checks_frame = self._add_section(right_col, "Этапы обработки")
+        checks_frame = self._add_section(left_col, "Этапы обработки")
         checks_frame.configure(padding=8)
-
         for label, prefix, defaults in [
             ("16:9 Гориз.", "h", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
             ("9:16 Вертик.", "v", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
-            ("Shorts",      "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
+            ("Shorts", "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
         ]:
             row = ttk.Frame(checks_frame)
             row.pack(fill=tk.X, pady=(0, 6))
             ttk.Label(row, text=label, width=12, style="Section.TLabel").pack(side=tk.LEFT)
-
             for key, default in defaults.items():
                 var = tk.BooleanVar(value=default)
                 setattr(self, f"{prefix}_{key}", var)
                 ttk.Checkbutton(row, text=key.capitalize(), variable=var).pack(side=tk.LEFT, padx=2)
 
-        # Название серии
-        series_frame = self._add_section(right_col, "Название серии", expand=True)
-        series_frame.configure(padding=8)
-        self.series_var = tk.StringVar()
-        entry = ttk.Entry(
-            series_frame,
-            textvariable=self.series_var,
-            font=("SF Pro Text", 11),
-        )
-        entry.pack(fill=tk.BOTH, expand=True, pady=(4, 0), ipady=8)
-        ttk.Label(
-            series_frame,
-            text="Например: Выпуск 01 — Основы монтажа",
-            font=("SF Pro Text", 9),
-        ).pack(anchor="w", pady=(4, 0))
+        style_frame = self._add_section(left_col, "Стили субтитров / хуков")
+        style_frame.configure(padding=8)
+        row_c = ttk.Frame(style_frame)
+        row_c.pack(fill=tk.X, pady=2)
+        ttk.Label(row_c, text="Субтитры:", width=12).pack(side=tk.LEFT)
+        self.caption_style_var = tk.StringVar(value="auto_aisie")
+        ttk.Combobox(
+            row_c, textvariable=self.caption_style_var, state="readonly", width=22,
+            values=[
+                "auto_aisie", "hormozi", "hormozi_green", "tiktok_box", "clean_pro", "bold_pop",
+            ],
+        ).pack(side=tk.LEFT)
+        ttk.Label(style_frame, text="auto_aisie = AISIE выбирает цвет/вес", font=("SF Pro Text", 9)).pack(anchor="w")
+        row_h = ttk.Frame(style_frame)
+        row_h.pack(fill=tk.X, pady=2)
+        ttk.Label(row_h, text="Хуки:", width=12).pack(side=tk.LEFT)
+        self.hook_style_var = tk.StringVar(value="auto_aisie")
+        ttk.Combobox(
+            row_h, textvariable=self.hook_style_var, state="readonly", width=22,
+            values=["auto_aisie", "hormozi", "impact", "neon", "soft", "bold"],
+        ).pack(side=tk.LEFT)
 
-        # LUFS цель
-        lufs_frame = self._add_section(right_col, "Громкость (LUFS)")
+        lufs_frame = self._add_section(left_col, "Громкость (LUFS)")
         lufs_frame.configure(padding=8)
         ttk.Label(lufs_frame, text="Целевой LUFS:", width=14).pack(side=tk.LEFT)
         self.target_lufs_var = tk.StringVar(value="-14.0")
         ttk.Entry(lufs_frame, textvariable=self.target_lufs_var, width=8, font=("SF Pro Text", 11)).pack(side=tk.LEFT)
-        ttk.Label(lufs_frame, text="(YouTube: -14, TikTok: -14, TV: -24)").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(lufs_frame, text="(YouTube/TikTok: -14)").pack(side=tk.LEFT, padx=(8, 0))
+
+        # ─── Правая колонка: чёрное поле названия серии на всю высоту ───
+        series_frame = self._add_section(right_col, "Название серии / папка результата", expand=True)
+        series_frame.configure(padding=8)
+        self.series_var = tk.StringVar()
+        self.series_entry = tk.Text(
+            series_frame,
+            wrap=tk.WORD,
+            font=("SF Pro Text", 13),
+            bg="#000000",
+            fg="#F0F0F0",
+            insertbackground="#FFFFFF",
+            selectbackground="#3A7AFE",
+            relief="flat",
+            borderwidth=0,
+            padx=12,
+            pady=12,
+            highlightthickness=1,
+            highlightbackground="#333333",
+            highlightcolor="#3A7AFE",
+        )
+        self.series_entry.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        ttk.Label(
+            series_frame,
+            text="Имя папки результата = это название (или имя аудио)",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(6, 0))
 
         # === Кнопка запуска ===
         btn_frame = ttk.Frame(parent)
@@ -528,20 +499,24 @@ class App:
 
         # === Прогресс ===
         progress_frame = ttk.Frame(parent)
-        progress_frame.pack(fill=tk.X, pady=(0, 8))
+        progress_frame.pack(fill=tk.X, pady=(0, 4))
 
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_bar = ttk.Progressbar(
             progress_frame, variable=self.progress_var, maximum=100,
             style="Custom.Horizontal.TProgressbar",
         )
-        self.progress_bar.pack(fill=tk.X, side=tk.LEFT, expand=True, padx=(0, 12))
+        self.progress_bar.pack(fill=tk.X, expand=True)
 
-        self.progress_label = ttk.Label(progress_frame, text="0%", style="Progress.TLabel", width=6)
+        time_row = ttk.Frame(parent)
+        time_row.pack(fill=tk.X, pady=(0, 8))
+        self.progress_label = ttk.Label(time_row, text="0%", style="Progress.TLabel")
         self.progress_label.pack(side=tk.LEFT)
-
-        self.time_label = ttk.Label(progress_frame, text="", style="Progress.TLabel", width=12)
-        self.time_label.pack(side=tk.LEFT, padx=(8, 0))
+        self.stage_label = ttk.Label(time_row, text="", style="Progress.TLabel")
+        self.stage_label.pack(side=tk.LEFT, padx=(12, 0))
+        self.time_label = ttk.Label(time_row, text="", style="Progress.TLabel")
+        self.time_label.pack(side=tk.RIGHT)
+        self._pipeline_t0 = 0.0
 
         # === Лог ===
         log_frame = self._add_section(parent, "Лог", expand=True)
@@ -586,7 +561,7 @@ class App:
             intro_path_var = tk.StringVar()
             setattr(self, f"{prefix}_intro_path", intro_path_var)
             ttk.Entry(intro_frame, textvariable=intro_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-            ttk.Button(intro_frame, text="...", width=3, command=lambda v=intro_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+            ttk.Button(intro_frame, text="...", width=3, command=lambda v=intro_path_var: self._browse_file(v, "", [("Видео/картинка", "*.mp4 *.mov *.jpg *.jpeg *.png *.webp")])).pack(side=tk.LEFT)
 
             intro_dur_frame = ttk.Frame(section)
             intro_dur_frame.pack(fill=tk.X, pady=(0, 4))
@@ -612,7 +587,7 @@ class App:
             mid_path_var = tk.StringVar()
             setattr(self, f"{prefix}_mid_path", mid_path_var)
             ttk.Entry(mid_frame, textvariable=mid_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-            ttk.Button(mid_frame, text="...", width=3, command=lambda v=mid_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+            ttk.Button(mid_frame, text="...", width=3, command=lambda v=mid_path_var: self._browse_file(v, "", [("Видео/картинка", "*.mp4 *.mov *.jpg *.jpeg *.png *.webp")])).pack(side=tk.LEFT)
 
             mid_pos_var = tk.StringVar(value="middle")
             setattr(self, f"{prefix}_mid_position", mid_pos_var)
@@ -633,7 +608,7 @@ class App:
             outro_path_var = tk.StringVar()
             setattr(self, f"{prefix}_outro_path", outro_path_var)
             ttk.Entry(outro_frame, textvariable=outro_path_var, font=("SF Pro Text", 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-            ttk.Button(outro_frame, text="...", width=3, command=lambda v=outro_path_var: self._browse_file(v, "", [("Видео", "*.mp4 *.mov")])).pack(side=tk.LEFT)
+            ttk.Button(outro_frame, text="...", width=3, command=lambda v=outro_path_var: self._browse_file(v, "", [("Видео/картинка", "*.mp4 *.mov *.jpg *.jpeg *.png *.webp")])).pack(side=tk.LEFT)
 
             outro_dur_frame = ttk.Frame(section)
             outro_dur_frame.pack(fill=tk.X, pady=(0, 4))
@@ -651,6 +626,19 @@ class App:
             setattr(self, f"{prefix}_outro_custom_time", outro_custom_var)
             ttk.Entry(outro_dur_frame, textvariable=outro_custom_var, width=6, font=("SF Pro Text", 10)).pack(side=tk.LEFT)
             ttk.Label(outro_dur_frame, text="сек").pack(side=tk.LEFT)
+
+
+        covers = self._add_section(scroll, "Обложки")
+        row1 = ttk.Frame(covers)
+        row1.pack(fill=tk.X, pady=(0, 4))
+        if not hasattr(self, "cover_h_var"):
+            self.cover_h_var = tk.StringVar()
+        if not hasattr(self, "cover_v_var"):
+            self.cover_v_var = tk.StringVar()
+        self._add_browse_row(row1, "Горизонтальная:", "cover_h_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
+        row2 = ttk.Frame(covers)
+        row2.pack(fill=tk.X)
+        self._add_browse_row(row2, "Вертикальная:", "cover_v_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
 
     # ─── Хелперы ──────────────────────────────────────────────────────────
 
@@ -713,10 +701,10 @@ class App:
     # ─── Настройки ───────────────────────────────────────────────────────
 
     def _open_settings(self) -> None:
-        """Открыть окно настроек."""
+        """Открыть окно настроек (Gemini + WhisperX)."""
         win = tk.Toplevel(self.root)
         win.title("Настройки")
-        win.geometry("450x320")
+        win.geometry("520x520")
         win.configure(bg=COLORS["bg"])
         win.transient(self.root)
         win.grab_set()
@@ -724,25 +712,37 @@ class App:
         frame = ttk.Frame(win, padding=20)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # Модель Gemini
         ttk.Label(frame, text="Модель Gemini:", style="Section.TLabel").pack(anchor="w")
-        model_combo = ttk.Combobox(
-            frame,
-            textvariable=self.model_var,
+        ttk.Combobox(
+            frame, textvariable=self.model_var,
             values=["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.6-flash-lite"],
-            state="readonly",
-            font=("SF Pro Text", 10),
-        )
-        model_combo.pack(fill=tk.X, pady=(4, 12))
+            state="readonly", font=("SF Pro Text", 10),
+        ).pack(fill=tk.X, pady=(4, 12))
 
-        # API ключи
         ttk.Label(frame, text="API ключи Gemini (через запятую):", style="Section.TLabel").pack(anchor="w")
         keys_str = ", ".join(self.settings.gemini_api_keys) if self.settings.gemini_api_keys else self.settings.gemini_api_key
         self._settings_keys_var = tk.StringVar(value=keys_str)
-        keys_entry = ttk.Entry(frame, textvariable=self._settings_keys_var, font=("SF Pro Text", 10))
-        keys_entry.pack(fill=tk.X, pady=(4, 12))
+        ttk.Entry(frame, textvariable=self._settings_keys_var, font=("SF Pro Text", 10)).pack(fill=tk.X, pady=(4, 12))
 
-        # Кнопка сохранить
+        ttk.Label(frame, text="WhisperX", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
+        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Модель:", width=14).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_model_var, values=["tiny","base","small","medium","large-v2","large-v3"], state="readonly", width=14).pack(side=tk.LEFT)
+        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Язык:", width=14).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_lang_var, values=["ru","en","auto"], state="readonly", width=10).pack(side=tk.LEFT)
+        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Устройство:", width=14).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_dev_var, values=["auto","cpu","mps","cuda"], state="readonly", width=10).pack(side=tk.LEFT)
+        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Compute type:", width=14).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_comp_var, values=["auto","int8","float16","float32"], state="readonly", width=10).pack(side=tk.LEFT)
+        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=4)
+        ttk.Label(row, text="Путь:", width=14).pack(side=tk.LEFT)
+        ttk.Label(row, textvariable=self.whisperx_status_var).pack(side=tk.LEFT)
+        ttk.Button(row, text="Найти", width=8, command=self._find_whisperx).pack(side=tk.LEFT, padx=4)
+        ttk.Button(row, text="Вручную", width=8, command=self._browse_whisperx).pack(side=tk.LEFT)
+
         def save():
             self.settings.gemini_model = self.model_var.get()
             raw = self._settings_keys_var.get().strip()
@@ -750,11 +750,17 @@ class App:
                 keys = [k.strip() for k in raw.split(",") if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
-            log.info(f"[SETTINGS] Модель: {self.settings.gemini_model}, ключей: {len(self.settings.gemini_api_keys)}")
-            self._save_settings()  # model only; API keys not in persistence lists
+            self.settings.whisper_model = self.whisper_model_var.get() or "base"
+            self.settings.whisper_language = self.whisper_lang_var.get()
+            self.settings.whisper_device = self.whisper_dev_var.get()
+            self.settings.whisper_compute_type = self.whisper_comp_var.get()
+            if hasattr(self, "whisperx_path_var"):
+                self.settings.whisperx_path = self.whisperx_path_var.get()
+            log.info(f"[SETTINGS] Gemini={self.settings.gemini_model} Whisper={self.settings.whisper_model}")
+            self._save_settings()
             win.destroy()
 
-        ttk.Button(frame, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(frame, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X, pady=(16, 0))
 
     # ─── Выбор файлов ────────────────────────────────────────────────────
 
@@ -797,11 +803,31 @@ class App:
         except RuntimeError:
             pass
 
-    def _set_progress(self, value: float) -> None:
-        """Потокобезопасное обновление прогресса."""
+    def _format_eta(self, seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+
+    def _set_progress(self, value: float, stage: str = "") -> None:
+        """Потокобезопасное обновление прогресса + ETA."""
         def _update():
             self.progress_var.set(value)
             self.progress_label.configure(text=f"{value:.0f}%")
+            if stage and hasattr(self, "stage_label"):
+                self.stage_label.configure(text=stage)
+            if getattr(self, "_pipeline_t0", 0):
+                elapsed = time.time() - self._pipeline_t0
+                series = self.settings.series_name or os.path.basename(self.settings.audio_path or "")
+                if value > 3:
+                    total_est = elapsed * (100.0 / max(value, 0.1))
+                    remain = max(0.0, total_est - elapsed)
+                    self.time_label.configure(
+                        text=f"⏱ {self._format_eta(elapsed)} / ~{self._format_eta(total_est)}  "
+                             f"(~{self._format_eta(remain)})  ·  {series[:40]}"
+                    )
+                else:
+                    self.time_label.configure(text=f"⏱ {self._format_eta(elapsed)}  ·  оценка… · {series[:40]}")
         try:
             self.root.after(0, _update)
         except RuntimeError:
@@ -829,7 +855,7 @@ class App:
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
         self.settings.cover_horizontal = self.cover_h_var.get()
         self.settings.cover_vertical = self.cover_v_var.get()
-        self.settings.series_name = self.series_var.get()
+        self.settings.series_name = (self.series_entry.get("1.0", "end").strip() if hasattr(self, "series_entry") else self.series_var.get())
         self.settings.gemini_model = self.model_var.get()
         self.settings.intro_gemini = self.intro_gemini_var.get()
 
@@ -913,6 +939,7 @@ class App:
         self.start_btn.configure(state=tk.DISABLED)
         self.cancel_btn.configure(state=tk.NORMAL)
         self.cancel_event.clear()
+        self._pipeline_t0 = time.time()
         log.info("[GUI] self.running = True, кнопка Старт заблокирована, Отмена включена")
 
         thread = threading.Thread(target=self._run_pipeline, daemon=True)
@@ -958,6 +985,8 @@ class App:
                 add_bgm=self.settings.add_bgm,
                 intro_gemini=self.settings.intro_gemini,
                 keep_temp_files=self.settings.keep_temp_files,
+                caption_style=(self.caption_style_var.get() if hasattr(self, "caption_style_var") else "auto_aisie"),
+                hook_style=(self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie"),
                 target_lufs=self.settings.target_lufs,
                 vstack_top_ratio=self.settings.vstack_top_ratio,
                 h_enable_intro=self.settings.h_enable_intro,
@@ -981,6 +1010,15 @@ class App:
                 h_intro_path=self._var_get("h_intro_path"),
                 h_mid_path=self._var_get("h_mid_path"),
                 h_outro_path=self._var_get("h_outro_path"),
+                h_intro_duration=float(self._var_get("h_intro_duration") or 3),
+                h_mid_duration=float(self._var_get("h_mid_duration") or 1),
+                h_outro_duration=float(self._var_get("h_outro_duration") or 3),
+                v_intro_duration=float(self._var_get("v_intro_duration") or 3),
+                v_mid_duration=float(self._var_get("v_mid_duration") or 1),
+                v_outro_duration=float(self._var_get("v_outro_duration") or 3),
+                s_intro_duration=float(self._var_get("s_intro_duration") or 3),
+                s_mid_duration=float(self._var_get("s_mid_duration") or 1),
+                s_outro_duration=float(self._var_get("s_outro_duration") or 3),
                 v_intro_path=self._var_get("v_intro_path"),
                 v_mid_path=self._var_get("v_mid_path"),
                 v_outro_path=self._var_get("v_outro_path"),
@@ -1015,7 +1053,7 @@ class App:
                 self._log(f"  {stage.name()}")
                 self._log(f"{'─'*48}")
                 ctx = stage.run(ctx)
-                self._set_progress(ctx.progress)
+                self._set_progress(ctx.progress, stage=stage.name())
                 log.info(f"[PIPELINE] {name} завершена, progress={ctx.progress:.0f}%")
 
             self._log("\n" + "═"*48)
