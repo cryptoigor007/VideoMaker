@@ -396,17 +396,15 @@ def _build_clean_pro_window(
 def _build_karaoke_window(
     words, analysis, playres_x, playres_y, base_size,
     wide: bool = False, caption_style: str = "auto_aisie",
+    honor_strong: bool = True,
 ):
     """Karaoke-группы с РЕАЛЬНО разными пресетами.
 
-    Почему раньше все стили выглядели одинаково:
-    1) PrimaryColour у всех Style был белый, Secondary не использовался (без karaoke-тегов).
-    2) На каждое слово вешался одинаковый inline \\c жёлтый + одинаковый \\t pop.
-    3) Glow-слой всегда с жёлтым свечением поверх.
-    4) Структура кадра (2–4 слова, dim+active) не менялась — глаз видел «тот же Hormozi».
-
-    Сейчас у каждого caption_style свой пресет: цвет active/dim, box, pop, glow, размер.
-    Тайминги стыкуются без дыр (end[i] = start[i+1] внутри группы).
+    Одна строка субтитров (ниже середины / низ для wide).
+    Strong-слова (AISIE/Gemini) внутри строки: другой цвет + увеличение.
+    Без второго слоя Glow — он давал визуальное «раздваивание» (увеличенный текст сверху).
+    Karaoke-active (текущее слово) подсвечивается цветом, без агрессивного scale,
+    чтобы не выглядеть как отдельный overlay.
     """
     if not words:
         return []
@@ -432,121 +430,94 @@ def _build_karaoke_window(
     if key in ("", "auto_aisie", "auto"):
         key = default_key
 
-    # ASS BGR. Пресеты специально контрастные.
-    # active = цвет текущего слова; dim = остальные в группе;
-    # style = имя Style из заголовка ASS; pop = scale-анимация; glow = второй слой.
+    # ASS BGR. Пресеты: active/dim цвет, box, лёгкий pop только для strong.
+    # use_glow ВЫКЛЮЧЕН — отдельный glow-слой создавал «вторую» увеличенную копию слова.
     PRESETS = {
-        # glow_* — мягкое свечение без жёсткой границы (большой bord + высокий be + alpha)
         "hormozi": {
             "style": "Hormozi",
             "active": "&H0000EBFF&",
             "dim": "&H00C8C8C8&",
-            "glow": "&H0000EBFF&",
-            "use_glow": True,
-            "glow_be": 6,
-            "glow_alpha": "60",
-            "glow_bord": 16,
             "use_pop": True,
-            "pop_pct": 118,
+            "pop_pct": 112,
             "box": False,
-            "active_scale": 1.22,
+            "active_scale": 1.06,
+            "strong_scale": 1.18,
         },
         "hormozi_green": {
             "style": "HormoziGreen",
             "active": "&H004CFF00&",
             "dim": "&H00B0B0B0&",
-            "glow": "&H004CFF00&",
-            "use_glow": True,
-            "glow_be": 6,
-            "glow_alpha": "60",
-            "glow_bord": 16,
             "use_pop": True,
-            "pop_pct": 118,
+            "pop_pct": 112,
             "box": False,
-            "active_scale": 1.22,
+            "active_scale": 1.06,
+            "strong_scale": 1.18,
         },
         "tiktok_box": {
             "style": "TikTokBox",
             "active": "&H0000EBFF&",
             "dim": "&H00FFFFFF&",
-            "glow": None,
-            "use_glow": False,
-            "glow_be": 0,
-            "glow_alpha": "FF",
-            "glow_bord": 0,
             "use_pop": False,
             "pop_pct": 100,
             "box": True,
-            "active_scale": 1.12,
+            "active_scale": 1.04,
+            "strong_scale": 1.12,
         },
         "clean_pro": {
             "style": "CleanPro",
             "active": "&H00FFFFFF&",
             "dim": "&H00A0A0A0&",
-            "glow": None,
-            "use_glow": False,
-            "glow_be": 0,
-            "glow_alpha": "FF",
-            "glow_bord": 0,
             "use_pop": False,
             "pop_pct": 100,
             "box": False,
-            "active_scale": 1.08,
+            "active_scale": 1.02,
+            "strong_scale": 1.10,
         },
         "bold_pop": {
             "style": "BoldPop",
             "active": "&H000000FF&",
             "dim": "&H00B8B8B8&",
-            "glow": "&H0000A5FF&",
-            "use_glow": True,
-            "glow_be": 7,
-            "glow_alpha": "55",
-            "glow_bord": 18,
             "use_pop": True,
-            "pop_pct": 125,
+            "pop_pct": 118,
             "box": False,
-            "active_scale": 1.35,
+            "active_scale": 1.08,
+            "strong_scale": 1.28,
         },
         "cliffhanger": {
             "style": "Cliffhanger",
             "active": "&H000000FF&",
             "dim": "&H00666699&",
-            "glow": "&H000000FF&",
-            "use_glow": True,
-            "glow_be": 8,
-            "glow_alpha": "50",
-            "glow_bord": 20,
             "use_pop": True,
-            "pop_pct": 132,
+            "pop_pct": 120,
             "box": False,
-            "active_scale": 1.40,
+            "active_scale": 1.08,
+            "strong_scale": 1.32,
         },
     }
     preset = PRESETS.get(key, PRESETS["hormozi"])
     style_name = preset["style"]
     col_active = preset["active"]
     col_dim = preset["dim"]
-    col_glow = preset["glow"] or col_active
-    use_glow = bool(preset["use_glow"])
     use_pop = bool(preset["use_pop"])
     pop_pct = int(preset["pop_pct"])
     active_scale = float(preset["active_scale"])
+    strong_scale = float(preset.get("strong_scale") or (active_scale + 0.12))
     is_box = bool(preset["box"])
 
-    strong = _strong_map(analysis)
-    # auto_aisie-подобное усиление только если исходный выбор был auto
-    honor_strong = (caption_style or "").strip().lower() in ("", "auto_aisie", "auto")
+    strong = _strong_map(analysis) if honor_strong else {}
 
     RED = "&H000000FF&"
     ORANGE = "&H0000A5FF&"
     YELLOW = "&H0000EBFF&"
     GREEN = "&H004CFF00&"
 
-    def color_for_word(word_text: str) -> str:
-        if not honor_strong:
-            return col_active
-        w = strong.get(word_text.lower().strip(".,!?;:«»\"'"), "")
-        w = (w or "").upper()
+    def strong_weight(word_text: str) -> str:
+        if not honor_strong or not strong:
+            return ""
+        return (strong.get(word_text.lower().strip(".,!?;:«»\"'"), "") or "").upper()
+
+    def color_for_word(word_text: str, is_active: bool) -> str:
+        w = strong_weight(word_text)
         if w == "L4":
             return RED
         if w == "L3":
@@ -555,34 +526,47 @@ def _build_karaoke_window(
             return GREEN
         if w == "L2":
             return YELLOW
-        return col_active
+        return col_active if is_active else col_dim
 
     normal_size = max(40, int(base_size * 0.90))
-    active_size = max(int(base_size * active_scale), normal_size + 4)
-    active_size = min(active_size, int(base_size * 1.55))
+    karaoke_active_size = max(int(base_size * active_scale), normal_size + 2)
+    karaoke_active_size = min(karaoke_active_size, int(base_size * 1.15))
+    strong_size = max(int(base_size * strong_scale), karaoke_active_size + 4)
+    strong_size = min(strong_size, int(base_size * 1.40))
     bord_a = max(5, int(base_size * (0.14 if key == "cliffhanger" else 0.11)))
     bord_d = max(3, int(base_size * 0.07))
 
-    def tags_active(text: str, color: str) -> str:
+    def tags_word(text: str, is_active: bool) -> str:
+        w = strong_weight(text)
+        is_strong = w in ("L2", "L3", "L4", "L1")
+        color = color_for_word(text, is_active)
+        if is_strong:
+            size = strong_size
+            do_pop = use_pop and pop_pct > 100
+        elif is_active:
+            size = karaoke_active_size
+            do_pop = False  # лёгкая подсветка без scale — не путать со strong
+        else:
+            size = normal_size
+            do_pop = False
+
         if is_box:
-            # BorderStyle=3 из Style — не трогаем \\bord агрессивно
-            return f"{{\\c{color}\\fs{active_size}\\b1}}{text}{{\\r}}"
-        if use_pop and pop_pct > 100:
+            bold = "1" if (is_active or is_strong) else "0"
+            return f"{{\\c{color}\\fs{size}\\b{bold}}}{text}{{\\r}}"
+        if do_pop:
             return (
-                f"{{\\c{color}\\fs{active_size}\\b1\\bord{bord_a}\\shad0\\be1"
+                f"{{\\c{color}\\fs{size}\\b1\\bord{bord_a}\\shad0\\be1"
                 f"\\t(0,100,\\fscx{pop_pct}\\fscy{pop_pct})"
                 f"\\t(100,220,\\fscx100\\fscy100)}}"
                 f"{text}{{\\r}}"
             )
-        return f"{{\\c{color}\\fs{active_size}\\b1\\bord{bord_a}}}{text}{{\\r}}"
-
-    def tags_dim(text: str) -> str:
-        if is_box:
-            return f"{{\\c{col_dim}\\fs{normal_size}\\b0}}{text}{{\\r}}"
-        return f"{{\\c{col_dim}\\fs{normal_size}\\b0\\bord{bord_d}}}{text}{{\\r}}"
+        bold = "1" if (is_active or is_strong) else "0"
+        bord = bord_a if (is_active or is_strong) else bord_d
+        return f"{{\\c{color}\\fs{size}\\b{bold}\\bord{bord}}}{text}{{\\r}}"
 
     events: list[dict] = []
     groups = _group_words_static(words)
+    strong_hit_count = 0
 
     for group in groups:
         if not group:
@@ -592,11 +576,9 @@ def _build_karaoke_window(
         for idx in group:
             edges.append(float(words[idx]["start"]))
         edges.append(float(words[group[-1]]["end"]))
-        # монотонность
         for i in range(1, len(edges)):
             if edges[i] <= edges[i - 1]:
                 edges[i] = edges[i - 1] + 0.05
-        # чуть расширить последний хвост если слово короткое
         if edges[-1] - edges[-2] < 0.12:
             edges[-1] = edges[-2] + 0.18
 
@@ -605,34 +587,11 @@ def _build_karaoke_window(
             parts = []
             for j in group:
                 wt = words[j]["text"]
-                if j == active:
-                    parts.append(tags_active(wt, color_for_word(wt)))
-                else:
-                    parts.append(tags_dim(wt))
+                if strong_weight(wt):
+                    strong_hit_count += 1
+                parts.append(tags_word(wt, j == active))
             line = pos + " ".join(parts)
-
-            if use_glow and col_glow:
-                g_be = int(preset.get("glow_be") or 6)
-                g_alpha = str(preset.get("glow_alpha") or "60")
-                g_bord = int(preset.get("glow_bord") or 16)
-                glow_parts = []
-                for j in group:
-                    wt = words[j]["text"]
-                    if j == active:
-                        # Мягкое свечение цвета стиля: bord+be, без жёсткой кромки
-                        glow_parts.append(
-                            f"{{\\fs{int(active_size * 1.04)}\\b1"
-                            f"\\bord{g_bord}\\be{g_be}\\shad0"
-                            f"\\c{col_glow}\\3c{col_glow}\\4c{col_glow}"
-                            f"\\alpha&H{g_alpha}&\\3a&H{g_alpha}&}}{wt}{{\\r}}"
-                        )
-                    else:
-                        glow_parts.append(f"{{\\alpha&HFF&}}{wt}{{\\r}}")
-                events.append({
-                    "start": t0, "end": t1, "style": "Glow",
-                    "text": pos + " ".join(glow_parts), "layer": 0,
-                })
-
+            # Один слой только — без Glow overlay (устраняет «раздваивание»)
             events.append({
                 "start": t0, "end": t1, "style": style_name,
                 "text": line, "layer": 1,
@@ -680,13 +639,19 @@ def _build_hook_events(
     analysis, playres_x, playres_y, wide, base_size,
     hook_style: str = "auto_aisie",
     clip: dict | None = None,
+    cta_start: float | None = None,
+    video_duration: float = 0.0,
+    log_fn=None,
 ):
     """Хуки-маркеры сверху.
 
     - Первый хук: с 0.0 (сразу на первом кадре / обложка).
     - Остальные: строго по таймингу Gemini (start/end).
+    - Последний хук отбрасывается, если пересекается с CTA или до CTA/конца < 5 с
+      (предпочтительно 10 с). CTA в конце достаточно.
     - Без glow. Тонкий чёрный outline.
     """
+    _log = log_fn or log.info
     if wide:
         hooks_list = (
             analysis.get("hooks_wide")
@@ -723,13 +688,18 @@ def _build_hook_events(
     if not hooks_list:
         return []
 
-    # Сортировка по времени
     def _hstart(h):
         return float(h.get("start", h.get("timing", 0)) or 0)
     hooks_list = sorted(
         [h for h in hooks_list if isinstance(h, dict) and (h.get("text") or "").strip()],
         key=_hstart,
     )
+
+    # Граница CTA / конца ролика — для фильтра последнего хука
+    cta_t = float(cta_start) if cta_start is not None and cta_start > 0 else None
+    if cta_t is None and video_duration and video_duration > 3:
+        cta_t = max(0.0, float(video_duration) - 5.0)
+    MIN_GAP_BEFORE_CTA = 5.0  # жёсткий минимум; лучше 10, но 5 уже отсекает overlap
 
     MARKER_COLORS = (
         "&H00952DFF&",  # fuchsia
@@ -739,7 +709,8 @@ def _build_hook_events(
     )
     BLACK = "&H00000000&"
 
-    events = []
+    # Предрасчёт таймингов, затем фильтр последнего vs CTA
+    prepared: list[dict] = []
     for idx, hook in enumerate(hooks_list):
         text_h = (hook.get("text") or "").strip()
         if not text_h:
@@ -752,20 +723,44 @@ def _build_hook_events(
         start_t = float(hook.get("start", hook.get("timing", 0)) or 0)
         end_t = float(hook.get("end", start_t + 2.8) or (start_t + 2.8))
 
-        # Первый хук — всегда с нуля (сразу виден / обложка)
         if idx == 0:
             start_t = 0.0
             if end_t < 2.0:
                 end_t = 2.8
-            # не держать первый хук бесконечно
             if end_t > 4.0:
                 end_t = 3.2
         else:
-            # Второй+ — только Gemini, без сдвига в 0
             n_words = max(1, len(text_h.split()))
             min_dur = max(2.0, n_words * 0.45)
             if end_t - start_t < min_dur:
                 end_t = start_t + min_dur
+
+        prepared.append({
+            "text": text_h,
+            "start": start_t,
+            "end": end_t,
+            "raw": hook,
+            "idx": idx,
+        })
+
+    if prepared and cta_t is not None:
+        last = prepared[-1]
+        # overlap или слишком близко к CTA
+        if last["end"] > cta_t or (cta_t - last["start"]) < MIN_GAP_BEFORE_CTA:
+            _log(
+                f"[ХУКИ] последний хук отброшен (start={last['start']:.2f} end={last['end']:.2f} "
+                f"cta_start={cta_t:.2f} gap={cta_t - last['start']:.2f}s < {MIN_GAP_BEFORE_CTA}s): "
+                f"«{last['text'][:40]}»"
+            )
+            prepared = prepared[:-1]
+
+    events = []
+    for p in prepared:
+        text_h = p["text"]
+        start_t = p["start"]
+        end_t = p["end"]
+        hook = p["raw"]
+        idx = p["idx"]
 
         size = max(int(base_size * 1.25), int(base_size * 1.15))
         size = min(size, int(base_size * 1.55))
@@ -776,7 +771,6 @@ def _build_hook_events(
         else:
             color = MARKER_COLORS[(idx + int(start_t * 10)) % len(MARKER_COLORS)]
 
-        # Позиция: ВЕРХ (и хук, и CTA — одна зона)
         if wide:
             cy = int(playres_y * 0.10)
             cx = playres_x // 2
@@ -800,7 +794,10 @@ def _build_hook_events(
             "style": "HookMarker",
             "text": main,
             "layer": 2,
+            "_hook_text": text_h,
         })
+        _log(f"[ХУКИ] #{len(events)} «{text_h[:48]}» {start_t:.2f}–{end_t:.2f}s")
+
     return events
 
 
@@ -925,16 +922,17 @@ def burn_subtitles(
     hook_style: str = "auto_aisie",
 ) -> str:
     _log = log_fn or log.info
-    _log("[СУБТИТРЫ] burn (AISIE + karaoke/classic)...")
+    _log("[СУБТИТРЫ] burn: karaoke in-line + hooks/CTA (без glow-overlay, strong только внутри строки)")
     if not output_path:
         output_path = video_path + ".subtitled.mp4"
 
     playres_x, playres_y = _probe_video_resolution(video_path)
     wide = _is_wide(playres_x, playres_y)
     platform = "youtube_16_9" if wide else "youtube_shorts"
-    _log(f"[СУБТИТРЫ] styles caption={caption_style} hook={hook_style} aisie={use_aisie}")
-    _log("[СУБТИТРЫ] источник: WhisperX word-timestamps → premium ASS (libass)")
-    _log(f"[СУБТИТРЫ] {playres_x}x{playres_y} mode={'wide/karaoke-bottom' if wide else 'vertical/karaoke-center'}")
+    _log(
+        f"[СУБТИТРЫ] caption={caption_style} hook={hook_style} aisie={use_aisie} "
+        f"strong={enable_strong_words} subs={enable_subtitles} hooks={enable_hooks}"
+    )
 
     if use_aisie and transcription:
         try:
@@ -946,7 +944,9 @@ def burn_subtitles(
                 platform=platform,
                 log_fn=log_fn,
             )
-            _log("[СУБТИТРЫ] AISIE applied")
+            aisie_hooks = len((analysis.get("aisie") or {}).get("hooks") or [])
+            aisie_subs = len((analysis.get("aisie") or {}).get("subtitles") or [])
+            _log(f"[СУБТИТРЫ] AISIE: hooks={aisie_hooks} subtitles={aisie_subs}")
         except Exception as e:
             _log(f"[СУБТИТРЫ] AISIE failed: {e}")
 
@@ -957,15 +957,29 @@ def burn_subtitles(
         scale = max(playres_x / 1080.0, 1.0)
         base_size = max(72, int(82 * scale))
     events = []
+    n_sub_events = 0
+    n_hook_events = 0
+    n_cta_events = 0
 
-    # Karaoke везде: wide — низ (как YouTube), vertical — чуть ниже середины
+    # Karaoke: одна строка; strong — только цвет+size внутри строки (если enable_strong_words)
     if enable_subtitles:
         words = _words_from_transcription(transcription)
         if words:
-            events.extend(_build_karaoke_window(
+            strong_map = _strong_map(analysis) if enable_strong_words else {}
+            _log(
+                f"[СУБТИТРЫ] words={len(words)} strong_map={len(strong_map)} "
+                f"pos={'bottom' if wide else 'mid(~54%)'}"
+            )
+            if strong_map:
+                sample = list(strong_map.items())[:8]
+                _log(f"[СУБТИТРЫ] strong sample: {sample}")
+            sub_ev = _build_karaoke_window(
                 words, analysis, playres_x, playres_y, base_size, wide=wide,
                 caption_style=caption_style or "auto_aisie",
-            ))
+                honor_strong=bool(enable_strong_words),
+            )
+            events.extend(sub_ev)
+            n_sub_events = len(sub_ev)
         else:
             for sub in analysis.get("subtitles") or []:
                 t = (sub.get("text") or "").strip()
@@ -981,26 +995,57 @@ def burn_subtitles(
                     "text": f"{{\\an{an}\\pos({cx},{cy})}}{t}",
                     "layer": 0,
                 })
+                n_sub_events += 1
+            _log(f"[СУБТИТРЫ] fallback segment subs={n_sub_events} (нет word-timings)")
 
     if enable_hooks:
         vid_dur = _probe_video_duration(video_path)
         if clip:
-            # длительность куска шортса
             try:
                 vid_dur = max(vid_dur, float(clip.get("end", 0)) - float(clip.get("start", 0)))
             except Exception:
                 pass
-        events.extend(_build_hook_events(
+        # CTA start заранее, чтобы отфильтровать последний хук
+        cta_start_guess = max(0.0, float(vid_dur) - 5.0) if vid_dur > 3 else None
+        if clip and (clip.get("cta") or "").strip():
+            try:
+                c_end = float(clip.get("end", 0) or 0)
+                cta_start_guess = max(
+                    float(clip.get("start", 0) or 0),
+                    float(clip.get("cta_start") or (c_end - 5.0)),
+                )
+            except Exception:
+                pass
+
+        hook_ev = _build_hook_events(
             analysis, playres_x, playres_y, wide, base_size,
             hook_style=hook_style or "auto_aisie",
             clip=clip,
-        ))
-        events.extend(_build_cta_events(
+            cta_start=cta_start_guess,
+            video_duration=vid_dur,
+            log_fn=_log,
+        )
+        events.extend(hook_ev)
+        n_hook_events = len(hook_ev)
+
+        cta_ev = _build_cta_events(
             analysis, playres_x, playres_y, wide, base_size,
             clip=clip, video_duration=vid_dur,
-        ))
+        )
+        events.extend(cta_ev)
+        n_cta_events = len(cta_ev)
+        for ce in cta_ev:
+            _log(f"[CTA] «{(ce.get('text') or '')[-60:]}» {ce['start']:.2f}–{ce['end']:.2f}s")
 
+    # Отдельные top-aligned Strong events БОЛЬШЕ НЕ добавляем:
+    # они и давали «увеличенные слова выше» поверх karaoke.
+    # Strong только in-line через honor_strong в karaoke / clean_pro.
     if enable_strong_words and not _words_from_transcription(transcription):
+        # fallback только если нет word-timings — и тогда ставим В ТУ ЖЕ зону субтитров, не наверх
+        cx = playres_x // 2
+        cy = int(playres_y * (0.88 if wide else 0.54))
+        an = "2" if wide else "5"
+        n_fb = 0
         for sw in analysis.get("strong_words") or []:
             word = (sw.get("word") or "").strip()
             if not word:
@@ -1012,9 +1057,12 @@ def burn_subtitles(
                 "start": float(sw.get("start", timing)),
                 "end": float(sw.get("end", timing + 1.2)),
                 "style": "Strong",
-                "text": f"{{\\an8\\c{color}\\fs{size}}}{word}",
+                "text": f"{{\\an{an}\\pos({cx},{cy})\\c{color}\\fs{size}}}{word}",
                 "layer": 1,
             })
+            n_fb += 1
+        if n_fb:
+            _log(f"[СУБТИТРЫ] fallback strong (no words) n={n_fb} pos=subtitle-zone")
 
     if clip:
         events = _filter_and_shift_events(events, clip)
@@ -1033,11 +1081,13 @@ def burn_subtitles(
         )
     with open(ass_path, "w", encoding="utf-8-sig") as f:
         f.write("\n".join(lines))
-    _log(f"[СУБТИТРЫ] {len(events)} events → {ass_path}")
+    _log(
+        f"[СУБТИТРЫ] events total={len(events)} "
+        f"(subs={n_sub_events} hooks={n_hook_events} cta={n_cta_events}) → ASS"
+    )
 
     ffmpeg = _ffmpeg_bin()
     esc = _escape_ass_path(ass_path)
-    # 4K: VideoToolbox + высокий bitrate, без soft libx264 «fast»
     pixels = playres_x * playres_y
     if pixels >= 3000 * 1600:
         bitrate = "50M"
@@ -1049,11 +1099,10 @@ def burn_subtitles(
         "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
         "-pix_fmt", "yuv420p", "-c:a", "copy",
     ]
-    _log(f"[СУБТИТРЫ] encode VT bitrate={bitrate} size={playres_x}x{playres_y}")
     cmd = [ffmpeg, "-y", "-i", video_path, "-vf", f"subtitles='{esc}'", *vt, output_path]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        _log(f"[СУБТИТРЫ] VT/subtitles fail → ass+libx264: {(result.stderr or '')[-300:]}")
+        _log(f"[СУБТИТРЫ] VT fail → libx264: {(result.stderr or '')[-200:]}")
         cmd2 = [
             ffmpeg, "-y", "-i", video_path, "-vf", f"ass='{esc}'",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
@@ -1065,11 +1114,12 @@ def burn_subtitles(
         except OSError:
             pass
         if result2.returncode != 0:
-            _log(f"[СУБТИТРЫ] ffmpeg error: {(result2.stderr or '')[-400:]}")
+            _log(f"[СУБТИТРЫ] ffmpeg error: {(result2.stderr or '')[-300:]}")
             return video_path
     else:
         try:
             os.remove(ass_path)
         except OSError:
             pass
+    _log(f"[СУБТИТРЫ] готово → {output_path}")
     return output_path

@@ -91,10 +91,20 @@ visual_weight: L3 или L4
 - Примеры тона: «А ты бы так поступил?», «Пиши — согласен или нет», «Что из этого правда?»
 
 ═══════════════════════════════════════
-3) SHORTS (отдельный продукт на каждую нарезку)
+3) PACKAGING ПОЛНОГО ВИДЕО (для папок wide + vertical — ОДИНАКОВЫЙ набор)
+═══════════════════════════════════════
+Отдельные поля (НЕ копировать в Shorts):
+- package_title: заголовок ролика ≤ 70 символов (YouTube/Reels)
+- package_description: 2–4 предложения + мягкий CTA (описание под видео)
+- package_hook: 3–8 слов — главный packaging-хук (текст для файла hook, не обязательно = on-screen hook)
+- package_hashtags: 8–12 штук через пробел, с #
+Эти 4 поля одинаково используются и для wide, и для vertical.
+
+═══════════════════════════════════════
+4) SHORTS (отдельный продукт на каждую нарезку)
 ═══════════════════════════════════════
 - 3–6 клипов по 15–55 сек, законченная мысль
-- У КАЖДОГО Shorts СВОИ (не копировать с полного видео):
+- У КАЖДОГО Shorts СВОИ (не копировать с полного видео / package_*):
   - hook: 3–6 слов, PACKAGING для первого кадра/обложки, НЕ дословная речь
   - hook_start / hook_end
   - cta: 3–7 слов в конце клипа — вопрос, чтобы написали комментарий (другой текст, чем hook)
@@ -105,7 +115,7 @@ visual_weight: L3 или L4
 - Оценка ≥ 8/10, слабые отбрасывай
 
 ═══════════════════════════════════════
-4) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
+5) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
 ═══════════════════════════════════════
 - strong_words: 5–15 слов с timing, caps, color
 - subtitles: смысловые куски 1.5–4с (fallback), не по словам
@@ -129,6 +139,10 @@ visual_weight: L3 или L4
   "hook": {{"text": "главный хук", "start": 0.0, "end": 2.5, "timing": 0.0}},
   "cta_wide": {{"text": "Вопрос для комментариев YouTube", "start": 0.0, "end": 0.0}},
   "cta_vertical": {{"text": "Другой вопрос для вертикали", "start": 0.0, "end": 0.0}},
+  "package_title": "Заголовок полного ролика ≤70",
+  "package_description": "Описание 2–4 предложения + CTA",
+  "package_hook": "Главный packaging-хук 3–8 слов",
+  "package_hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5 #tag6 #tag7 #tag8",
   "clips_for_shorts": [
     {{
       "text": "полный текст этого Short",
@@ -397,6 +411,29 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
         }
         clips.append(item)
 
+    def _str_field(*keys, default=""):
+        for k in keys:
+            v = data.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+            if isinstance(v, dict) and (v.get("text") or "").strip():
+                return str(v.get("text")).strip()
+        return default
+
+    # Packaging полного видео (wide + vertical — один набор)
+    package_title = _str_field("package_title", "title")
+    package_description = _str_field("package_description", "description")
+    package_hook = _str_field("package_hook")
+    if not package_hook:
+        if isinstance(main_hook, dict):
+            package_hook = str(main_hook.get("text") or "").strip()
+        elif isinstance(main_hook, str):
+            package_hook = main_hook.strip()
+    package_hashtags = _str_field("package_hashtags", "hashtags")
+    if package_hashtags and not package_hashtags.startswith("#") and " " not in package_hashtags:
+        # список без #: оставим как есть
+        pass
+
     return {
         "corrected_text": corrected_text,
         "segments": segments,
@@ -407,6 +444,10 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
         "cta_wide": cta_wide,
         "cta_vertical": cta_vertical,
         "cta": cta_vertical or cta_wide,
+        "package_title": package_title,
+        "package_description": package_description,
+        "package_hook": package_hook,
+        "package_hashtags": package_hashtags,
         "intro": data.get("intro", {"start": 0, "end": 0}),
         "middle": data.get("middle", []),
         "outro": data.get("outro", {"start": 0, "end": 0}),
@@ -431,6 +472,10 @@ def _empty_analysis() -> dict:
         "intro": {"start": 0, "end": 0},
         "middle": [],
         "outro": {"start": 0, "end": 0},
+        "package_title": "",
+        "package_description": "",
+        "package_hook": "",
+        "package_hashtags": "",
         "strong_words": [],
         "subtitles": [],
         "clips_for_shorts": [],

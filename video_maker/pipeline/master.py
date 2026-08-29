@@ -47,16 +47,14 @@ class MasterBuilder(Stage):
         return ctx
 
     def _collect_vertical_files(self, folder: str) -> list[str]:
-        """Собрать вертикальные видеофайлы (9:16)."""
-        from ..engines.video import collect_video_files
+        """Собрать вертикальные видеофайлы (9:16) с ротацией подпапок; used исключён."""
+        from ..engines.video import collect_video_files, _ffprobe_video_info
         all_files = collect_video_files(folder)
-        # Фильтруем только вертикальные (9:16 или близкие)
         vertical = []
         for f in all_files:
             try:
-                from ..engines.video import _ffprobe_video_info
                 w, h, _ = _ffprobe_video_info(f)
-                if h > w * 0.8:  # примерно 9:16 или вертикальнее
+                if h > w * 0.8:
                     vertical.append(f)
             except Exception:
                 pass
@@ -73,6 +71,7 @@ class MasterBuilder(Stage):
         video_files = collect_video_files(ctx.broll_horizontal)
         if not video_files:
             raise FileNotFoundError(f"Нет видео в {ctx.broll_horizontal}")
+        ctx.log(f"[MASTER] B-roll H: {len(video_files)} файлов (ротация подпапок, used исключён)")
 
         fit_video_to_duration(
             video_files=video_files,
@@ -80,6 +79,8 @@ class MasterBuilder(Stage):
             output_path=output_path,
             audio_file=ctx.audio_path,
             log_fn=ctx.log,
+            broll_root=ctx.broll_horizontal,
+            move_used=True,
         )
         return output_path
 
@@ -97,6 +98,8 @@ class MasterBuilder(Stage):
             output_path=output_path,
             audio_file=ctx.audio_path,
             log_fn=ctx.log,
+            broll_root=ctx.broll_vertical,
+            move_used=True,
         )
         return output_path
 

@@ -56,14 +56,129 @@ def _ffprobe_video_info(video_path: str) -> tuple[int, int, float]:
     return width, height, fps
 
 
-def collect_video_files(folder: str) -> list[str]:
-    """Собрать все видеофайлы из папки."""
-    exts = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-    files = []
-    for f in sorted(os.listdir(folder)):
-        if f.lower().endswith(exts):
-            files.append(os.path.join(folder, f))
+# Папка использованных B-roll (исключается из ротации)
+USED_DIR_NAME = "used"
+_SKIP_SUBDIR_NAMES = frozenset({
+    "used", "использованная", "использованные", "использовано",
+    "_tmp", ".ds_store", "__macosx",
+})
+_VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+
+
+def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str]:
+    """Собрать видео из папки B-roll.
+
+    Если есть подпапки (кроме used) — ротация по подпапкам:
+      1-й клип из подпапки A, 2-й из B, … interleave.
+    Папка used / использованная никогда не сканируется.
+    Если подпапок нет — плоский список файлов в folder.
+    """
+    if not folder or not os.path.isdir(folder):
+        return []
+
+    def _is_video(name: str) -> bool:
+        return name.lower().endswith(_VIDEO_EXTS)
+
+    try:
+        entries = sorted(os.listdir(folder))
+    except OSError:
+        return []
+
+    subdirs: list[str] = []
+    for name in entries:
+        if name.startswith("."):
+            continue
+        if name.lower() in _SKIP_SUBDIR_NAMES:
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isdir(path):
+            subdirs.append(path)
+
+    if rotate_subfolders and subdirs:
+        queues: list[list[str]] = []
+        for sd in subdirs:
+            try:
+                files = [
+                    os.path.join(sd, f)
+                    for f in sorted(os.listdir(sd))
+                    if _is_video(f) and os.path.isfile(os.path.join(sd, f))
+                ]
+            except OSError:
+                files = []
+            if files:
+                queues.append(files)
+        if not queues:
+            return []
+        result: list[str] = []
+        max_len = max(len(q) for q in queues)
+        for i in range(max_len):
+            for q in queues:
+                if i < len(q):
+                    result.append(q[i])
+        return result
+
+    files: list[str] = []
+    for name in entries:
+        if name.startswith(".") or name.lower() in _SKIP_SUBDIR_NAMES:
+            continue
+        full = os.path.join(folder, name)
+        if os.path.isfile(full) and _is_video(name):
+            files.append(full)
     return files
+
+
+def move_to_used(root_folder: str, paths: list[str], log_fn=None) -> int:
+    """Перенести использованные клипы в {root_folder}/used/."""
+    import shutil
+
+    _log = log_fn or log.info
+    if not root_folder or not paths:
+        return 0
+    root_abs = os.path.abspath(root_folder)
+    used_dir = os.path.join(root_abs, USED_DIR_NAME)
+    try:
+        os.makedirs(used_dir, exist_ok=True)
+    except OSError as e:
+        _log(f"[B-ROLL] не удалось создать {used_dir}: {e}")
+        return 0
+
+    moved = 0
+    seen: set[str] = set()
+    for p in paths:
+        if not p:
+            continue
+        abs_p = os.path.abspath(p)
+        if abs_p in seen:
+            continue
+        seen.add(abs_p)
+        if not os.path.isfile(abs_p):
+            continue
+        try:
+            common = os.path.commonpath([root_abs, abs_p])
+        except ValueError:
+            continue
+        if common != root_abs:
+            continue
+        parts_lower = {x.lower() for x in abs_p.split(os.sep)}
+        if USED_DIR_NAME in parts_lower or "использованная" in parts_lower:
+            continue
+        base = os.path.basename(abs_p)
+        dest = os.path.join(used_dir, base)
+        if os.path.exists(dest):
+            stem, ext = os.path.splitext(base)
+            n = 1
+            while os.path.exists(dest):
+                dest = os.path.join(used_dir, f"{stem}_{n}{ext}")
+                n += 1
+        try:
+            shutil.move(abs_p, dest)
+            moved += 1
+            _log(f"[B-ROLL] → used: {base}")
+        except OSError as e:
+            _log(f"[B-ROLL] move fail {base}: {e}")
+    if moved:
+        _log(f"[B-ROLL] в used перенесено: {moved}")
+    return moved
 
 
 def fit_video_to_duration(
@@ -72,15 +187,15 @@ def fit_video_to_duration(
     output_path: str,
     audio_file: str = "",
     log_fn=None,
+    broll_root: str = "",
+    move_used: bool = True,
 ) -> str:
     """Последовательно набрать минимум клипов под целевую длительность.
 
-    Логика (быстро и предсказуемо):
-    1. Берём файлы в порядке сортировки папки (без shuffle).
-    2. Смотрим первый: если его длительность >= audio → берём только его и обрезаем.
-    3. Если короче — добавляем следующий, суммируем, и так далее.
-    4. Как только сумма >= target — останавливаемся, склеиваем и обрезаем хвост.
-    Никаких 50–100 лишних клипов.
+    Логика:
+    1. Порядок списка (ротация подпапок уже в collect_video_files).
+    2. Набираем клипы пока сумма >= target.
+    3. После успеха — уникальные исходники в {broll_root}/used/.
     """
     _log = log_fn or log.info
     _log(f"[ВИДЕО 4K M1] Подбор B-roll под {target_duration:.1f} сек (последовательный)")
@@ -90,7 +205,6 @@ def fit_video_to_duration(
 
     ffmpeg = _ffmpeg_bin()
 
-    # Порядок как в папке (sorted уже в collect_video_files)
     ordered = list(video_files)
 
     selected: list[str] = []
@@ -208,6 +322,10 @@ def fit_video_to_duration(
         os.rename(output_path, tmp_out)
         replace_audio(tmp_out, audio_file, output_path, log_fn=_log)
         os.remove(tmp_out)
+
+    # После успешной склейки — перенос использованных исходников в used/
+    if move_used and broll_root:
+        move_to_used(broll_root, selected, log_fn=_log)
 
     return output_path
 

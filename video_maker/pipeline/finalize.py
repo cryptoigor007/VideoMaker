@@ -69,13 +69,31 @@ class FinalizeStage(Stage):
             shutil.move(ln, final_path)
             self._measure(final_path, ctx)
             clip = clips[i - 1] if i - 1 < len(clips) else {}
-            self._write_short_meta(ctx, clip, os.path.join(sdir, "metadata.txt"))
-            src_meta = os.path.join(os.path.dirname(short_path), "metadata.txt")
-            if os.path.exists(src_meta):
-                try:
-                    shutil.copy2(src_meta, os.path.join(sdir, "metadata.txt"))
-                except OSError:
-                    pass
+            self._write_packaging_files(
+                dir_path=sdir,
+                base_name=f"short_{i:03d}",
+                title=str(clip.get("title") or ""),
+                description=str(clip.get("description") or ""),
+                hook=str(clip.get("hook") or (ctx.analysis.get("hook") or {}).get("text") or ""),
+                hashtags=str(clip.get("hashtags") or ""),
+                log_fn=ctx.log,
+            )
+
+        # Packaging полного видео: одинаково в wide/ и vertical/
+        pkg_title = str(ctx.analysis.get("package_title") or "")
+        pkg_desc = str(ctx.analysis.get("package_description") or "")
+        pkg_hook = str(ctx.analysis.get("package_hook") or (ctx.analysis.get("hook") or {}).get("text") or "")
+        pkg_tags = str(ctx.analysis.get("package_hashtags") or "")
+        for d in (wide_dir, vert_dir):
+            self._write_packaging_files(
+                dir_path=d,
+                base_name=base_name,
+                title=pkg_title,
+                description=pkg_desc,
+                hook=pkg_hook,
+                hashtags=pkg_tags,
+                log_fn=ctx.log,
+            )
 
         self._write_root_meta(ctx, root)
         self._copy_covers(ctx, wide_dir, vert_dir)
@@ -90,28 +108,42 @@ class FinalizeStage(Stage):
         ctx.progress = 100.0
         return ctx
 
-    def _write_short_meta(self, ctx: PipelineContext, clip: dict, path: str) -> None:
-        hook = clip.get("hook") or (ctx.analysis.get("hook") or {}).get("text", "")
-        lines = [
-            f"Серия: {ctx.series_name or '—'}",
-            f"Хук: {hook}",
-            f"Заголовок: {clip.get('title', '—')}",
-            f"Описание: {clip.get('description', '—')}",
-            f"Хештеги: {clip.get('hashtags', '—')}",
-            f"Тайминг: {clip.get('start', 0):.1f} — {clip.get('end', 0):.1f}",
-        ]
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-        except OSError as e:
-            ctx.log(f"[ФИНАЛ] meta: {e}")
+    @staticmethod
+    def _write_packaging_files(
+        dir_path: str,
+        base_name: str,
+        title: str,
+        description: str,
+        hook: str,
+        hashtags: str,
+        log_fn=None,
+    ) -> None:
+        """4 отдельных файла: {base}_title / _description / _hook / _hashtags."""
+        _log = log_fn or (lambda *a, **k: None)
+        safe = re.sub(r'[<>:"/\\|?*]', "_", (base_name or "output").strip()) or "output"
+        mapping = {
+            "title": (title or "").strip(),
+            "description": (description or "").strip(),
+            "hook": (hook or "").strip(),
+            "hashtags": (hashtags or "").strip(),
+        }
+        for kind, content in mapping.items():
+            path = os.path.join(dir_path, f"{safe}_{kind}.txt")
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content + ("\n" if content else ""))
+            except OSError as e:
+                _log(f"[ФИНАЛ] packaging {kind}: {e}")
+        _log(f"[ФИНАЛ] packaging → {dir_path}: {safe}_{{title,description,hook,hashtags}}.txt")
 
     def _write_root_meta(self, ctx: PipelineContext, root: str) -> None:
         clips = ctx.analysis.get("clips_for_shorts", [])
         lines = [
             f"series: {ctx.series_name or '—'}",
             f"audio: {ctx.audio_path}",
-            f"hook: {(ctx.analysis.get('hook') or {}).get('text', '—')}",
+            f"package_title: {ctx.analysis.get('package_title') or '—'}",
+            f"package_hook: {ctx.analysis.get('package_hook') or (ctx.analysis.get('hook') or {}).get('text', '—')}",
+            f"package_hashtags: {ctx.analysis.get('package_hashtags') or '—'}",
             "",
             "=== Shorts ===",
         ]

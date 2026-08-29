@@ -87,7 +87,21 @@ class ShortsCutter(Stage):
                 shutil.copy2(current, final_path)
                 current = final_path
 
-        self._write_metadata(clip, ctx, os.path.join(short_dir, "metadata.txt"))
+        # 4 packaging-файла (свои для шорта, не из full video)
+        base = f"short_{index:03d}"
+        hook = str(clip.get("hook") or (ctx.analysis.get("hook") or {}).get("text") or "")
+        for kind, content in (
+            ("title", str(clip.get("title") or "")),
+            ("description", str(clip.get("description") or "")),
+            ("hook", hook),
+            ("hashtags", str(clip.get("hashtags") or "")),
+        ):
+            p = os.path.join(short_dir, f"{base}_{kind}.txt")
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write((content or "").strip() + ("\n" if (content or "").strip() else ""))
+            except OSError as e:
+                ctx.log(f"[SHORTS] packaging {kind}: {e}")
         return current
 
     def _apply_audio_post(self, video_path: str, ctx: PipelineContext, output_path: str) -> str:
