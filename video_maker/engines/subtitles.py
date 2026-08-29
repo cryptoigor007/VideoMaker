@@ -35,13 +35,9 @@ CAPTION_STYLES = {
     "cliffhanger": "Cliffhanger (Tension)",
 }
 HOOK_STYLES = {
-    "auto_aisie": "Auto (AISIE)",
-    "hormozi": "Hormozi Yellow",
-    "impact": "Impact Orange",
-    "neon": "Neon Green",
-    "soft": "Soft White",
-    "bold": "Bold White",
-    "cliffhanger": "Cliffhanger (Tension)",
+    # Один режим: неоновый маркер (ротация 4 цветов)
+    "marker": "Neon Marker",
+    "auto_aisie": "Neon Marker",
 }
 
 
@@ -168,13 +164,8 @@ Style: BoldPop,Arial Black,{sz},&H000000FF&,&H0000A5FF&,&H00000000&,&H90000000&,
 Style: Cliffhanger,Arial Black,{sz},&H000000FF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord+2},1,{align_k},{ml},{ml},{margin_v},1
 Style: Karaoke,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
 Style: Glow,Arial Black,{sz},&H00FFFFFF&,&H00000000&,&H00FFFFFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,0,0,{align_k},{ml},{ml},{margin_v},1
-Style: Hook,Arial Black,{hook_sz},&H00FFFFFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
-Style: HookHormozi,Arial Black,{hook_sz},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
-Style: HookImpact,Arial Black,{hook_sz},&H0000A5FF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,2,0,1,{bord_h},1,{align_h},{ml},{ml},{margin_v},1
-Style: HookNeon,Arial Black,{hook_sz},&H0000FFFF&,&H0000FFFF&,&H0000FFFF&,&H00000000&,-1,0,0,0,100,100,1,0,1,0,0,{align_h},{ml},{ml},{margin_v},1
-Style: HookSoft,Arial,{max(int(hook_sz*0.88), sz)},&H00FFFFFF&,&H000000FF&,&H00333333&,&H80000000&,-1,0,0,0,100,100,0,0,1,{max(3,bord-2)},3,{align_h},{ml},{ml},{margin_v},1
-Style: HookGlow,Arial Black,{hook_sz},&H00FFFFFF&,&H00000000&,&H00FFFFFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,0,0,{align_h},{ml},{ml},{margin_v},1
-Style: HookCliffhanger,Arial Black,{hook_sz},&H000000FF&,&H0000A5FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord_h+2},2,{align_h},{ml},{ml},{margin_v},1
+Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
+Style: Hook,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
 Style: Strong,Arial Black,{max(sz, int(sz*1.12))},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_h},{ml},{ml},{margin_v},1
 Style: Default,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
 
@@ -337,7 +328,7 @@ def _build_clean_pro_window(
         cy = int(playres_y * 0.88)
         pos = f"{{\\an2\\pos({cx},{cy})}}"
     else:
-        cy = int(playres_y * 0.72)
+        cy = int(playres_y * 0.56)  # ниже середины (~6%)
         pos = f"{{\\an2\\pos({cx},{cy})}}"
 
     WHITE = "&H00FFFFFF&"
@@ -671,145 +662,252 @@ def _build_wide_subtitles(transcription, analysis):
     return events
 
 
+def _probe_video_duration(video_path: str) -> float:
+    """Длительность видео в секундах (ffprobe)."""
+    try:
+        import json
+        cmd = [
+            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            "-of", "json", video_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(json.loads(result.stdout)["format"]["duration"])
+    except Exception:
+        return 0.0
+
+
 def _build_hook_events(
     analysis, playres_x, playres_y, wide, base_size,
     hook_style: str = "auto_aisie",
+    clip: dict | None = None,
 ):
-    """Premium hooks: glow layer + fade/scale — WhisperX/AISIE timings."""
-    hooks_list = analysis.get("aisie", {}).get("hooks") or analysis.get("hooks") or []
+    """Хуки-маркеры сверху.
+
+    - Первый хук: с 0.0 (сразу на первом кадре / обложка).
+    - Остальные: строго по таймингу Gemini (start/end).
+    - Без glow. Тонкий чёрный outline.
+    """
+    if wide:
+        hooks_list = (
+            analysis.get("hooks_wide")
+            or analysis.get("hooks")
+            or analysis.get("aisie", {}).get("hooks")
+            or []
+        )
+    else:
+        hooks_list = (
+            analysis.get("hooks_vertical")
+            or analysis.get("hooks")
+            or analysis.get("aisie", {}).get("hooks")
+            or []
+        )
     if not hooks_list:
         h = analysis.get("hook")
         if isinstance(h, dict) and h.get("text"):
             hooks_list = [h]
         else:
-            return []
+            hooks_list = []
 
-    YELLOW = "&H0000EBFF&"
-    GREEN = "&H004CFF00&"
-    ORANGE = "&H0000A5FF&"
-    WHITE = "&H00FFFFFF&"
+    # Shorts: один packaging-хук клипа
+    if clip and (clip.get("hook") or "").strip():
+        hs = float(clip.get("hook_start", clip.get("start", 0)) or 0)
+        he = float(clip.get("hook_end", hs + 2.8) or (hs + 2.8))
+        hooks_list = [{
+            "text": str(clip.get("hook")).strip(),
+            "start": hs,
+            "end": he,
+            "timing": hs,
+            "type": "CURIOSITY",
+            "visual_weight": "L4",
+        }]
+    if not hooks_list:
+        return []
 
-    NEON_CYAN = "&H00FFFF00&"   # #00FFFF
-    NEON_LIME = "&H0014FF39&"   # #39FF14
-    NEON_MAG = "&H00FF00FF&"    # #FF00FF
-    force = {
-        "hormozi": ("HookHormozi", YELLOW),
-        "impact": ("HookImpact", ORANGE),
-        "neon": ("HookNeon", NEON_CYAN),
-        "soft": ("HookSoft", WHITE),
-        "bold": ("Hook", WHITE),
-        "cliffhanger": ("HookCliffhanger", "&H000000FF&"),
-    }
+    # Сортировка по времени
+    def _hstart(h):
+        return float(h.get("start", h.get("timing", 0)) or 0)
+    hooks_list = sorted(
+        [h for h in hooks_list if isinstance(h, dict) and (h.get("text") or "").strip()],
+        key=_hstart,
+    )
 
-    def pick(h: dict) -> tuple[str, str]:
-        if hook_style in force:
-            return force[hook_style]
-        weight = (h.get("visual_weight") or "L3").upper()
-        htype = (h.get("type") or "").upper()
-        if weight == "L4" or htype in ("REVELATION", "CONTRADICTION"):
-            return "HookImpact", ORANGE
-        if htype in ("QUESTION", "CURIOSITY"):
-            return "HookHormozi", YELLOW
-        if htype in ("IDENTITY", "LOSS"):
-            return "HookSoft", WHITE
-        if weight == "L3":
-            return "HookHormozi", YELLOW
-        return "HookHormozi", YELLOW
+    MARKER_COLORS = (
+        "&H00952DFF&",  # fuchsia
+        "&H0000FFB8&",  # lime
+        "&H00006BFF&",  # orange
+        "&H00FFF000&",  # cyan
+    )
+    BLACK = "&H00000000&"
 
     events = []
-    for hook in hooks_list:
-        text = (hook.get("text") or "").strip()
-        if not text:
+    for idx, hook in enumerate(hooks_list):
+        text_h = (hook.get("text") or "").strip()
+        if not text_h:
             continue
-        # 3–5 слов (макс 7) — читаемо и retention
-        words = text.split()
+        words = text_h.split()
         if len(words) > 7:
-            text = " ".join(words[:7])
-        start = float(hook.get("start", hook.get("timing", 0)))
-        end = float(hook.get("end", start + 3.0))
-        if (hook_style == "neon") and start < 0.15:
-            start = 0.0
-        # Минимум ~0.45с на слово, чтобы спокойно прочитать (особенно horizontal)
-        n_words = max(1, len(text.split()))
-        min_dur = max(2.0, n_words * 0.45)
-        if end - start < min_dur:
-            end = start + min_dur
-        weight = hook.get("visual_weight") or "L3"
-        _, size = _weight_style(weight, base_size)
-        size = max(size, int(base_size * 1.35))
-        style, color = pick(hook)
-        if hook.get("color"):
-            color = _ass_color(hook["color"])
+            text_h = " ".join(words[:7])
+        text_h = text_h.upper()
 
-        # Cliffhanger: чуть сильнее pop + hold
-        if hook_style == "neon" or style == "HookNeon":
-            anim = (
-                f"\\fad(0,180)\\be2"
-                f"\\t(0,120,\\fscx120\\fscy120)\\t(120,280,\\fscx100\\fscy100)"
-            )
-        elif hook_style == "cliffhanger" or style == "HookCliffhanger":
-            anim = (
-                f"\\fad(80,250)\\be1"
-                f"\\t(0,160,\\fscx125\\fscy125)\\t(160,320,\\fscx100\\fscy100)"
-            )
+        start_t = float(hook.get("start", hook.get("timing", 0)) or 0)
+        end_t = float(hook.get("end", start_t + 2.8) or (start_t + 2.8))
+
+        # Первый хук — всегда с нуля (сразу виден / обложка)
+        if idx == 0:
+            start_t = 0.0
+            if end_t < 2.0:
+                end_t = 2.8
+            # не держать первый хук бесконечно
+            if end_t > 4.0:
+                end_t = 3.2
         else:
-            anim = (
-                f"\\fad(100,200)\\be1"
-                f"\\t(0,140,\\fscx115\\fscy115)\\t(140,260,\\fscx100\\fscy100)"
-            )
-        is_neon = (hook_style == "neon" or style == "HookNeon")
-        if is_neon:
-            # CapCut «Люминесцентный»: мягкий ореол, без жёсткой тени/контура
-            # 2 слоя размытого свечения + чистый текст
-            if wide:
-                pos_t = "\\an8"
-            else:
-                y_pct = float(hook.get("y_percent") or 12)
-                cy = int(playres_y * (y_pct / 100.0))
-                cx = int(playres_x * float(hook.get("x_percent", 50)) / 100.0)
-                pos_t = f"\\an8\\pos({cx},{cy})"
-            # outer soft halo
-            halo_outer = (
-                f"{{{pos_t}\\fs{int(size*1.08)}\\b1\\bord{max(20, int(base_size*0.30))}"
-                f"\\be8\\shad0\\c{color}\\3c{color}\\alpha&H70&\\3a&H70&\\fad(0,160)}}"
-            )
-            # inner brighter halo
-            halo_inner = (
-                f"{{{pos_t}\\fs{int(size*1.02)}\\b1\\bord{max(12, int(base_size*0.18))}"
-                f"\\be5\\shad0\\c{color}\\3c{color}\\alpha&H40&\\3a&H40&\\fad(0,160)}}"
-            )
-            # core text — без тени и без толстого outline
-            main = (
-                f"{{{pos_t}\\c{color}\\fs{size}\\b1\\bord0\\shad0{anim}}}"
-            )
-            events.append({"start": start, "end": end, "style": "HookGlow", "text": halo_outer + text, "layer": 0})
-            events.append({"start": start, "end": end, "style": "HookGlow", "text": halo_inner + text, "layer": 1})
-            events.append({"start": start, "end": end, "style": style, "text": main + text, "layer": 2})
+            # Второй+ — только Gemini, без сдвига в 0
+            n_words = max(1, len(text_h.split()))
+            min_dur = max(2.0, n_words * 0.45)
+            if end_t - start_t < min_dur:
+                end_t = start_t + min_dur
+
+        size = max(int(base_size * 1.25), int(base_size * 1.15))
+        size = min(size, int(base_size * 1.55))
+        bord = max(2, int(base_size * 0.03))
+
+        if hook.get("color") and str(hook.get("color")).startswith("#"):
+            color = _ass_color(hook["color"])
         else:
-            # Остальные стили хуков — без неонового ореола
-            bord_m = max(7, int(base_size * 0.12))
-            bord_g = max(12, int(base_size * 0.18))
-            if wide:
-                main = f"{{\\an8\\c{color}\\fs{size}\\b1\\bord{bord_m}{anim}}}"
-                glow = (
-                    f"{{\\an8\\fs{int(size*1.02)}\\b1\\bord{bord_g}\\be5\\shad0"
-                    f"\\c{color}\\3c{color}\\alpha&H80&\\3a&H80&\\fad(100,200)}}"
-                )
-            else:
-                y_pct = float(hook.get("y_percent") or 12)
-                cy = int(playres_y * (y_pct / 100.0))
-                cx = int(playres_x * float(hook.get("x_percent", 50)) / 100.0)
-                main = f"{{\\an8\\pos({cx},{cy})\\c{color}\\fs{size}\\b1\\bord{bord_m}{anim}}}"
-                glow = (
-                    f"{{\\an8\\pos({cx},{cy})\\fs{int(size*1.02)}\\b1\\bord{bord_g}\\be5\\shad0"
-                    f"\\c{color}\\3c{color}\\alpha&H80&\\3a&H80&\\fad(100,200)}}"
-                )
-            events.append({"start": start, "end": end, "style": "HookGlow", "text": glow + text, "layer": 1})
-            events.append({"start": start, "end": end, "style": style, "text": main + text, "layer": 2})
+            color = MARKER_COLORS[(idx + int(start_t * 10)) % len(MARKER_COLORS)]
+
+        # Позиция: ВЕРХ (и хук, и CTA — одна зона)
+        if wide:
+            cy = int(playres_y * 0.10)
+            cx = playres_x // 2
+            pos_t = f"\\an8\\pos({cx},{cy})"
+        else:
+            y_pct = float(hook.get("y_percent") or 12)
+            y_pct = max(8.0, min(y_pct, 16.0))
+            cy = int(playres_y * (y_pct / 100.0))
+            cx = int(playres_x * float(hook.get("x_percent", 50)) / 100.0)
+            pos_t = f"\\an8\\pos({cx},{cy})"
+
+        main = (
+            f"{{{pos_t}\\c{color}\\3c{BLACK}\\4c{BLACK}"
+            f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0"
+            f"\\fad(80,150)}}"
+            f"{text_h}"
+        )
+        events.append({
+            "start": start_t,
+            "end": end_t,
+            "style": "HookMarker",
+            "text": main,
+            "layer": 2,
+        })
     return events
 
 
+def _build_cta_events(
+    analysis, playres_x, playres_y, wide, base_size,
+    clip=None, video_duration: float = 0.0,
+):
+    """CTA только в конце: последние ~5 секунд, позиция КАК У ХУКА (верх)."""
+    CTA_DUR = 5.0
 
+    text_c = ""
+    start_t = 0.0
+    end_t = 0.0
+
+    if clip and (clip.get("cta") or "").strip():
+        text_c = str(clip.get("cta")).strip()
+        c_end = float(clip.get("end", 0) or 0)
+        c_start = float(clip.get("start", 0) or 0)
+        # absolute times (burn later shifts by clip)
+        end_t = float(clip.get("cta_end") or c_end or 0)
+        start_t = float(clip.get("cta_start") or 0)
+        if end_t <= 0:
+            end_t = c_end
+        if start_t <= 0 or (end_t - start_t) < 2.0 or start_t < (c_end - CTA_DUR - 1):
+            # принудительно последние 5с клипа
+            end_t = c_end
+            start_t = max(c_start, c_end - CTA_DUR)
+    else:
+        key = "cta_wide" if wide else "cta_vertical"
+        raw = analysis.get(key) or analysis.get("cta")
+        if isinstance(raw, dict):
+            text_c = (raw.get("text") or "").strip()
+            start_t = float(raw.get("start") or 0)
+            end_t = float(raw.get("end") or 0)
+        elif isinstance(raw, str):
+            text_c = raw.strip()
+
+        dur = float(video_duration or 0)
+        if dur <= 0:
+            dur = float(analysis.get("duration") or 0)
+        if dur <= 0:
+            for h in (analysis.get("hooks_wide") or analysis.get("hooks_vertical")
+                      or analysis.get("hooks") or []):
+                dur = max(dur, float(h.get("end") or 0))
+            for s in (analysis.get("subtitles") or []):
+                dur = max(dur, float(s.get("end") or 0))
+            for seg in (analysis.get("segments") or []):
+                dur = max(dur, float(seg.get("end") or 0))
+
+        if not text_c:
+            return []
+
+        # Всегда последние ~5 секунд ролика (игнорируем start=0 от Gemini)
+        if dur > 3:
+            end_t = dur
+            start_t = max(0.0, dur - CTA_DUR)
+        else:
+            # короткий ролик — вторая половина
+            end_t = max(dur, 3.0)
+            start_t = max(0.0, end_t - min(CTA_DUR, end_t * 0.5))
+
+    if not text_c:
+        return []
+
+    words = text_c.split()
+    if len(words) > 10:
+        text_c = " ".join(words[:10])
+    text_c = text_c.upper()
+
+    if end_t <= start_t:
+        end_t = start_t + CTA_DUR
+
+    MARKER_COLORS = (
+        "&H00952DFF&",
+        "&H0000FFB8&",
+        "&H00006BFF&",
+        "&H00FFF000&",
+    )
+    BLACK = "&H00000000&"
+    size = max(int(base_size * 1.15), int(base_size * 1.05))
+    size = min(size, int(base_size * 1.45))
+    bord = max(2, int(base_size * 0.03))
+    color = MARKER_COLORS[2]  # orange — отличается от типичного первого хука
+
+    # ТА ЖЕ зона, что и хук — ВЕРХ
+    if wide:
+        cy = int(playres_y * 0.10)
+        cx = playres_x // 2
+        pos_t = f"\\an8\\pos({cx},{cy})"
+    else:
+        cy = int(playres_y * 0.12)
+        cx = playres_x // 2
+        pos_t = f"\\an8\\pos({cx},{cy})"
+
+    main = (
+        f"{{{pos_t}\\c{color}\\3c{BLACK}"
+        f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0"
+        f"\\fad(100,150)}}"
+        f"{text_c}"
+    )
+    return [{
+        "start": start_t,
+        "end": end_t,
+        "style": "HookMarker",
+        "text": main,
+        "layer": 2,
+    }]
 
 
 def burn_subtitles(
@@ -874,7 +972,7 @@ def burn_subtitles(
                 if not t:
                     continue
                 cx = playres_x // 2
-                cy = int(playres_y * (0.88 if wide else 0.53))
+                cy = int(playres_y * (0.88 if wide else 0.56))
                 an = "2" if wide else "5"
                 events.append({
                     "start": float(sub.get("start", 0)),
@@ -885,7 +983,22 @@ def burn_subtitles(
                 })
 
     if enable_hooks:
-        events.extend(_build_hook_events(analysis, playres_x, playres_y, wide, base_size, hook_style=hook_style or "auto_aisie"))
+        vid_dur = _probe_video_duration(video_path)
+        if clip:
+            # длительность куска шортса
+            try:
+                vid_dur = max(vid_dur, float(clip.get("end", 0)) - float(clip.get("start", 0)))
+            except Exception:
+                pass
+        events.extend(_build_hook_events(
+            analysis, playres_x, playres_y, wide, base_size,
+            hook_style=hook_style or "auto_aisie",
+            clip=clip,
+        ))
+        events.extend(_build_cta_events(
+            analysis, playres_x, playres_y, wide, base_size,
+            clip=clip, video_duration=vid_dur,
+        ))
 
     if enable_strong_words and not _words_from_transcription(transcription):
         for sw in analysis.get("strong_words") or []:

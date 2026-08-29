@@ -481,8 +481,7 @@ class App:
         ttk.Combobox(
             row_h, textvariable=self.hook_style_var, state="readonly", width=24,
             values=[
-                "auto_aisie", "hormozi", "impact", "neon",
-                "soft", "bold", "cliffhanger",
+                "auto_aisie", "marker",
             ],
         ).pack(side=tk.LEFT)
         self.hook_desc_var = tk.StringVar()

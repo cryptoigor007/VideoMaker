@@ -52,35 +52,63 @@ def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool =
     return f"""Ты — senior short-form content strategist и copywriter для YouTube / TikTok / Reels / YouTube 16:9.
 Канал: «Точка наблюдения». Сериал: «Тайный кризис человечества».{series_context}
 
-Роль: эксперт по retention и packaging. Хуки должны УДЕРЖИВАТЬ внимание:
-pattern interrupt, curiosity gap, contradiction, stakes, identity, open loop.
+Роль: эксперт по retention и packaging (YouTube 16:9, вертикаль 9:16, Shorts/Reels).
 
-Критерии сильного хука: конфликт/вопрос за 1с, незакрытый loop, без воды («сегодня поговорим…»).
-
-═══════════════════════════════════════
-1) ХУКИ ДЛЯ ПОЛНОГО ВИДЕО (wide + vertical)
-═══════════════════════════════════════
-- Дай 2–4 хука в точках retention-риска (начало, спад, кульминация).
-- 3–10 слов, почти дословно из транскрипта, ударный порядок слов.
-- Обязательно start и end (сек) — показ 2–3.5с с начала фразы.
-- type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVELATION.
-- visual_weight: L3 или L4.
+ЖЁСТКИЕ ПРАВИЛА ТЕКСТА НА ЭКРАНЕ:
+- ХУК и CTA — это PACKAGING, не субтитры. ЗАПРЕЩЕНО копировать фразу из транскрипта дословно.
+- Переписывай: короче, острее, интрига / конфликт / вопрос / ставка.
+- Хук ≠ то, что говорит голос в этот момент. Хук — «заголовок кадра».
+- CTA ≠ финальная фраза речи. CTA — отдельный призыв написать комментарий / ответить на вопрос.
 
 ═══════════════════════════════════════
-2) SHORTS (отдельный продукт под каждую нарезку)
+1) ХУКИ ПОЛНОГО ВИДЕО — РАЗНЫЕ ДЛЯ ФОРМАТОВ
 ═══════════════════════════════════════
-- 3–6 клипов по 15–55 секунд, каждый — законченная мысль.
-- У каждого Shorts СВОЙ хук (hook + hook_start + hook_end) — не копируй общий.
-- title ≤ 40 символов, интрига без кликбейта-вранья.
-- description: 1–2 предложения + CTA (вопрос зрителю / «напиши в комментариях»).
-- hashtags: 5–8 штук, смесь нишевых и широких, на языке контента.
-- Внутренняя оценка ≥ 8/10, слабые отбрасывай.
+Сделай ДВА набора (текст разный под контекст экрана):
+
+A) hooks_wide (16:9 YouTube) — 2–4 шт:
+   - более «умный»/сериальный тон, без тикток-крика
+   - 3–7 слов, переписано, не цитата речи
+   - start/end (сек), показ 2–3.5с
+
+B) hooks_vertical (9:16 длинное вертикальное) — 2–4 шт:
+   - сильнее pattern-interrupt, короче, чем wide
+   - 3–6 слов, другой текст, чем у wide (не копируй hooks_wide)
+   - start/end
+
+Также заполни legacy "hooks" = hooks_vertical (fallback).
+
+type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVELATION
+visual_weight: L3 или L4
 
 ═══════════════════════════════════════
-3) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
+2) CTA ПОЛНОГО ВИДЕО (конец ролика, on-screen)
 ═══════════════════════════════════════
-- strong_words: 5–15 ударных слов/фраз с точным timing (секунды), caps true/false, color #RRGGBB.
-- subtitles: крупные смысловые куски 1.5–4 сек (для fallback), не дроби на каждое слово.
+- cta_wide: 1 фраза 3–8 слов — вопрос/спор для комментариев под длинным YouTube
+- cta_vertical: 1 фраза 3–7 слов — другой текст, заточен под вертикальную ленту
+- НЕ повторять последнюю фразу транскрипта
+- CTA показывается ТОЛЬКО в конце ролика (~последние 5 секунд). В JSON можно start=0,end=0 — тайминг выставит пайплайн.
+- Первый хук — начало ролика; второй и дальше — только в точках спада/кульминации (не дублировать в начале).
+- Примеры тона: «А ты бы так поступил?», «Пиши — согласен или нет», «Что из этого правда?»
+
+═══════════════════════════════════════
+3) SHORTS (отдельный продукт на каждую нарезку)
+═══════════════════════════════════════
+- 3–6 клипов по 15–55 сек, законченная мысль
+- У КАЖДОГО Shorts СВОИ (не копировать с полного видео):
+  - hook: 3–6 слов, PACKAGING для первого кадра/обложки, НЕ дословная речь
+  - hook_start / hook_end
+  - cta: 3–7 слов в конце клипа — вопрос, чтобы написали комментарий (другой текст, чем hook)
+  - cta_start / cta_end: последние ~5 секунд клипа (не раньше)
+  - title ≤ 40 символов
+  - description: 1–2 предложения + мягкий CTA
+  - hashtags: 5–8
+- Оценка ≥ 8/10, слабые отбрасывай
+
+═══════════════════════════════════════
+4) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
+═══════════════════════════════════════
+- strong_words: 5–15 слов с timing, caps, color
+- subtitles: смысловые куски 1.5–4с (fallback), не по словам
 
 {intro_section}
 Текст с таймингами:
@@ -89,26 +117,31 @@ pattern interrupt, curiosity gap, contradiction, stakes, identity, open loop.
 Верни ТОЛЬКО валидный JSON (без markdown, без пояснений):
 {{
   "corrected_text": "полный исправленный текст с пунктуацией",
-  "hooks": [
-    {{
-      "text": "текст хука",
-      "start": 0.0,
-      "end": 2.5,
-      "type": "CURIOSITY",
-      "visual_weight": "L3"
-    }}
+  "hooks_wide": [
+    {{"text": "ПЕРЕПИСАННЫЙ хук для 16:9", "start": 0.0, "end": 2.5, "type": "CURIOSITY", "visual_weight": "L3"}}
   ],
-  "hook": {{"text": "главный хук всего ролика", "start": 0.0, "end": 2.5, "timing": 0.0}},
+  "hooks_vertical": [
+    {{"text": "ДРУГОЙ переписанный хук для 9:16", "start": 0.0, "end": 2.5, "type": "CURIOSITY", "visual_weight": "L3"}}
+  ],
+  "hooks": [
+    {{"text": "fallback = hooks_vertical", "start": 0.0, "end": 2.5, "type": "CURIOSITY", "visual_weight": "L3"}}
+  ],
+  "hook": {{"text": "главный хук", "start": 0.0, "end": 2.5, "timing": 0.0}},
+  "cta_wide": {{"text": "Вопрос для комментариев YouTube", "start": 0.0, "end": 0.0}},
+  "cta_vertical": {{"text": "Другой вопрос для вертикали", "start": 0.0, "end": 0.0}},
   "clips_for_shorts": [
     {{
       "text": "полный текст этого Short",
       "start": 0.0,
       "end": 18.0,
-      "hook": "хук именно этого Short",
+      "hook": "PACKAGING-хук обложки, не дословная речь",
       "hook_start": 0.0,
       "hook_end": 2.0,
+      "cta": "Вопрос — напиши в комментариях",
+      "cta_start": 15.0,
+      "cta_end": 18.0,
       "title": "заголовок ≤40",
-      "description": "описание + CTA",
+      "description": "описание",
       "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5"
     }}
   ],
@@ -282,62 +315,98 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
                     "style": "normal"
                 })
 
-    # Хуки: массив + legacy single hook
-    hooks = data.get("hooks") or []
-    if not hooks:
-        h = data.get("hook") or {}
-        if isinstance(h, dict) and h.get("text"):
-            start = float(h.get("start", h.get("timing", 0)) or 0)
-            end = float(h.get("end", start + 2.5) or (start + 2.5))
-            hooks = [{
-                "text": h.get("text", ""),
-                "start": start,
-                "end": end,
-                "timing": start,
-                "type": h.get("type", "STATEMENT"),
-                "visual_weight": h.get("visual_weight", "L3"),
-            }]
-    else:
-        norm_hooks = []
-        for h in hooks:
+    def _norm_hook_list(raw_list):
+        out = []
+        for h in raw_list or []:
             if not isinstance(h, dict) or not h.get("text"):
                 continue
             start = float(h.get("start", h.get("timing", 0)) or 0)
             end = float(h.get("end", start + 2.5) or (start + 2.5))
-            norm_hooks.append({
-                "text": h.get("text", ""),
+            out.append({
+                "text": str(h.get("text", "")).strip(),
                 "start": start,
                 "end": end,
                 "timing": start,
                 "type": h.get("type", "STATEMENT"),
                 "visual_weight": h.get("visual_weight", "L3"),
             })
-        hooks = norm_hooks
+        return out
+
+    hooks_vertical = _norm_hook_list(data.get("hooks_vertical") or data.get("hooks") or [])
+    hooks_wide = _norm_hook_list(data.get("hooks_wide") or [])
+    if not hooks_wide:
+        hooks_wide = list(hooks_vertical)
+    hooks = hooks_vertical  # legacy default = vertical
+
+    if not hooks:
+        h = data.get("hook") or {}
+        if isinstance(h, dict) and h.get("text"):
+            start = float(h.get("start", h.get("timing", 0)) or 0)
+            end = float(h.get("end", start + 2.5) or (start + 2.5))
+            hooks = [{
+                "text": str(h.get("text", "")).strip(),
+                "start": start,
+                "end": end,
+                "timing": start,
+                "type": h.get("type", "STATEMENT"),
+                "visual_weight": h.get("visual_weight", "L3"),
+            }]
+            hooks_vertical = hooks
+            if not hooks_wide:
+                hooks_wide = list(hooks)
 
     main_hook = data.get("hook") or (hooks[0] if hooks else {"text": "", "timing": 0, "start": 0, "end": 0})
     if isinstance(main_hook, dict) and "start" not in main_hook:
         t = float(main_hook.get("timing", 0) or 0)
         main_hook = {**main_hook, "start": t, "end": float(main_hook.get("end", t + 2.5))}
 
-    # Shorts: нормализуем hook_start/hook_end
+    def _norm_cta(raw, default_start=0.0, default_end=0.0):
+        if isinstance(raw, dict) and raw.get("text"):
+            s = float(raw.get("start", default_start) or default_start)
+            e = float(raw.get("end", default_end or (s + 2.5)) or (s + 2.5))
+            return {"text": str(raw.get("text")).strip(), "start": s, "end": e}
+        if isinstance(raw, str) and raw.strip():
+            return {"text": raw.strip(), "start": default_start, "end": default_end or (default_start + 2.5)}
+        return None
+
+    cta_wide = _norm_cta(data.get("cta_wide") or data.get("cta"))
+    cta_vertical = _norm_cta(data.get("cta_vertical") or data.get("cta"))
+
+    # Shorts: hook + CTA на клип
     clips = []
     for c in data.get("clips_for_shorts") or []:
         if not isinstance(c, dict):
             continue
-        hs = float(c.get("hook_start", c.get("start", 0)) or 0)
+        c_start = float(c.get("start", 0) or 0)
+        c_end = float(c.get("end", c_start + 15) or (c_start + 15))
+        hs = float(c.get("hook_start", c_start) or c_start)
         he = float(c.get("hook_end", hs + 2.0) or (hs + 2.0))
-        clips.append({
+        cta_text = (c.get("cta") or "").strip() if isinstance(c.get("cta"), str) else (
+            (c.get("cta") or {}).get("text", "") if isinstance(c.get("cta"), dict) else ""
+        )
+        cs = float(c.get("cta_start") or max(c_start, c_end - 2.8))
+        ce = float(c.get("cta_end") or c_end)
+        item = {
             **c,
-            "hook": c.get("hook", ""),
+            "hook": str(c.get("hook", "") or "").strip(),
             "hook_start": hs,
             "hook_end": he,
-        })
+            "cta": cta_text,
+            "cta_start": cs,
+            "cta_end": ce,
+        }
+        clips.append(item)
 
     return {
         "corrected_text": corrected_text,
         "segments": segments,
         "hook": main_hook,
         "hooks": hooks,
+        "hooks_wide": hooks_wide,
+        "hooks_vertical": hooks_vertical,
+        "cta_wide": cta_wide,
+        "cta_vertical": cta_vertical,
+        "cta": cta_vertical or cta_wide,
         "intro": data.get("intro", {"start": 0, "end": 0}),
         "middle": data.get("middle", []),
         "outro": data.get("outro", {"start": 0, "end": 0}),
@@ -354,6 +423,11 @@ def _empty_analysis() -> dict:
         "segments": [],
         "hook": {"text": "", "timing": 0, "start": 0, "end": 0},
         "hooks": [],
+        "hooks_wide": [],
+        "hooks_vertical": [],
+        "cta_wide": None,
+        "cta_vertical": None,
+        "cta": None,
         "intro": {"start": 0, "end": 0},
         "middle": [],
         "outro": {"start": 0, "end": 0},
