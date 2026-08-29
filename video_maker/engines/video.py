@@ -73,44 +73,66 @@ def fit_video_to_duration(
     audio_file: str = "",
     log_fn=None,
 ) -> str:
-    """Нарезать и склеить видео под целевую длительность в 4K (3840x2160) с ускорением M1."""
+    """Последовательно набрать минимум клипов под целевую длительность.
+
+    Логика (быстро и предсказуемо):
+    1. Берём файлы в порядке сортировки папки (без shuffle).
+    2. Смотрим первый: если его длительность >= audio → берём только его и обрезаем.
+    3. Если короче — добавляем следующий, суммируем, и так далее.
+    4. Как только сумма >= target — останавливаемся, склеиваем и обрезаем хвост.
+    Никаких 50–100 лишних клипов.
+    """
     _log = log_fn or log.info
-    _log(f"[ВИДЕО 4K M1] Склейка {len(video_files)} файлов под {target_duration:.1f} сек")
+    _log(f"[ВИДЕО 4K M1] Подбор B-roll под {target_duration:.1f} сек (последовательный)")
 
     if not video_files:
         raise FileNotFoundError("Нет видеофайлов для склейки")
 
     ffmpeg = _ffmpeg_bin()
 
-    shuffled = video_files.copy()
-    random.shuffle(shuffled)
+    # Порядок как в папке (sorted уже в collect_video_files)
+    ordered = list(video_files)
 
-    selected = []
+    selected: list[str] = []
     total_dur = 0.0
-    for vf in shuffled:
+    for vf in ordered:
         dur = probe_duration(vf)
+        if dur <= 0.05:
+            continue
         selected.append(vf)
         total_dur += dur
+        _log(f"[ВИДЕО] + {os.path.basename(vf)} ({dur:.1f}s) → сумма {total_dur:.1f}s")
         if total_dur >= target_duration:
             break
 
-    while total_dur < target_duration:
-        for vf in shuffled:
-            dur = probe_duration(vf)
-            selected.append(vf)
-            total_dur += dur
-            if total_dur >= target_duration:
-                break
+    # Если даже все файлы короче — повторяем цикл (редко, но нужно)
+    if total_dur < target_duration and selected:
+        _log(f"[ВИДЕО] Все клипы короче цели ({total_dur:.1f} < {target_duration:.1f}), повторяем")
+        while total_dur < target_duration:
+            for vf in ordered:
+                dur = probe_duration(vf)
+                if dur <= 0.05:
+                    continue
+                selected.append(vf)
+                total_dur += dur
+                if total_dur >= target_duration:
+                    break
 
-    normalized_files = []
-    tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
-    os.makedirs(tmp_dir, exist_ok=True)
-    
-    for i, vf in enumerate(selected):
-        norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
+    if not selected:
+        raise FileNotFoundError("Не удалось набрать ни одного валидного клипа")
+
+    _log(f"[ВИДЕО] Выбрано клипов: {len(selected)} (сумма {total_dur:.1f}s ≥ {target_duration:.1f}s)")
+
+    # Оптимизация: один клип и он длиннее цели → просто trim + scale, без concat
+    if len(selected) == 1:
+        vf = selected[0]
+        tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+        norm_path = os.path.join(tmp_dir, "norm_000.mp4")
         cmd_norm = [
             ffmpeg, "-y",
             "-i", vf,
+            "-t", str(target_duration),
             "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
             "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
             "-pix_fmt", "yuv420p",
@@ -119,39 +141,66 @@ def fit_video_to_duration(
         ]
         res = subprocess.run(cmd_norm, capture_output=True, text=True)
         if res.returncode != 0:
-            _log(f"[ВИДЕО] Ошибка нормализации клипа {vf}: {res.stderr}")
-            raise RuntimeError(f"Norm failed: {res.stderr}")
-        normalized_files.append(norm_path)
-
-    list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
-    with open(list_path, "w") as f:
-        f.writelines(f"file '{nf}'\n" for nf in normalized_files)
-
-    cmd = [
-        ffmpeg, "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", list_path,
-        "-t", str(target_duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-        "-an",
-        output_path,
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        _log(f"[ВИДЕО] Ошибка concat: {res.stderr}")
-        raise RuntimeError(f"Concat failed: {res.stderr}")
-
-    for p in [list_path] + normalized_files:
+            _log(f"[ВИДЕО] Ошибка нормализации: {res.stderr[-400:]}")
+            raise RuntimeError(f"Norm failed: {res.stderr[-400:]}")
+        # Копируем как финальный видео-слой
+        import shutil
+        shutil.move(norm_path, output_path)
         try:
-            os.remove(p)
+            os.rmdir(tmp_dir)
         except OSError:
             pass
-    try:
-        os.rmdir(tmp_dir)
-    except OSError:
-        pass
+    else:
+        normalized_files = []
+        tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        for i, vf in enumerate(selected):
+            norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
+            cmd_norm = [
+                ffmpeg, "-y",
+                "-i", vf,
+                "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
+                "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+                "-pix_fmt", "yuv420p",
+                "-an",
+                norm_path,
+            ]
+            res = subprocess.run(cmd_norm, capture_output=True, text=True)
+            if res.returncode != 0:
+                _log(f"[ВИДЕО] Ошибка нормализации клипа {vf}: {res.stderr[-300:]}")
+                raise RuntimeError(f"Norm failed: {res.stderr[-300:]}")
+            normalized_files.append(norm_path)
+
+        list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
+        with open(list_path, "w") as f:
+            f.writelines(f"file '{nf}'\n" for nf in normalized_files)
+
+        cmd = [
+            ffmpeg, "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", list_path,
+            "-t", str(target_duration),
+            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-an",
+            output_path,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            _log(f"[ВИДЕО] Ошибка concat: {res.stderr[-400:]}")
+            raise RuntimeError(f"Concat failed: {res.stderr[-400:]}")
+
+        for p in [list_path] + normalized_files:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(tmp_dir)
+        except OSError:
+            pass
 
     if audio_file and os.path.exists(audio_file):
         from .audio import replace_audio

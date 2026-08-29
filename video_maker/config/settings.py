@@ -55,7 +55,7 @@ class Settings:
     s_enable_strong_words: bool = True
 
     # Аудио / WhisperX
-    whisper_model: str = "base"
+    whisper_model: str = "large-v3"
     whisperx_path: str = ""
     whisper_language: str = "ru"
     whisper_device: str = "auto"
@@ -82,7 +82,7 @@ class Settings:
             broll_vertical=os.getenv("BROLL_VERTICAL_FOLDER", ""),
             bgm_folder=os.getenv("BGM_FOLDER", ""),
             output_folder=os.getenv("OUTPUT_FOLDER", ""),
-            whisper_model=os.getenv("WHISPER_MODEL", "base"),
+            whisper_model=os.getenv("WHISPER_MODEL", "large-v3"),
             whisperx_path=os.getenv("WHISPERX_PATH", ""),
             whisper_language=os.getenv("WHISPER_LANGUAGE", "ru"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),

@@ -32,6 +32,7 @@ CAPTION_STYLES = {
     "tiktok_box": "TikTok Box",
     "clean_pro": "Clean Pro (YouTube)",
     "bold_pop": "Bold Pop",
+    "cliffhanger": "Cliffhanger (Tension)",
 }
 HOOK_STYLES = {
     "auto_aisie": "Auto (AISIE)",
@@ -40,6 +41,7 @@ HOOK_STYLES = {
     "neon": "Neon Green",
     "soft": "Soft White",
     "bold": "Bold White",
+    "cliffhanger": "Cliffhanger (Tension)",
 }
 
 
@@ -171,6 +173,8 @@ Style: HookImpact,Arial Black,{hook_sz},&H0000A5FF&,&H000000FF&,&H00000000&,&H90
 Style: HookNeon,Arial Black,{hook_sz},&H004CFF00&,&H000000FF&,&H00000000&,&H80000000&,-1,0,0,0,100,100,1,0,1,{bord_h},2,{align_h},{ml},{ml},{margin_v},1
 Style: HookSoft,Arial,{max(int(hook_sz*0.88), sz)},&H00FFFFFF&,&H000000FF&,&H00333333&,&H80000000&,-1,0,0,0,100,100,0,0,1,{max(3,bord-2)},3,{align_h},{ml},{ml},{margin_v},1
 Style: HookGlow,Arial Black,{hook_sz},&H00000000&,&H00000000&,&H0000EBFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,{bord_h+6},0,{align_h},{ml},{ml},{margin_v},1
+Style: HookCliffhanger,Arial Black,{hook_sz},&H000000FF&,&H0000A5FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord_h+2},2,{align_h},{ml},{ml},{margin_v},1
+Style: Cliffhanger,Arial Black,{sz},&H00FFFFFF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord},1,{align_k},{ml},{ml},{margin_v},1
 Style: Strong,Arial Black,{max(sz, int(sz*1.12))},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_h},{ml},{ml},{margin_v},1
 Style: Default,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
 
@@ -286,6 +290,7 @@ def _build_karaoke_window(
         "tiktok_box": "TikTokBox",
         "clean_pro": "CleanPro",
         "bold_pop": "BoldPop",
+        "cliffhanger": "Cliffhanger",
         "auto_aisie": default_base,
     }
     base_style = style_map.get(caption_style, default_base)
@@ -411,6 +416,7 @@ def _build_hook_events(
         "neon": ("HookNeon", GREEN),
         "soft": ("HookSoft", WHITE),
         "bold": ("Hook", WHITE),
+        "cliffhanger": ("HookCliffhanger", "&H000000FF&"),  # pure red tension
     }
 
     def pick(h: dict) -> tuple[str, str]:
@@ -433,8 +439,17 @@ def _build_hook_events(
         text = (hook.get("text") or "").strip()
         if not text:
             continue
+        # 3–5 слов (макс 7) — читаемо и retention
+        words = text.split()
+        if len(words) > 7:
+            text = " ".join(words[:7])
         start = float(hook.get("start", hook.get("timing", 0)))
         end = float(hook.get("end", start + 3.0))
+        # Минимум ~0.45с на слово, чтобы спокойно прочитать (особенно horizontal)
+        n_words = max(1, len(text.split()))
+        min_dur = max(2.0, n_words * 0.45)
+        if end - start < min_dur:
+            end = start + min_dur
         weight = hook.get("visual_weight") or "L3"
         _, size = _weight_style(weight, base_size)
         size = max(size, int(base_size * 1.35))
@@ -442,10 +457,17 @@ def _build_hook_events(
         if hook.get("color"):
             color = _ass_color(hook["color"])
 
-        anim = (
-            f"\\fad(100,200)\\be1"
-            f"\\t(0,140,\\fscx115\\fscy115)\\t(140,260,\\fscx100\\fscy100)"
-        )
+        # Cliffhanger: чуть сильнее pop + hold
+        if hook_style == "cliffhanger" or style == "HookCliffhanger":
+            anim = (
+                f"\\fad(80,250)\\be1"
+                f"\\t(0,160,\\fscx125\\fscy125)\\t(160,320,\\fscx100\\fscy100)"
+            )
+        else:
+            anim = (
+                f"\\fad(100,200)\\be1"
+                f"\\t(0,140,\\fscx115\\fscy115)\\t(140,260,\\fscx100\\fscy100)"
+            )
         if wide:
             main = f"{{\\an8\\c{color}\\fs{size}\\b1\\bord{max(7, int(base_size*0.12))}{anim}}}"
             glow = f"{{\\an8\\fs{int(size*1.05)}\\b1\\bord{max(14, int(base_size*0.22))}\\be3\\c{color}\\3c{color}\\alpha&H70&\\fad(100,200)}}"

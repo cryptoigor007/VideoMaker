@@ -15,38 +15,50 @@ log = logging.getLogger(__name__)
 
 
 def _resolve_device_compute(device: str, compute_type: str) -> tuple[str, str]:
-    """Авто-определение устройства и типа вычислений для Apple Silicon."""
+    """Авто-определение устройства и типа вычислений.
+
+    На Apple Silicon MPS для large-v3 часто падает → сразу CPU + int8
+    (проверено: 10 мин аудио ≈ 6–7 мин, как в рабочих batch-скриптах).
+    """
     if device != "auto" and compute_type != "auto":
         return device, compute_type
 
-    system = platform.system()
-    machine = platform.machine()
-
-    if system == "Darwin" and machine.startswith("arm"):
-        # Apple Silicon (M1/M2/M3)
-        resolved_device = "mps" if device == "auto" else device
-        resolved_compute = "float16" if compute_type == "auto" else compute_type
-    else:
-        resolved_device = "cpu" if device == "auto" else device
-        resolved_compute = "int8" if compute_type == "auto" else compute_type
-
+    # Надёжный путь для large-v3 на macOS — CPU int8
+    resolved_device = "cpu" if device == "auto" else device
+    resolved_compute = "int8" if compute_type == "auto" else compute_type
     return resolved_device, resolved_compute
+
+
+def _smart_batch_size() -> int:
+    """Динамический batch_size по свободной RAM (как в проверенных скриптах)."""
+    try:
+        import psutil
+        free_gb = psutil.virtual_memory().available / (1024 ** 3)
+        if free_gb > 12:
+            return 24
+        if free_gb > 6:
+            return 16
+        return 8
+    except Exception:
+        return 16
 
 
 def transcribe(
     audio_path: str,
-    model_name: str = "base",
+    model_name: str = "large-v3",
     whisperx_path: str = "",
     language: str = "ru",
     device: str = "auto",
     compute_type: str = "auto",
     log_fn=None,
 ) -> dict:
-    """Транскрибация аудио через WhisperX CLI с пословными таймкодами."""
+    """Транскрибация аудио через WhisperX CLI с пословными таймкодами.
+
+    Один вызов. Дальше все хуки/субтитры/shorts режутся по уже готовым таймингам.
+    """
     _log = log_fn or log.info
     _log(f"[WHISPER] Модель: {model_name}")
 
-    # Resolve whisperx path: explicit -> saved -> auto-detect
     whisper_bin = resolve_whisperx(whisperx_path)
     if not whisper_bin:
         raise RuntimeError(
@@ -58,21 +70,20 @@ def transcribe(
     _log(f"[WHISPER] Бинарник: {whisper_bin}")
 
     resolved_device, resolved_compute = _resolve_device_compute(device, compute_type)
-    _log(f"[WHISPER] Устройство: {resolved_device}, compute_type: {resolved_compute}")
+    batch_size = _smart_batch_size()
+    n_threads = os.cpu_count() or 8
+    _log(
+        f"[WHISPER] Устройство: {resolved_device}, compute_type: {resolved_compute}, "
+        f"batch_size: {batch_size}, threads: {n_threads}"
+    )
 
-    # Конвертируем аудио в чистый WAV 16kHz mono
     with tempfile.TemporaryDirectory(prefix="videomeyker_whisper_") as tmp_dir:
         cleaned_path = Path(tmp_dir) / "cleaned.wav"
 
-        clean_filter = (
-            "highpass=f=80,lowpass=f=14000,adeclick=w=50,"
-            "afftdn=nf=-30,"
-            "equalizer=f=50:t=q:w=1:g=-20,equalizer=f=60:t=q:w=1:g=-20,"
-            "deesser=i=0.4:m=0.4:f=0.5,"
-            "alimiter=limit=0.9"
-        )
+        # Лёгкая очистка (тяжёлый deesser/afftdn замедляет без большого выигрыша)
+        clean_filter = "highpass=f=80,lowpass=f=14000,alimiter=limit=0.95"
 
-        _log("[WHISPER] Очистка аудио для распознавания...")
+        _log("[WHISPER] Подготовка аудио 16kHz mono...")
         subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(audio_path),
@@ -83,7 +94,6 @@ def transcribe(
             capture_output=True, check=True,
         )
 
-        # Запускаем whisperx
         cmd = [
             whisper_bin,
             str(cleaned_path),
@@ -93,7 +103,8 @@ def transcribe(
             "--output_dir", str(cleaned_path.parent),
             "--device", resolved_device,
             "--compute_type", resolved_compute,
-            "--batch_size", "4",
+            "--batch_size", str(batch_size),
+            "--threads", str(n_threads),
         ]
 
         wx_env = os.environ.copy()
@@ -103,26 +114,13 @@ def transcribe(
             f"{existing_warn},{suppress}" if existing_warn else suppress
         )
 
-        _log("[WHISPER] Запуск распознавания...")
+        _log("[WHISPER] Запуск распознавания (один раз)...")
         result = subprocess.run(cmd, capture_output=True, text=True, env=wx_env)
 
         if result.returncode != 0:
             _log(f"[WHISPER] Ошибка: {result.stderr[:500]}")
-            # Fallback на CPU если MPS упал
-            if resolved_device == "mps":
-                _log("[WHISPER] MPS ошибка, пробуем fallback на CPU...")
-                return transcribe(
-                    audio_path=audio_path,
-                    model_name=model_name,
-                    whisperx_path=whisperx_path,
-                    language=language,
-                    device="cpu",
-                    compute_type="int8",
-                    log_fn=log_fn,
-                )
-            raise RuntimeError(f"WhisperX завершился с ошибкой: {result.stderr[:200]}")
+            raise RuntimeError(f"WhisperX завершился с ошибкой: {result.stderr[:300]}")
 
-        # Читаем результат
         json_path = cleaned_path.with_suffix(".json")
         if not json_path.exists():
             raise RuntimeError(f"WhisperX не создал JSON: {json_path}")

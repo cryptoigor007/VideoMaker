@@ -125,25 +125,34 @@ def mix_bgm(
         f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3[out]"
     )
 
-    tmp_output_path = f"{output_path}.tmp.mp4"
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", bgm_file,
-        "-filter_complex", filter_complex,
-        "-map", "0:v", "-map", "[out]",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-ar", "48000",
-        tmp_output_path,
-    ]
+    # Всегда пишем во временный файл (ffmpeg не умеет in-place на том же пути)
+    import tempfile
+    out_dir = os.path.dirname(output_path) or "."
+    fd, tmp_output_path = tempfile.mkstemp(suffix=".mp4", prefix="bgm_", dir=out_dir)
+    os.close(fd)
     try:
-        subprocess.run(cmd, capture_output=True, check=True)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", bgm_file,
+            "-filter_complex", filter_complex,
+            "-map", "0:v", "-map", "[out]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-ar", "48000",
+            tmp_output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "")[-600:]
+            _log(f"[АУДИО] mix_bgm ffmpeg error: {err}")
+            raise RuntimeError(f"mix_bgm failed: {err}")
         os.replace(tmp_output_path, output_path)
-    except Exception as e:
+    finally:
         if os.path.exists(tmp_output_path):
-            os.remove(tmp_output_path)
-        raise e
+            try:
+                os.remove(tmp_output_path)
+            except OSError:
+                pass
 
     return output_path
 

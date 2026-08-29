@@ -3035,3 +3035,732 @@
 2026-08-29 10:46:29,341 [INFO] video_maker.gui.app: [GUI] add_bgm = True
 2026-08-29 10:46:29,341 [INFO] video_maker.gui.app: [GUI] output_folder (final) = /Users/dreamstore/Downloads/аудио для шортс 2/готовые
 2026-08-29 10:46:29,342 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:01:54,428 [INFO] __main__: LIFECYCLE start pid=5959 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-29 14:01:54,429 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-29 14:01:54,827 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-29 14:01:55,437 [INFO] __main__: Импорт App...
+2026-08-29 14:01:55,518 [INFO] __main__: Создание App(root)...
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] PID: 5959
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-29 14:01:55,518 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-29 14:01:55,527 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-29 14:01:55,528 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-29 14:01:55,528 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-29 14:01:55,528 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-29 14:01:55,528 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-29 14:01:55,528 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-29 14:01:55,684 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-29 14:01:55,684 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-29 14:01:55,684 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+5+35
+2026-08-29 14:01:55,684 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-29 14:01:55,685 [INFO] video_maker.gui.app: [GUI] Настройки загружены из /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:01:55,685 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-29 14:01:55,687 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:01:55,687 [INFO] video_maker.gui.app: [WHISPER] Found: /Users/dreamstore/whisperx/bin/whisperx
+2026-08-29 14:01:55,687 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:01:55,688 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-29 14:01:55,688 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:01:55,688 [INFO] __main__: LIFECYCLE app_created
+2026-08-29 14:01:55,774 [INFO] __main__: LIFECYCLE window geometry=960x1458+5+30 screen=2560x1600
+2026-08-29 14:01:55,774 [INFO] __main__: LIFECYCLE mainloop_enter
+2026-08-29 14:02:00,686 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:02:05,690 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:02:10,693 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1269x1458+5+30
+2026-08-29 14:02:18,568 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:23,572 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:28,577 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:33,580 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:38,582 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:43,587 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:48,594 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:53,599 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:02:58,603 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:03,607 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:08,614 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:13,617 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:18,620 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:23,624 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:28,626 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:33,627 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:38,633 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:43,636 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:48,637 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:53,640 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:03:58,643 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:03,646 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:08,648 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:13,655 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:18,660 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:23,665 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:28,668 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:33,674 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:38,677 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:43,681 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:48,683 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:53,692 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:04:58,695 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:03,698 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:08,701 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:13,704 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:18,707 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:23,712 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:28,719 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:33,722 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:38,724 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:43,727 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:48,733 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:53,738 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:05:58,741 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:03,749 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:08,757 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:13,760 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:18,764 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:23,772 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:28,778 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:33,789 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:38,793 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:43,795 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:48,799 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:53,807 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:06:58,812 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:03,816 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:08,818 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:13,820 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:18,825 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:23,829 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:28,833 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:33,835 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:38,840 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:43,843 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:48,845 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:53,849 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:07:58,852 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:03,858 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:08,862 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:13,864 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:18,869 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:23,872 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:28,877 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:33,880 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:38,883 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:43,886 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:48,892 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:53,896 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:08:58,899 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:03,903 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:08,907 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:13,909 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:18,912 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:23,914 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:28,916 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:33,919 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:38,922 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:43,924 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:48,928 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:53,931 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:09:58,935 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:03,939 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:08,945 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:13,951 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:18,956 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:23,961 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:28,964 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:33,969 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:38,973 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:43,976 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:48,980 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:53,982 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:10:58,984 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:03,989 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:08,993 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:13,996 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:19,004 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:24,008 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:29,013 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:34,015 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:39,018 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:44,022 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:49,026 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:54,030 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:11:59,033 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:04,037 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:09,041 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:14,043 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:19,048 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:24,052 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:29,057 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:34,060 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:39,063 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:44,067 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:49,071 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:54,074 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:12:59,077 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:04,081 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:09,087 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:14,092 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:19,094 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:24,096 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:29,099 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:34,099 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:39,101 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:44,103 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:49,105 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:54,107 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:13:59,110 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:04,112 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:09,113 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:14,116 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:19,126 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:24,128 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:29,130 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:34,131 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:39,133 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:44,134 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:49,136 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:54,138 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:14:59,141 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:04,143 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:09,145 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:14,146 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:19,149 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:24,152 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:29,156 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:34,158 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:39,160 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:44,162 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:49,164 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:54,167 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:15:59,172 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:04,175 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:09,178 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:14,184 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:19,190 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:24,193 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:29,195 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:34,197 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:39,200 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:44,202 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:49,205 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:54,206 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:16:59,211 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:04,218 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:09,221 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:14,223 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:19,227 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:24,228 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:29,230 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:34,232 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:39,234 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:44,236 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:49,238 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:54,245 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:17:59,254 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:04,256 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:09,258 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:14,261 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:19,264 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:24,267 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:29,269 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:34,271 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:39,273 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:44,275 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:49,279 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:54,282 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:18:59,285 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:04,288 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:09,290 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:14,292 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:19,296 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:24,300 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:29,303 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:34,305 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:39,307 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:44,309 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:49,314 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:54,316 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:19:59,319 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:04,323 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:09,327 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:14,329 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:19,333 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:24,336 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:29,339 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:34,341 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:39,342 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:44,344 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:49,349 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:54,353 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:20:59,356 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:04,360 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:09,366 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:14,370 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:19,373 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:24,376 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:29,380 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:34,384 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:39,386 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:44,389 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:49,391 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:54,395 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:21:59,399 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:04,403 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:09,406 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:14,408 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:19,412 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:24,416 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:29,419 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:34,423 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:39,425 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:44,427 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:49,429 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:54,433 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:22:59,440 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:04,443 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:09,445 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:14,448 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:19,450 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:24,453 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:29,455 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:34,458 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:39,460 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:44,463 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:49,464 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:54,467 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:23:59,469 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:04,471 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:09,474 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:14,477 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:19,480 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:24,483 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:29,485 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:34,488 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:39,490 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:44,493 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:49,495 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:54,498 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:24:59,500 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:04,503 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:09,510 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:14,512 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:19,515 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:24,518 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:29,522 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:34,526 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:39,528 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:44,531 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:49,549 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:54,560 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:25:59,565 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:04,569 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:09,573 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:14,577 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:19,587 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:24,595 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:29,597 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:34,598 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:39,601 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:44,604 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:49,606 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:54,607 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:26:59,611 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:04,615 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:09,618 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:14,620 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:19,624 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:24,628 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:29,631 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:34,635 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:39,641 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:44,645 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:49,648 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:54,656 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:27:59,659 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:04,663 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:09,667 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:14,669 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:19,674 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:24,679 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:29,686 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:34,691 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:39,695 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:44,697 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:49,700 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:54,703 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:28:59,706 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:04,714 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:09,718 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:14,721 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:19,726 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:24,729 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:29,732 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:34,734 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:39,738 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:44,742 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:49,745 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:54,749 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:29:59,753 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:04,758 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:09,762 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:14,764 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:19,767 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:24,771 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:29,774 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:34,775 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:39,779 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:44,785 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:49,789 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:54,791 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:30:59,794 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:04,796 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:09,797 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:14,799 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:19,803 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:24,806 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:29,808 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:34,809 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:39,812 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:44,814 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:49,818 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:54,820 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:31:59,823 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:04,824 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:09,826 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:14,828 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:19,830 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:24,834 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:29,838 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:34,842 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:39,845 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:44,849 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:49,853 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:54,857 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:32:59,859 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:04,862 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:09,885 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:14,917 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:19,939 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:24,949 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:29,953 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:34,959 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:39,963 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:44,965 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:49,969 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:54,978 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:33:59,983 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:04,987 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:09,989 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:14,992 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:19,995 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:25,000 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:30,002 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:35,005 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:40,007 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:45,010 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:50,013 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:34:55,017 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:00,026 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:05,029 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:10,033 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:15,037 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:20,041 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:25,049 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:30,060 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:35,064 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:40,068 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:45,071 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:50,077 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:35:55,083 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:00,087 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:05,092 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:10,096 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:15,098 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:20,101 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:25,103 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:30,116 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:35,119 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:40,121 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:45,126 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:50,131 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:36:55,134 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:00,143 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:05,146 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:10,150 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:15,156 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:20,160 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:25,162 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:30,166 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:35,167 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:40,171 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:45,183 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:50,187 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:37:55,190 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:00,195 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:05,200 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:10,203 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:15,220 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:20,224 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:25,228 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:30,231 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:35,235 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:40,238 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:45,242 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:50,252 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:38:55,255 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:00,257 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:05,259 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:10,268 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:15,271 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:20,274 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:25,282 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:30,286 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:35,291 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:40,296 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:45,300 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:50,305 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:39:55,310 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:00,315 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:05,318 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:10,320 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:15,325 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:20,329 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:25,332 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:30,334 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:35,337 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:40,342 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:45,358 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:50,362 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:40:55,367 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:00,371 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:05,376 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:10,379 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:15,382 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:20,386 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:25,391 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:30,395 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:35,400 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:40,402 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:45,405 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:50,407 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:41:55,412 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:00,419 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:05,424 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:10,426 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:15,429 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:20,434 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:25,437 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:30,443 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:35,451 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:40,453 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:45,457 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:50,459 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:42:55,462 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:00,466 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:05,473 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:10,476 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:15,480 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:20,485 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:25,489 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:30,490 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:35,494 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:40,499 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:45,502 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:50,506 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:43:55,512 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:00,518 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:05,523 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:10,526 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:15,528 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:20,533 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:25,538 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:30,540 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:35,543 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:40,544 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:45,547 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:50,551 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:44:55,554 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:00,557 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:05,560 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:10,564 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:15,569 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:20,573 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:25,577 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:30,579 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:35,581 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:40,585 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:45,586 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:50,591 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:45:55,594 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:00,600 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:05,607 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:10,611 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:15,615 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:20,619 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:25,623 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:30,626 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:35,628 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:40,632 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:45,637 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:50,643 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:46:55,652 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:00,655 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:05,660 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:10,667 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:15,672 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:20,679 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:25,683 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:30,686 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:35,688 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:40,692 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:45,695 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:50,700 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:47:55,705 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:00,709 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:05,711 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:10,714 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:15,716 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:20,720 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:25,733 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:30,737 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:35,740 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:40,743 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:45,745 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:50,747 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:48:55,751 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:00,754 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:05,756 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:10,759 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:15,761 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:20,766 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:25,775 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=1416x1458+5+30
+2026-08-29 14:49:29,598 [INFO] video_maker.gui.app: [GUI] WM_DELETE_WINDOW running=False
+2026-08-29 14:49:29,610 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-29 14:49:29,610 [INFO] video_maker.gui.app: [GUI] ║ WM_DELETE_WINDOW — пользователь закрывает окно ║
+2026-08-29 14:49:29,610 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-29 14:49:29,626 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:49:29,626 [INFO] video_maker.gui.app: [GUI] Уничтожение корневого окна...
+2026-08-29 14:49:29,661 [INFO] video_maker.gui.app: [GUI] root.destroy() выполнен
+2026-08-29 14:49:29,661 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-29 14:49:29,661 [INFO] video_maker.gui.app: [GUI] ║             ПРИЛОЖЕНИЕ ЗАКРЫТО               ║
+2026-08-29 14:49:29,661 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-29 14:49:29,663 [INFO] __main__: LIFECYCLE mainloop_exit
+2026-08-29 14:49:29,663 [INFO] __main__: LIFECYCLE process_end
+2026-08-29 14:52:36,515 [INFO] __main__: LIFECYCLE start pid=6719 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-29 14:52:36,515 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-29 14:52:36,897 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-29 14:52:37,435 [INFO] __main__: Импорт App...
+2026-08-29 14:52:37,501 [INFO] __main__: Создание App(root)...
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] PID: 6719
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-29 14:52:37,501 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-29 14:52:37,510 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-29 14:52:37,511 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-29 14:52:37,511 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-29 14:52:37,511 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-29 14:52:37,511 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-29 14:52:37,666 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-29 14:52:37,666 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-29 14:52:37,666 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+5+35
+2026-08-29 14:52:37,666 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-29 14:52:37,667 [INFO] video_maker.gui.app: [GUI] Настройки загружены из /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:52:37,667 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-29 14:52:37,669 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:52:37,669 [INFO] video_maker.gui.app: [WHISPER] Found: /Users/dreamstore/whisperx/bin/whisperx
+2026-08-29 14:52:37,669 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:52:37,669 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-29 14:52:37,669 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:52:37,669 [INFO] __main__: LIFECYCLE app_created
+2026-08-29 14:52:37,756 [INFO] __main__: LIFECYCLE window geometry=960x1458+5+30 screen=2560x1600
+2026-08-29 14:52:37,756 [INFO] __main__: LIFECYCLE mainloop_enter
+2026-08-29 14:52:42,669 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:52:47,672 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:52:52,675 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:52:57,678 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:02,681 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:07,687 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:12,691 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:17,694 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:22,697 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:27,701 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:34,114 [INFO] __main__: LIFECYCLE start pid=6794 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-29 14:53:34,115 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-29 14:53:34,325 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-29 14:53:34,523 [INFO] __main__: Импорт App...
+2026-08-29 14:53:34,567 [INFO] __main__: Создание App(root)...
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] PID: 6794
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-29 14:53:34,567 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-29 14:53:34,574 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-29 14:53:34,575 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-29 14:53:34,575 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-29 14:53:34,575 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-29 14:53:34,575 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-29 14:53:34,690 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-29 14:53:34,691 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-29 14:53:34,691 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+5+35
+2026-08-29 14:53:34,691 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-29 14:53:34,692 [INFO] video_maker.gui.app: [GUI] Настройки загружены из /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:53:34,692 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-29 14:53:34,693 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-29 14:53:34,693 [INFO] video_maker.gui.app: [WHISPER] Found: /Users/dreamstore/whisperx/bin/whisperx
+2026-08-29 14:53:34,693 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:53:34,693 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-29 14:53:34,693 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-29 14:53:34,693 [INFO] __main__: LIFECYCLE app_created
+2026-08-29 14:53:34,760 [INFO] __main__: LIFECYCLE window geometry=960x1458+5+30 screen=2560x1600
+2026-08-29 14:53:34,760 [INFO] __main__: LIFECYCLE mainloop_enter
+2026-08-29 14:53:39,691 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:44,698 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:49,701 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:54,708 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:53:59,714 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] ║       КНОПКА «СОЗДАТЬ ВИДЕО» НАЖАТА         ║
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] Сбор настроек из GUI...
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] audio_path = /Users/dreamstore/Downloads/аудио для шортс 2/ш1.m4a
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] broll_horizontal = /Volumes/video/broll_downloads/Wide/07_Restoration_Before_After
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] broll_vertical = 
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] vertical_background = /Users/dreamstore/Downloads/Firefly-2.jpg
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] bgm_folder = /Volumes/video/broll_downloads/ссд/тайный кризис человечества /фоновая музыка
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] imo_folder = 
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] output_folder = /Users/dreamstore/Downloads/аудио для шортс 2/готовые
+2026-08-29 14:54:00,393 [INFO] video_maker.gui.app: [GUI] gemini_model = gemini-3.6-flash
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] series_name = 
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] whisper_language = ru
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] whisper_device = auto
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] whisper_compute_type = auto
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] keep_temp_files = False
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] target_lufs = -14.0
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] voice_enhance = False
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] add_bgm = True
+2026-08-29 14:54:00,394 [INFO] video_maker.gui.app: [GUI] output_folder (final) = /Users/dreamstore/Downloads/аудио для шортс 2/готовые
+2026-08-29 14:54:00,395 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json

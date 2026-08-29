@@ -96,21 +96,49 @@ class App:
         log.info("[GUI] Создание корневого окна Tk()")
 
         self.root.title("ВидеоМейкер")
-        # Иконка приложения
+        # Иконка приложения (красивая play-кнопка)
         try:
-            # Создаём простую иконку программно
-            icon_img = tk.PhotoImage(width=32, height=32)
-            # Рисуем простую иконку (прямоугольник с треугольником play)
-            for y in range(32):
-                for x in range(32):
-                    if 8 <= x <= 24 and 8 <= y <= 24:
-                        if x - 8 < 17 and y - 8 < 17:
+            icon_candidates = [
+                os.path.join(os.path.dirname(__file__), "..", "icons", "app_icon.png"),  # video_maker/icons
+                os.path.join(os.path.dirname(__file__), "..", "..", "icons", "app_icon.png"),
+                os.path.expanduser("~/video_maker/icons/app_icon.png"),
+                os.path.join(os.getcwd(), "icons", "app_icon.png"),
+                os.path.join(os.getcwd(), "video_maker", "icons", "app_icon.png"),
+            ]
+            icon_path = next((p for p in icon_candidates if os.path.isfile(p)), None)
+            if icon_path:
+                icon_img = tk.PhotoImage(file=icon_path)
+                # Tk лучше принимает несколько размеров — уменьшаем если огромная
+                if icon_img.width() > 128:
+                    # subsample roughly to ~64
+                    factor = max(1, icon_img.width() // 64)
+                    icon_img = icon_img.subsample(factor, factor)
+                self.root.iconphoto(True, icon_img)
+                self._icon_img = icon_img  # keep ref
+            else:
+                # fallback 32x32: indigo square + white play triangle
+                icon_img = tk.PhotoImage(width=32, height=32)
+                for y in range(32):
+                    for x in range(32):
+                        if 2 <= x <= 29 and 2 <= y <= 29:
                             icon_img.put("#6366F1", (x, y))
-                    elif 10 <= x <= 22 and 10 <= y <= 22 and x - 10 <= y - 10 and x - 10 + y - 10 <= 16:
-                        icon_img.put("#FFFFFF", (x, y))
-            self.root.iconphoto(True, icon_img)
-        except Exception:
-            pass
+                # triangle: left edge x=11, tip at x=22, y from 8..23
+                for y in range(8, 24):
+                    t = (y - 8) / 15.0  # 0..1
+                    # half-width grows to mid then shrinks
+                    half = t * 7.5 if t <= 0.5 else (1 - t) * 7.5
+                    x0 = 11
+                    x1 = int(11 + 11 * (1 - abs(2 * t - 1)))  # expands toward tip
+                    # classic play: width increases with distance from top/bottom
+                    progress = (y - 8) if y <= 15 else (23 - y)
+                    width = max(1, int(progress * 1.4))
+                    for x in range(12, 12 + width):
+                        if x < 32:
+                            icon_img.put("#FFFFFF", (x, y))
+                self.root.iconphoto(True, icon_img)
+                self._icon_img = icon_img
+        except Exception as _icon_err:
+            log.warning("[GUI] icon load failed: %s", _icon_err)
         # Полноэкранное окно по высоте
         screen_h = self.root.winfo_screenheight()
         self.root.geometry(f"960x{screen_h - 60}")
@@ -381,10 +409,7 @@ class App:
         broll_frame = self._add_section(left_col, "B-roll видео")
         self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
         self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
-        self._add_file_section(
-            left_col, "Intro / Middle / Outro",
-            [("Папка:", "imo_folder_var", "dir", [])],
-        )
+        self.imo_folder_var = tk.StringVar()
         self._add_file_section(
             left_col, "Фон для вертикального видео",
             [("Файл:", "bg_var", "file", [("Изображения/Видео", "*.jpg *.jpeg *.png *.mp4 *.mov")])],
@@ -408,7 +433,7 @@ class App:
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
 
-        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "base") or "base")
+        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "large-v3") or "large-v3")
         self.whisper_lang_var = tk.StringVar(value="ru")
         self.whisper_dev_var = tk.StringVar(value="auto")
         self.whisper_comp_var = tk.StringVar(value="auto")
@@ -436,19 +461,27 @@ class App:
         ttk.Label(row_c, text="Субтитры:", width=12).pack(side=tk.LEFT)
         self.caption_style_var = tk.StringVar(value="auto_aisie")
         ttk.Combobox(
-            row_c, textvariable=self.caption_style_var, state="readonly", width=22,
+            row_c, textvariable=self.caption_style_var, state="readonly", width=24,
             values=[
-                "auto_aisie", "hormozi", "hormozi_green", "tiktok_box", "clean_pro", "bold_pop",
+                "auto_aisie", "hormozi", "hormozi_green", "tiktok_box",
+                "clean_pro", "bold_pop", "cliffhanger",
             ],
         ).pack(side=tk.LEFT)
-        ttk.Label(style_frame, text="auto_aisie = AISIE выбирает цвет/вес", font=("SF Pro Text", 9)).pack(anchor="w")
+        ttk.Label(
+            style_frame,
+            text="cliffhanger = tension / красный акцент · auto_aisie = AISIE",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w")
         row_h = ttk.Frame(style_frame)
         row_h.pack(fill=tk.X, pady=2)
         ttk.Label(row_h, text="Хуки:", width=12).pack(side=tk.LEFT)
         self.hook_style_var = tk.StringVar(value="auto_aisie")
         ttk.Combobox(
-            row_h, textvariable=self.hook_style_var, state="readonly", width=22,
-            values=["auto_aisie", "hormozi", "impact", "neon", "soft", "bold"],
+            row_h, textvariable=self.hook_style_var, state="readonly", width=24,
+            values=[
+                "auto_aisie", "hormozi", "impact", "neon",
+                "soft", "bold", "cliffhanger",
+            ],
         ).pack(side=tk.LEFT)
 
         lufs_frame = self._add_section(left_col, "Громкость (LUFS)")
@@ -750,7 +783,7 @@ class App:
                 keys = [k.strip() for k in raw.split(",") if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
-            self.settings.whisper_model = self.whisper_model_var.get() or "base"
+            self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
             self.settings.whisper_language = self.whisper_lang_var.get()
             self.settings.whisper_device = self.whisper_dev_var.get()
             self.settings.whisper_compute_type = self.whisper_comp_var.get()
@@ -861,7 +894,7 @@ class App:
 
         # WhisperX settings
         self.settings.whisperx_path = self.whisperx_path_var.get()
-        self.settings.whisper_model = self.whisper_model_var.get() or "base"
+        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
         self.settings.whisper_language = self.whisper_lang_var.get()
         self.settings.whisper_device = self.whisper_dev_var.get()
         self.settings.whisper_compute_type = self.whisper_comp_var.get()
@@ -1075,7 +1108,7 @@ class App:
                 log.error(f"[PIPELINE]   {line}")
             self._log(f"\n  ОШИБКА: {e}")
             # Показать ошибку в GUI
-            self.root.after(0, lambda: messagebox.showerror("Ошибка пайплайна", f"{type(e).__name__}: {e}"))
+            self.root.after(0, lambda err=e: messagebox.showerror("Ошибка пайплайна", f"{type(err).__name__}: {err}"))
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
             self.running = False
