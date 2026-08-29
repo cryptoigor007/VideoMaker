@@ -56,6 +56,8 @@ PATH_VARS = [
 ]
 
 OTHER_VARS = [
+    "caption_style_var",
+    "hook_style_var",
     "series_var",
     "model_var",
     "whisper_model_var",
@@ -433,7 +435,7 @@ class App:
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
 
-        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "large-v3") or "large-v3")
+        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "large-v3-turbo") or "large-v3-turbo")
         self.whisper_lang_var = tk.StringVar(value="ru")
         self.whisper_dev_var = tk.StringVar(value="auto")
         self.whisper_comp_var = tk.StringVar(value="auto")
@@ -467,11 +469,11 @@ class App:
                 "clean_pro", "bold_pop", "cliffhanger",
             ],
         ).pack(side=tk.LEFT)
+        self.caption_desc_var = tk.StringVar()
         ttk.Label(
-            style_frame,
-            text="cliffhanger = tension / красный акцент · auto_aisie = AISIE",
-            font=("SF Pro Text", 9),
-        ).pack(anchor="w")
+            style_frame, textvariable=self.caption_desc_var,
+            font=("SF Pro Text", 9), wraplength=420, justify="left",
+        ).pack(anchor="w", pady=(2, 6))
         row_h = ttk.Frame(style_frame)
         row_h.pack(fill=tk.X, pady=2)
         ttk.Label(row_h, text="Хуки:", width=12).pack(side=tk.LEFT)
@@ -483,6 +485,14 @@ class App:
                 "soft", "bold", "cliffhanger",
             ],
         ).pack(side=tk.LEFT)
+        self.hook_desc_var = tk.StringVar()
+        ttk.Label(
+            style_frame, textvariable=self.hook_desc_var,
+            font=("SF Pro Text", 9), wraplength=420, justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+        self.caption_style_var.trace_add("write", lambda *_: self._update_style_desc())
+        self.hook_style_var.trace_add("write", lambda *_: self._update_style_desc())
+        self._update_style_desc()
 
         lufs_frame = self._add_section(left_col, "Громкость (LUFS)")
         lufs_frame.configure(padding=8)
@@ -760,7 +770,7 @@ class App:
         ttk.Label(frame, text="WhisperX", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
         row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Модель:", width=14).pack(side=tk.LEFT)
-        ttk.Combobox(row, textvariable=self.whisper_model_var, values=["tiny","base","small","medium","large-v2","large-v3"], state="readonly", width=14).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_model_var, values=["tiny","base","small","medium","large-v2","large-v3","large-v3-turbo"], state="readonly", width=14).pack(side=tk.LEFT)
         row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Язык:", width=14).pack(side=tk.LEFT)
         ttk.Combobox(row, textvariable=self.whisper_lang_var, values=["ru","en","auto"], state="readonly", width=10).pack(side=tk.LEFT)
@@ -783,7 +793,7 @@ class App:
                 keys = [k.strip() for k in raw.split(",") if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
-            self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
+            self.settings.whisper_model = self.whisper_model_var.get() or "large-v3-turbo"
             self.settings.whisper_language = self.whisper_lang_var.get()
             self.settings.whisper_device = self.whisper_dev_var.get()
             self.settings.whisper_compute_type = self.whisper_comp_var.get()
@@ -836,11 +846,80 @@ class App:
         except RuntimeError:
             pass
 
+
+    CAPTION_HELP = {
+        "auto_aisie": "Цвет активного слова по весу AISIE (L1–L4). Karaoke 2–4 слова.",
+        "hormozi": "Белые слова, активное — ярко-жёлтое, лёгкий pop. Классика Shorts.",
+        "hormozi_green": "Как hormozi, акцент неон-зелёный.",
+        "tiktok_box": "Текст на тёмной подложке-боксе, без scale-pop.",
+        "clean_pro": "YouTube: 1 строка, 2–3 слова, тень без контура, без увеличения.",
+        "bold_pop": "Крупный красный акцент, сильный pop.",
+        "cliffhanger": "Красный tension, холодный dim, сильный pop.",
+    }
+    HOOK_HELP = {
+        "auto_aisie": "Стиль хука выбирает AISIE по типу (вопрос / удар / мягкий).",
+        "hormozi": "Крупный жёлтый хук сверху.",
+        "impact": "Оранжевый «ударный» хук.",
+        "neon": "Неон CapCut: мягкий ореол свечения, без жёсткой тени.",
+        "soft": "Спокойный белый хук, мягкая тень.",
+        "bold": "Белый жирный хук без цвета.",
+        "cliffhanger": "Красный tension-хук.",
+    }
+
+    def _update_style_desc(self) -> None:
+        if hasattr(self, "caption_desc_var"):
+            k = (self.caption_style_var.get() or "").strip()
+            self.caption_desc_var.set(self.CAPTION_HELP.get(k, k))
+        if hasattr(self, "hook_desc_var"):
+            k = (self.hook_style_var.get() or "").strip()
+            self.hook_desc_var.set(self.HOOK_HELP.get(k, k))
+
     def _format_eta(self, seconds: float) -> str:
         seconds = max(0, int(seconds))
         m, s = divmod(seconds, 60)
         h, m = divmod(m, 60)
         return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+
+
+    def _start_progress_ticker(self) -> None:
+        """Обновлять прошедшее время каждую секунду, даже между стадиями."""
+        self._ticker_stop = False
+        def _tick():
+            if getattr(self, "_ticker_stop", True) or not getattr(self, "running", False):
+                return
+            t0 = getattr(self, "_pipeline_t0", 0) or 0
+            if t0:
+                elapsed = time.time() - t0
+                value = float(self.progress_var.get() or 0)
+                series = ""
+                try:
+                    series = (self.settings.series_name or os.path.basename(self.settings.audio_path or ""))[:40]
+                except Exception:
+                    pass
+                if value > 3:
+                    total_est = elapsed * (100.0 / max(value, 0.1))
+                    remain = max(0.0, total_est - elapsed)
+                    text = (
+                        f"⏱ {self._format_eta(elapsed)} / ~{self._format_eta(total_est)}  "
+                        f"(~{self._format_eta(remain)})  ·  {series}"
+                    )
+                else:
+                    text = f"⏱ {self._format_eta(elapsed)}  ·  идёт… · {series}"
+                try:
+                    self.time_label.configure(text=text)
+                except Exception:
+                    pass
+            try:
+                self.root.after(1000, _tick)
+            except Exception:
+                pass
+        try:
+            self.root.after(200, _tick)
+        except Exception:
+            pass
+
+    def _stop_progress_ticker(self) -> None:
+        self._ticker_stop = True
 
     def _set_progress(self, value: float, stage: str = "") -> None:
         """Потокобезопасное обновление прогресса + ETA."""
@@ -894,7 +973,7 @@ class App:
 
         # WhisperX settings
         self.settings.whisperx_path = self.whisperx_path_var.get()
-        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
+        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3-turbo"
         self.settings.whisper_language = self.whisper_lang_var.get()
         self.settings.whisper_device = self.whisper_dev_var.get()
         self.settings.whisper_compute_type = self.whisper_comp_var.get()
@@ -917,6 +996,10 @@ class App:
         log.info(f"[GUI] gemini_model = {self.settings.gemini_model}")
         log.info(f"[GUI] series_name = {self.settings.series_name}")
         log.info(f"[GUI] whisper_language = {self.settings.whisper_language}")
+        if hasattr(self, "caption_style_var"):
+            log.info(f"[GUI] caption_style = {self.caption_style_var.get()}")
+        if hasattr(self, "hook_style_var"):
+            log.info(f"[GUI] hook_style = {self.hook_style_var.get()}")
         log.info(f"[GUI] whisper_device = {self.settings.whisper_device}")
         log.info(f"[GUI] whisper_compute_type = {self.settings.whisper_compute_type}")
         log.info(f"[GUI] keep_temp_files = {self.settings.keep_temp_files}")
@@ -961,6 +1044,8 @@ class App:
         setup_logging(log_file)
         log.info(f"[GUI] Логирование перенастроено в {log_file}")
 
+        if hasattr(self, "_wake_network_paths"):
+            self._wake_network_paths()
         errors = self.settings.validate()
         if errors:
             log.error(f"[GUI] Ошибки валидации: {errors}")
@@ -973,6 +1058,7 @@ class App:
         self.cancel_btn.configure(state=tk.NORMAL)
         self.cancel_event.clear()
         self._pipeline_t0 = time.time()
+        self._start_progress_ticker()
         log.info("[GUI] self.running = True, кнопка Старт заблокирована, Отмена включена")
 
         thread = threading.Thread(target=self._run_pipeline, daemon=True)
@@ -1112,6 +1198,7 @@ class App:
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
             self.running = False
+            self._stop_progress_ticker()
             self.cancel_event.clear()
             self.root.after(0, lambda: self.start_btn.configure(state=tk.NORMAL))
             self.root.after(0, lambda: self.cancel_btn.configure(state=tk.DISABLED))
@@ -1212,8 +1299,67 @@ class App:
                         obj.set(value)
                         continue
             log.info("[GUI] Настройки загружены из %s", SETTINGS_FILE)
+            self._wake_network_paths()
         except Exception as e:
             log.warning("[GUI] Ошибка загрузки настроек: %s", e)
+
+    def _wake_network_paths(self) -> None:
+        """Пробудить сетевые тома (/Volumes/...) после reconnect.
+
+        macOS часто не монтирует SMB/AFP, пока папку не открыть в Finder.
+        Делаем os.listdir по корню тома и exists по сохранённым путям.
+        """
+        paths = []
+        for name in PATH_VARS:
+            if not hasattr(self, name):
+                continue
+            var = getattr(self, name)
+            if not hasattr(var, "get"):
+                continue
+            p = (var.get() or "").strip()
+            if p:
+                paths.append(p)
+
+        volumes = set()
+        for p in paths:
+            if p.startswith("/Volumes/"):
+                parts = p.split("/")
+                if len(parts) >= 3 and parts[2]:
+                    volumes.add("/Volumes/" + parts[2])
+
+        for vol in sorted(volumes):
+            try:
+                # Триггер automount
+                if os.path.isdir(vol):
+                    os.listdir(vol)
+                    log.info("[GUI] Том доступен: %s", vol)
+                else:
+                    # Попытка «достучаться» через open -g (без окна) не всегда есть
+                    # fallback: stat
+                    os.stat(vol)
+            except OSError as e:
+                log.warning("[GUI] Том ещё не смонтирован: %s (%s)", vol, e)
+
+        # Повторная проверка сохранённых путей
+        missing = []
+        for p in paths:
+            if p.startswith("/Volumes/") and not os.path.exists(p):
+                missing.append(p)
+        if missing:
+            log.warning(
+                "[GUI] Пути пока недоступны (откройте том в Finder или подождите): %s",
+                "; ".join(missing[:5]),
+            )
+            try:
+                # Одна мягкая попытка: list родителя
+                for p in missing[:8]:
+                    parent = os.path.dirname(p)
+                    try:
+                        os.listdir(parent)
+                    except OSError:
+                        pass
+            except Exception:
+                pass
 
     def _save_settings(self) -> None:
         """Сохранить текущие настройки в JSON."""

@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform
 import subprocess
 import tempfile
 from pathlib import Path
@@ -13,30 +12,31 @@ from .whisperx_resolve import resolve_whisperx
 
 log = logging.getLogger(__name__)
 
+# Баланс скорость/качество на macOS CPU:
+# large-v3-turbo ≈ в 3–5× быстрее large-v3 при близком качестве (особенно ru).
+DEFAULT_MODEL = "large-v3-turbo"
+
 
 def _resolve_device_compute(device: str, compute_type: str) -> tuple[str, str]:
-    """Авто-определение устройства и типа вычислений.
-
-    На Apple Silicon MPS для large-v3 часто падает → сразу CPU + int8
-    (проверено: 10 мин аудио ≈ 6–7 мин, как в рабочих batch-скриптах).
-    """
+    """На Apple Silicon MPS для large нестабилен → CPU + int8."""
     if device != "auto" and compute_type != "auto":
         return device, compute_type
-
-    # Надёжный путь для large-v3 на macOS — CPU int8
-    resolved_device = "cpu" if device == "auto" else device
-    resolved_compute = "int8" if compute_type == "auto" else compute_type
-    return resolved_device, resolved_compute
+    return (
+        "cpu" if device == "auto" else device,
+        "int8" if compute_type == "auto" else compute_type,
+    )
 
 
 def _smart_batch_size() -> int:
-    """Динамический batch_size по свободной RAM (как в проверенных скриптах)."""
+    """Крупный batch ускоряет int8 на CPU при достаточной RAM."""
     try:
         import psutil
         free_gb = psutil.virtual_memory().available / (1024 ** 3)
-        if free_gb > 12:
+        if free_gb > 14:
+            return 32
+        if free_gb > 8:
             return 24
-        if free_gb > 6:
+        if free_gb > 4:
             return 16
         return 8
     except Exception:
@@ -45,18 +45,22 @@ def _smart_batch_size() -> int:
 
 def transcribe(
     audio_path: str,
-    model_name: str = "large-v3",
+    model_name: str = DEFAULT_MODEL,
     whisperx_path: str = "",
     language: str = "ru",
     device: str = "auto",
     compute_type: str = "auto",
     log_fn=None,
 ) -> dict:
-    """Транскрибация аудио через WhisperX CLI с пословными таймкодами.
+    """Один вызов WhisperX с пословными таймкодами.
 
-    Один вызов. Дальше все хуки/субтитры/shorts режутся по уже готовым таймингам.
+    По умолчанию: large-v3-turbo + cpu + int8 + batch 16–32 + все ядра.
+    Макс. качество: model=large-v3 в GUI.
     """
     _log = log_fn or log.info
+    if not model_name or model_name.strip().lower() in ("auto", "default", ""):
+        model_name = DEFAULT_MODEL
+
     _log(f"[WHISPER] Модель: {model_name}")
 
     whisper_bin = resolve_whisperx(whisperx_path)
@@ -80,18 +84,16 @@ def transcribe(
     with tempfile.TemporaryDirectory(prefix="videomeyker_whisper_") as tmp_dir:
         cleaned_path = Path(tmp_dir) / "cleaned.wav"
 
-        # Лёгкая очистка (тяжёлый deesser/afftdn замедляет без большого выигрыша)
-        clean_filter = "highpass=f=80,lowpass=f=14000,alimiter=limit=0.95"
-
         _log("[WHISPER] Подготовка аудио 16kHz mono...")
         subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(audio_path),
-                "-af", clean_filter,
+                "-af", "highpass=f=80,lowpass=f=8000,loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
                 str(cleaned_path),
             ],
-            capture_output=True, check=True,
+            capture_output=True,
+            check=True,
         )
 
         cmd = [
@@ -113,13 +115,32 @@ def transcribe(
         wx_env["PYTHONWARNINGS"] = (
             f"{existing_warn},{suppress}" if existing_warn else suppress
         )
+        wx_env.setdefault("OMP_NUM_THREADS", str(n_threads))
+        wx_env.setdefault("MKL_NUM_THREADS", str(n_threads))
 
         _log("[WHISPER] Запуск распознавания (один раз)...")
         result = subprocess.run(cmd, capture_output=True, text=True, env=wx_env)
 
         if result.returncode != 0:
-            _log(f"[WHISPER] Ошибка: {result.stderr[:500]}")
-            raise RuntimeError(f"WhisperX завершился с ошибкой: {result.stderr[:300]}")
+            err = result.stderr or result.stdout or ""
+            if model_name == "large-v3-turbo" and (
+                "large-v3-turbo" in err.lower()
+                or "not found" in err.lower()
+                or "404" in err
+                or "does not exist" in err.lower()
+            ):
+                _log("[WHISPER] large-v3-turbo недоступна → fallback large-v3")
+                return transcribe(
+                    audio_path=audio_path,
+                    model_name="large-v3",
+                    whisperx_path=whisperx_path,
+                    language=language,
+                    device=device,
+                    compute_type=compute_type,
+                    log_fn=log_fn,
+                )
+            _log(f"[WHISPER] Ошибка: {err[:500]}")
+            raise RuntimeError(f"WhisperX завершился с ошибкой: {err[:300]}")
 
         json_path = cleaned_path.with_suffix(".json")
         if not json_path.exists():
