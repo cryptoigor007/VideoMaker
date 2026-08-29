@@ -269,11 +269,14 @@ def _build_karaoke_window(
     words, analysis, playres_x, playres_y, base_size,
     wide: bool = False, caption_style: str = "auto_aisie",
 ):
-    """Premium karaoke из WhisperX word-timestamps.
-    Статичная группа 2–3 слова, активное: цвет + scale-pop + blur glow.
+    """Karaoke по группам 2–4 слова без микро-дыр между словами.
+
+    Стиль caption_style реально меняет палитру/оформление:
+    hormozi / hormozi_green / tiktok_box / clean_pro / bold_pop / cliffhanger.
     """
     if not words:
         return []
+
     cx = playres_x // 2
     if wide:
         cy = int(playres_y * 0.90)
@@ -295,81 +298,194 @@ def _build_karaoke_window(
     }
     base_style = style_map.get(caption_style, default_base)
     use_box = caption_style == "tiktok_box" or base_style == "TikTokBox"
+    is_cliff = caption_style == "cliffhanger"
+    is_green = caption_style == "hormozi_green"
+    is_clean = caption_style == "clean_pro"
+    is_bold = caption_style == "bold_pop"
 
-    strong = _strong_map(analysis)
-    dim = "&H00B0B0B0&"
-    normal_size = max(42, int(base_size * 0.86))
-    YELLOW = "&H0000EBFF&"   # #FFEB00 Hormozi
-    GREEN = "&H004CFF00&"    # #00FF4C
+    # Палитры по стилю (ASS BGR)
+    YELLOW = "&H0000EBFF&"
+    GREEN = "&H004CFF00&"
     ORANGE = "&H0000A5FF&"
     RED = "&H000000FF&"
     WHITE = "&H00FFFFFF&"
+    DIM_DEFAULT = "&H00B0B0B0&"
+
+    # Основной accent стиля (активное слово без strong-weight)
+    if is_cliff:
+        style_accent, style_name_forced = RED, "Cliffhanger"
+        dim = "&H00909090&"
+        glow_c = RED
+    elif is_green:
+        style_accent, style_name_forced = GREEN, "HormoziGreen"
+        dim = DIM_DEFAULT
+        glow_c = GREEN
+    elif is_clean:
+        style_accent, style_name_forced = WHITE, "CleanPro"
+        dim = "&H00A0A0A0&"
+        glow_c = WHITE
+    elif is_bold:
+        style_accent, style_name_forced = ORANGE, "BoldPop"
+        dim = DIM_DEFAULT
+        glow_c = ORANGE
+    elif use_box:
+        style_accent, style_name_forced = YELLOW, "TikTokBox"
+        dim = DIM_DEFAULT
+        glow_c = YELLOW
+    elif caption_style == "hormozi":
+        style_accent, style_name_forced = YELLOW, "Hormozi"
+        dim = DIM_DEFAULT
+        glow_c = YELLOW
+    else:
+        # auto_aisie — дефолт + strong weights
+        style_accent, style_name_forced = YELLOW, base_style
+        dim = DIM_DEFAULT
+        glow_c = YELLOW
+
+    strong = _strong_map(analysis)
+    normal_size = max(42, int(base_size * 0.88))
 
     def accent_for(weight: str) -> tuple[str, str]:
+        """Цвет + ASS-стиль для активного слова."""
         w = (weight or "L2").upper()
-        forced = base_style if caption_style != "auto_aisie" else None
+        # Явно выбранный стиль — держим его палитру, strong только усиливает
+        if caption_style != "auto_aisie":
+            if is_cliff:
+                if w in ("L3", "L4"):
+                    return RED, "Cliffhanger"
+                return style_accent, "Cliffhanger"
+            if is_green:
+                return GREEN if w != "L4" else ORANGE, "HormoziGreen"
+            if is_clean:
+                return WHITE, "CleanPro"
+            if is_bold:
+                return RED if w == "L4" else ORANGE, "BoldPop"
+            if use_box:
+                return YELLOW, "TikTokBox"
+            if caption_style == "hormozi":
+                if w == "L4":
+                    return RED, "BoldPop"
+                if w == "L3":
+                    return ORANGE, "Hormozi"
+                return YELLOW, "Hormozi"
+            return style_accent, style_name_forced
+        # auto_aisie
         if w == "L4":
-            return RED, forced or "BoldPop"
+            return RED, "BoldPop"
         if w == "L3":
-            return ORANGE, forced or "Hormozi"
+            return ORANGE, "Hormozi"
         if w == "L2":
-            return YELLOW, forced or "Hormozi"
+            return YELLOW, "Hormozi"
         if w == "L1":
-            return GREEN, forced or "HormoziGreen"
-        return YELLOW, forced or base_style
+            return GREEN, "HormoziGreen"
+        return YELLOW, base_style
 
     def active_tags(color: str, size: int, text: str) -> str:
-        # CapCut-like: blur edge + scale pop + bold
+        bord = max(6, int(base_size * 0.12))
+        if is_cliff:
+            # сильнее pop для tension
+            return (
+                f"{{\\c{color}\\fs{size}\\b1\\bord{bord + 2}\\shad1\\be1"
+                f"\\t(0,100,\\fscx128\\fscy128)\\t(100,220,\\fscx100\\fscy100)}}"
+                f"{text}{{\\r}}"
+            )
         return (
-            f"{{\\c{color}\\fs{size}\\b1\\bord{max(6, int(base_size*0.12))}\\shad0\\be1"
-            f"\\t(0,90,\\fscx122\\fscy122)\\t(90,170,\\fscx100\\fscy100)}}"
+            f"{{\\c{color}\\fs{size}\\b1\\bord{bord}\\shad0\\be1"
+            f"\\t(0,90,\\fscx118\\fscy118)\\t(90,180,\\fscx100\\fscy100)}}"
             f"{text}{{\\r}}"
         )
 
     def dim_tags(text: str) -> str:
-        return f"{{\\c{dim}\\fs{normal_size}\\b0\\bord{max(4, int(base_size*0.08))}\\be0}}{text}{{\\r}}"
+        return (
+            f"{{\\c{dim}\\fs{normal_size}\\b0"
+            f"\\bord{max(4, int(base_size * 0.08))}\\be0}}{text}{{\\r}}"
+        )
 
     events = []
-    for group in _group_words_static(words):
-        for active in group:
+    groups = _group_words_static(words)
+    for group in groups:
+        if not group:
+            continue
+        # Полный интервал группы без дыр: от start первого до end последнего
+        g_start = float(words[group[0]]["start"])
+        g_end = float(words[group[-1]]["end"])
+        if g_end <= g_start:
+            g_end = g_start + 0.35 * len(group)
+
+        for gi, active in enumerate(group):
+            # Интервал активного слова — до следующего в группе (без микро-пауз)
+            w_start = float(words[active]["start"])
+            if gi + 1 < len(group):
+                w_end = float(words[group[gi + 1]]["start"])
+            else:
+                w_end = g_end
+            # Подтянуть к границам слова, но не оставлять дыр
+            w_end = max(w_end, float(words[active]["end"]))
+            if w_end <= w_start:
+                w_end = w_start + 0.2
+            # Склеить с предыдущим событием группы: start = max(prev_end sense)
+            if gi == 0:
+                w_start = g_start
+
             parts = []
-            style_name = "TikTokBox" if use_box else base_style
+            style_name = style_name_forced
             for j in group:
                 wt = words[j]["text"]
                 if j == active:
-                    weight = strong.get(wt.lower().strip(".,!?;:«»\""), "L2")
+                    key = wt.lower().strip(".,!?;:«»\"'")
+                    weight = strong.get(key, "L2")
                     color, style_name = accent_for(weight)
                     if use_box:
                         style_name = "TikTokBox"
-                    size = max(int(base_size * 1.25), int(base_size * float(
-                        (VISUAL_WEIGHTS.get(weight) or {}).get("font_scale", 1.2)
-                    )))
-                    size = min(size, int(base_size * 1.60))
+                    scale = float((VISUAL_WEIGHTS.get(weight) or {}).get("font_scale", 1.15))
+                    size = max(int(base_size * 1.18), int(base_size * scale))
+                    size = min(size, int(base_size * 1.55))
                     parts.append(active_tags(color, size, wt))
                 else:
                     parts.append(dim_tags(wt))
+
             line = pos + " ".join(parts)
-            start = words[active]["start"]
-            end = words[active]["end"]
-            # glow layer (behind) — мягкое свечение активного слова
+
+            # Glow только у активного, цвет по стилю (не всегда жёлтый)
             glow_parts = []
             for j in group:
                 wt = words[j]["text"]
                 if j == active:
                     glow_parts.append(
-                        f"{{\\fs{int(base_size*1.3)}\\b1\\bord{max(10, int(base_size*0.18))}\\be2\\c&H0000EBFF&\\3c&H0000EBFF&\\alpha&H60&}}{wt}{{\\r}}"
+                        f"{{\\fs{int(base_size * 1.28)}\\b1"
+                        f"\\bord{max(10, int(base_size * 0.18))}\\be2"
+                        f"\\c{glow_c}\\3c{glow_c}\\alpha&H60&}}{wt}{{\\r}}"
                     )
                 else:
-                    glow_parts.append(f"{{\\alpha&HFF&}}{wt}{{\\r}}")  # hide non-active on glow layer
+                    glow_parts.append(f"{{\\alpha&HFF&}}{wt}{{\\r}}")
+
             events.append({
-                "start": start, "end": end, "style": "Glow",
+                "start": w_start, "end": w_end, "style": "Glow",
                 "text": pos + " ".join(glow_parts), "layer": 0,
             })
             events.append({
-                "start": start, "end": end, "style": style_name,
+                "start": w_start, "end": w_end, "style": style_name,
                 "text": line, "layer": 1,
             })
-    return events
+
+    # Заполнить микро-дыры между соседними событиями одного слоя (≤120ms)
+    events.sort(key=lambda e: (e["start"], e.get("layer", 0)))
+    by_layer: dict[int, list] = {}
+    for ev in events:
+        by_layer.setdefault(int(ev.get("layer", 0)), []).append(ev)
+    fixed = []
+    for layer, lst in by_layer.items():
+        lst.sort(key=lambda e: e["start"])
+        for i, ev in enumerate(lst):
+            if i + 1 < len(lst):
+                gap = lst[i + 1]["start"] - ev["end"]
+                if 0 < gap <= 0.12:
+                    ev = dict(ev)
+                    ev["end"] = lst[i + 1]["start"]
+            fixed.append(ev)
+    fixed.sort(key=lambda e: (e["start"], e.get("layer", 0)))
+    return fixed
+
 
 
 def _build_wide_subtitles(transcription, analysis):
