@@ -12,16 +12,75 @@ log = logging.getLogger(__name__)
 
 
 def probe_duration(path: str) -> float:
-    """Получить длительность медиафайла в секундах."""
+    """Получить длительность медиафайла в секундах.
+
+    Устойчиво к битым/неполным файлам: при ошибке ffprobe возвращает 0.0
+    (вызывающий код обычно пропускает клипы с dur <= 0.05).
+    """
+    if not path or not os.path.exists(path):
+        log.warning("[АУДИО] probe_duration: путь не существует: %s", path)
+        return 0.0
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
         "-show_format",
+        "-show_streams",
         path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    data = json.loads(result.stdout)
-    return float(data["format"]["duration"])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        log.warning("[АУДИО] probe_duration ffprobe failed for %s: %s", path, e)
+        return 0.0
+
+    raw = (result.stdout or "").strip()
+    if not raw:
+        log.warning(
+            "[АУДИО] probe_duration: пустой ответ ffprobe для %s (rc=%s stderr=%s)",
+            os.path.basename(path),
+            result.returncode,
+            (result.stderr or "")[:200],
+        )
+        return 0.0
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        log.warning("[АУДИО] probe_duration: невалидный JSON для %s: %s", path, e)
+        return 0.0
+
+    # 1) format.duration
+    fmt = data.get("format") or {}
+    dur = fmt.get("duration")
+    if dur is not None:
+        try:
+            val = float(dur)
+            if val > 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+
+    # 2) fallback: max stream duration
+    best = 0.0
+    for stream in data.get("streams") or []:
+        sd = stream.get("duration")
+        if sd is None:
+            continue
+        try:
+            val = float(sd)
+            if val > best:
+                best = val
+        except (TypeError, ValueError):
+            continue
+    if best > 0:
+        return best
+
+    log.warning(
+        "[АУДИО] probe_duration: нет duration в format/streams для %s keys=%s",
+        os.path.basename(path),
+        list(data.keys()),
+    )
+    return 0.0
 
 
 def probe_sample_rate(path: str) -> int:

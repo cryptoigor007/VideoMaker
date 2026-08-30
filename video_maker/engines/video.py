@@ -23,7 +23,7 @@ def _ffmpeg_bin() -> str:
 
 
 def _ffprobe_video_info(video_path: str) -> tuple[int, int, float]:
-    """Получить ширину, высоту и fps видео."""
+    """Получить ширину, высоту и fps видео. Устойчиво к битым файлам."""
     import json
     cmd = [
         "ffprobe", "-v", "quiet",
@@ -32,28 +32,40 @@ def _ffprobe_video_info(video_path: str) -> tuple[int, int, float]:
         "-of", "json",
         video_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    data = json.loads(result.stdout)
-    
-    streams = data.get("streams")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        raise ValueError(f"ffprobe failed for {video_path}: {e}") from e
+    raw = (result.stdout or "").strip()
+    if not raw:
+        raise ValueError(f"Пустой ответ ffprobe для {video_path}")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Невалидный JSON ffprobe для {video_path}: {e}") from e
+
+    streams = data.get("streams") or []
     if not streams:
         raise ValueError(f"Не удалось найти видеопоток в файле {video_path}")
-        
+
     stream = streams[0]
-    width = stream.get("width", 3840)
-    height = stream.get("height", 2160)
-    
-    fps_str = stream.get("r_frame_rate", "30/1")
-    if "/" in fps_str:
-        num, den = map(int, fps_str.split("/"))
-        fps = num / den if den != 0 else 30.0
+    width = stream.get("width") or 3840
+    height = stream.get("height") or 2160
+
+    fps_str = stream.get("r_frame_rate") or "30/1"
+    if "/" in str(fps_str):
+        try:
+            num, den = map(int, str(fps_str).split("/"))
+            fps = num / den if den != 0 else 30.0
+        except Exception:
+            fps = 30.0
     else:
         try:
             fps = float(fps_str)
-        except ValueError:
+        except (TypeError, ValueError):
             fps = 30.0
 
-    return width, height, fps
+    return int(width), int(height), float(fps)
 
 
 # Папка использованных B-roll (исключается из ротации)
@@ -94,6 +106,15 @@ def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str
         if os.path.isdir(path):
             subdirs.append(path)
 
+    # Файлы прямо в корне B-roll
+    root_files: list[str] = []
+    for name in entries:
+        if name.startswith(".") or name.lower() in _SKIP_SUBDIR_NAMES:
+            continue
+        full = os.path.join(folder, name)
+        if os.path.isfile(full) and _is_video(name):
+            root_files.append(full)
+
     if rotate_subfolders and subdirs:
         queues: list[list[str]] = []
         for sd in subdirs:
@@ -107,24 +128,20 @@ def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str
                 files = []
             if files:
                 queues.append(files)
+        # Если подпапки пустые — fallback на корень
         if not queues:
-            return []
+            return root_files
         result: list[str] = []
         max_len = max(len(q) for q in queues)
         for i in range(max_len):
             for q in queues:
                 if i < len(q):
                     result.append(q[i])
+        # Клипы из корня тоже участвуют (после ротации тем)
+        result.extend(root_files)
         return result
 
-    files: list[str] = []
-    for name in entries:
-        if name.startswith(".") or name.lower() in _SKIP_SUBDIR_NAMES:
-            continue
-        full = os.path.join(folder, name)
-        if os.path.isfile(full) and _is_video(name):
-            files.append(full)
-    return files
+    return root_files
 
 
 def move_to_used(root_folder: str, paths: list[str], log_fn=None) -> int:
@@ -209,9 +226,17 @@ def fit_video_to_duration(
 
     selected: list[str] = []
     total_dur = 0.0
+    skipped_bad = 0
     for vf in ordered:
-        dur = probe_duration(vf)
+        try:
+            dur = probe_duration(vf)
+        except Exception as e:
+            skipped_bad += 1
+            _log(f"[ВИДЕО] пропуск (ffprobe): {os.path.basename(vf)} — {e}")
+            continue
         if dur <= 0.05:
+            skipped_bad += 1
+            _log(f"[ВИДЕО] пропуск (нет длительности): {os.path.basename(vf)}")
             continue
         selected.append(vf)
         total_dur += dur
@@ -219,12 +244,20 @@ def fit_video_to_duration(
         if total_dur >= target_duration:
             break
 
+    if skipped_bad:
+        _log(f"[ВИДЕО] Пропущено проблемных клипов: {skipped_bad}")
+
     # Если даже все файлы короче — повторяем цикл (редко, но нужно)
     if total_dur < target_duration and selected:
         _log(f"[ВИДЕО] Все клипы короче цели ({total_dur:.1f} < {target_duration:.1f}), повторяем")
-        while total_dur < target_duration:
+        safety = 0
+        while total_dur < target_duration and safety < 500:
+            safety += 1
             for vf in ordered:
-                dur = probe_duration(vf)
+                try:
+                    dur = probe_duration(vf)
+                except Exception:
+                    continue
                 if dur <= 0.05:
                     continue
                 selected.append(vf)

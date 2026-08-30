@@ -89,15 +89,75 @@ class Settings:
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "auto"),
         )
 
+    AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma")
+
+    @staticmethod
+    def collect_audio_files(path: str) -> list[str]:
+        """Список голосовых дорожек: один файл, либо все из папки (+ 1 уровень подпапок).
+
+        Порядок: сначала файлы в корне папки (по имени), затем файлы из каждой
+        подпапки (подпапки по имени, внутри — по имени). Скрытые и пустые пропускаются.
+        """
+        if not path or not os.path.exists(path):
+            return []
+        if os.path.isfile(path):
+            if path.lower().endswith(Settings.AUDIO_EXTENSIONS):
+                return [path]
+            return []
+        if not os.path.isdir(path):
+            return []
+
+        files: list[str] = []
+        try:
+            entries = sorted(os.listdir(path))
+        except OSError:
+            return []
+
+        # 1) файлы в корне
+        for name in entries:
+            if name.startswith("."):
+                continue
+            full = os.path.join(path, name)
+            if os.path.isfile(full) and name.lower().endswith(Settings.AUDIO_EXTENSIONS):
+                files.append(full)
+
+        # 2) один уровень подпапок (если дорожки разложены по эпизодам/темам)
+        for name in entries:
+            if name.startswith("."):
+                continue
+            sub = os.path.join(path, name)
+            if not os.path.isdir(sub):
+                continue
+            try:
+                for fn in sorted(os.listdir(sub)):
+                    if fn.startswith("."):
+                        continue
+                    full = os.path.join(sub, fn)
+                    if os.path.isfile(full) and fn.lower().endswith(Settings.AUDIO_EXTENSIONS):
+                        files.append(full)
+            except OSError:
+                continue
+
+        return files
+
     def validate(self) -> list[str]:
         """Проверить настройки, вернуть список ошибок."""
         errors = []
         if not self.gemini_api_key and not self.gemini_api_keys:
             errors.append("Не задан Gemini API ключ")
         if not self.audio_path:
-            errors.append("Не выбран аудиофайл")
+            errors.append("Не выбран аудиофайл или папка с аудио")
         elif not os.path.exists(self.audio_path):
-            errors.append(f"Аудиофайл не найден: {self.audio_path}")
+            errors.append(f"Аудио (файл/папка) не найден: {self.audio_path}")
+        else:
+            audio_files = self.collect_audio_files(self.audio_path)
+            if not audio_files:
+                if os.path.isdir(self.audio_path):
+                    errors.append(
+                        f"В папке нет аудиофайлов ({', '.join(Settings.AUDIO_EXTENSIONS)}): {self.audio_path}"
+                    )
+                else:
+                    errors.append(f"Файл не является поддерживаемым аудио: {self.audio_path}")
         if not self.broll_horizontal:
             errors.append("Не выбрана папка B-roll горизонтальный")
         elif not os.path.exists(self.broll_horizontal):

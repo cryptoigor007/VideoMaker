@@ -404,10 +404,25 @@ class App:
         right_col.columnconfigure(0, weight=1)
 
         # ─── Левая колонка: все настройки ───────────────────────────────
-        self._add_file_section(
-            left_col, "Аудио",
-            [("Файл:", "audio_var", "file", [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg")])],
+        # Аудио: одна кнопка — файл или папка (приложение определяет само)
+        audio_frame = self._add_section(left_col, "Аудио (файл или папка)")
+        self.audio_var = tk.StringVar()
+        row_audio = ttk.Frame(audio_frame)
+        row_audio.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(row_audio, text="Путь:", width=14).pack(side=tk.LEFT)
+        ttk.Entry(row_audio, textvariable=self.audio_var, font=("SF Pro Text", 10)).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6)
         )
+        ttk.Button(
+            row_audio, text="Обзор...", width=10,
+            command=self._browse_audio,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            audio_frame,
+            text="Выберите файл или папку — приложение само определит и покажет в логе",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(2, 0))
+
         broll_frame = self._add_section(left_col, "B-roll видео")
         self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
         self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
@@ -738,7 +753,179 @@ class App:
     # ─── Файловые диалоги (обратная совместимость) ────────────────────────
 
     def _choose_audio(self) -> None:
-        self._browse_file(self.audio_var, "audio_var", [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg")])
+        """Обратная совместимость → единый диалог файла/папки."""
+        self._browse_audio()
+
+    def _browse_audio(self) -> None:
+        """Одна кнопка: выбрать файл или папку. Тип определяется автоматически, инфо — в лог."""
+        log.info("[GUI] Диалог выбора аудио (файл или папка)")
+        path = self._ask_file_or_directory(
+            title="Выберите аудиофайл или папку с аудио",
+            filetypes=[("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg *.aac *.wma"), ("Все файлы", "*.*")],
+        )
+        if not path:
+            log.info("[GUI] Выбор аудио отменён")
+            return
+        path = path.strip()
+        self.audio_var.set(path)
+        log.info(f"[GUI] audio_var = {path}")
+        self._save_settings()
+        self._report_audio_selection(path)
+
+    def _ask_file_or_directory(self, title: str = "Выберите файл или папку", filetypes=None) -> str:
+        """
+        Диалог, позволяющий выбрать файл или папку.
+        На macOS — через AppleScript (NSOpenPanel: files + directories).
+        Иначе — компактное окно с двумя действиями (один раз нажать).
+        """
+        # --- macOS: нативный панель с canChooseFiles + canChooseDirectories ---
+        if sys.platform == "darwin":
+            try:
+                import subprocess
+                # AppleScript: разрешаем и файлы, и папки
+                script = '''
+                set theResult to choose file with prompt "%s" without invisibles
+                return POSIX path of theResult
+                ''' % title.replace('"', '\\"')
+                # choose file OR folder requires slightly different approach:
+                # use choose file name is wrong; use Finder-like via osascript with both
+                script = f'''
+                tell application "System Events"
+                    activate
+                end tell
+                set theChoice to choose file with prompt "{title.replace('"', '')}" without multiple selections allowed
+                return POSIX path of theChoice
+                '''
+                # Better: use Cocoa-style via osascript that allows folders too
+                # Standard way that works on modern macOS:
+                script = f'''
+                set okTypes to {{"public.audio", "public.mp3", "com.microsoft.waveform-audio", "public.aiff-audio", "com.apple.m4a-audio", "org.xiph.flac", "com.microsoft.windows-media-wma"}}
+                set thePanel to choose file with prompt "{title.replace(chr(34), "")}" of type okTypes without invisibles
+                return POSIX path of thePanel
+                '''
+                # Actually pure AppleScript cannot easily do "file OR folder" in one choose.
+                # Use Python + AppKit if available, else fallback UI.
+                try:
+                    from AppKit import NSOpenPanel, NSModalResponseOK  # type: ignore
+                    panel = NSOpenPanel.openPanel()
+                    panel.setCanChooseFiles_(True)
+                    panel.setCanChooseDirectories_(True)
+                    panel.setAllowsMultipleSelection_(False)
+                    panel.setMessage_(title)
+                    panel.setPrompt_("Выбрать")
+                    if panel.runModal() == NSModalResponseOK:
+                        urls = panel.URLs()
+                        if urls and len(urls) > 0:
+                            return str(urls[0].path())
+                    return ""
+                except Exception:
+                    pass
+            except Exception as e:
+                log.debug("[GUI] macOS native panel unavailable: %s", e)
+
+        # --- Fallback: маленькое окно выбора типа (одна кнопка «Обзор» → один клик тип) ---
+        result = {"path": ""}
+
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.configure(bg=COLORS["bg"])
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+
+        frame = ttk.Frame(win, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Что выбрать?", style="Section.TLabel").pack(anchor="w", pady=(0, 10))
+
+        def pick_file():
+            types = filetypes or [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg *.aac *.wma"), ("Все файлы", "*.*")]
+            p = filedialog.askopenfilename(parent=win, title="Выберите аудиофайл", filetypes=types)
+            if p:
+                result["path"] = p
+            win.destroy()
+
+        def pick_dir():
+            p = filedialog.askdirectory(parent=win, title="Выберите папку с аудио")
+            if p:
+                result["path"] = p
+            win.destroy()
+
+        def cancel():
+            win.destroy()
+
+        ttk.Button(frame, text="📄  Аудиофайл", command=pick_file).pack(fill=tk.X, pady=3)
+        ttk.Button(frame, text="📁  Папка с аудио", command=pick_dir).pack(fill=tk.X, pady=3)
+        ttk.Button(frame, text="Отмена", command=cancel).pack(fill=tk.X, pady=(10, 0))
+
+        # Центрировать относительно главного окна
+        win.update_idletasks()
+        try:
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - win.winfo_width()) // 2
+            y = self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_height()) // 2
+            win.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+        win.wait_window()
+        return result["path"]
+
+    def _report_audio_selection(self, path: str) -> None:
+        """После выбора пути: определить файл/папку, просканировать, вывести инфо в лог GUI."""
+        if not path:
+            return
+        if not os.path.exists(path):
+            self._log(f"[АУДИО] Путь не существует: {path}")
+            return
+
+        files = Settings.collect_audio_files(path)
+
+        if os.path.isfile(path):
+            if files:
+                try:
+                    from ..engines.audio import probe_duration
+                    dur = probe_duration(path)
+                    self._log(
+                        f"[АУДИО] Выбран файл: {os.path.basename(path)}  "
+                        f"({dur:.1f} сек)  ·  {path}"
+                    )
+                except Exception:
+                    self._log(f"[АУДИО] Выбран файл: {os.path.basename(path)}  ·  {path}")
+            else:
+                self._log(
+                    f"[АУДИО] Выбран файл, но формат не поддерживается: {os.path.basename(path)}"
+                )
+                self._log(
+                    f"[АУДИО] Поддерживаются: {', '.join(Settings.AUDIO_EXTENSIONS)}"
+                )
+            return
+
+        if os.path.isdir(path):
+            self._log(f"[АУДИО] Выбрана папка: {path}")
+            if not files:
+                self._log("[АУДИО] В папке аудиофайлы не найдены")
+                self._log(
+                    f"[АУДИО] Ищем расширения: {', '.join(Settings.AUDIO_EXTENSIONS)}"
+                )
+            else:
+                self._log(f"[АУДИО] Найдено аудиофайлов: {len(files)}")
+                total_dur = 0.0
+                for i, f in enumerate(files, 1):
+                    name = os.path.basename(f)
+                    try:
+                        from ..engines.audio import probe_duration
+                        d = probe_duration(f)
+                        total_dur += d
+                        self._log(f"[АУДИО]   {i}. {name}  ({d:.1f} сек)")
+                    except Exception:
+                        self._log(f"[АУДИО]   {i}. {name}")
+                if total_dur > 0:
+                    self._log(
+                        f"[АУДИО] Суммарная длительность: {total_dur:.1f} сек "
+                        f"({total_dur / 60:.1f} мин)  ·  будет {len(files)} прогон(ов)"
+                    )
+            return
+
+        self._log(f"[АУДИО] Неизвестный тип пути: {path}")
 
     # ─── Настройки ───────────────────────────────────────────────────────
 
@@ -1029,19 +1216,25 @@ class App:
         log.info(f"[GUI] voice_enhance = {self.settings.voice_enhance}")
         log.info(f"[GUI] add_bgm = {self.settings.add_bgm}")
 
-        self.settings.output_folder = self.output_var.get() or (
-            os.path.dirname(self.settings.audio_path) if self.settings.audio_path else ""
-        )
+        # Папка вывода: явная, либо родитель файла, либо сама папка аудио
+        out = self.output_var.get().strip()
+        if not out and self.settings.audio_path:
+            if os.path.isdir(self.settings.audio_path):
+                out = self.settings.audio_path
+            else:
+                out = os.path.dirname(self.settings.audio_path)
+        self.settings.output_folder = out
         log.info(f"[GUI] output_folder (final) = {self.settings.output_folder}")
 
         # Persist GUI state before validate / pipeline
         self._save_settings()
 
         # Переконфигурировать логирование в выходную папку
-        log_file = os.path.join(self.settings.output_folder, "videomaker.log")
-        from video_maker.main import setup_logging
-        setup_logging(log_file)
-        log.info(f"[GUI] Логирование перенастроено в {log_file}")
+        if self.settings.output_folder and os.path.isdir(self.settings.output_folder):
+            log_file = os.path.join(self.settings.output_folder, "videomaker.log")
+            from video_maker.main import setup_logging
+            setup_logging(log_file)
+            log.info(f"[GUI] Логирование перенастроено в {log_file}")
 
         if hasattr(self, "_wake_network_paths"):
             self._wake_network_paths()
@@ -1050,6 +1243,32 @@ class App:
             log.error(f"[GUI] Ошибки валидации: {errors}")
             messagebox.showerror("Ошибки", "\n".join(errors))
             return
+
+        # Список аудиофайлов (один или из папки, + 1 уровень подпапок)
+        self._audio_queue = Settings.collect_audio_files(self.settings.audio_path)
+        log.info(f"[GUI] Аудиофайлов к обработке: {len(self._audio_queue)}")
+        self._log(f"[АУДИО] К обработке: {len(self._audio_queue)} файл(ов)")
+        for i, pth in enumerate(self._audio_queue, 1):
+            log.info(f"[GUI]   {i}. {pth}")
+            self._log(f"[АУДИО]   {i}. {os.path.basename(pth)}")
+
+        # Предпросмотр B-roll (подпапки с темами)
+        try:
+            from ..engines.video import collect_video_files
+            bh = collect_video_files(self.settings.broll_horizontal)
+            self._log(f"[B-ROLL H] Найдено клипов: {len(bh)} (подпапки + корень, used исключён)")
+            if not bh:
+                messagebox.showerror(
+                    "Ошибки",
+                    f"В папке B-roll горизонтальный нет видео:\n{self.settings.broll_horizontal}\n\n"
+                    "Ожидаются .mp4/.mov/.avi/.mkv/.webm в папке или в тематических подпапках.",
+                )
+                return
+            if self.settings.broll_vertical:
+                bv = collect_video_files(self.settings.broll_vertical)
+                self._log(f"[B-ROLL V] Найдено клипов: {len(bv)}")
+        except Exception as e:
+            log.warning("[GUI] preview B-roll failed: %s", e)
 
         log.info("[GUI] Валидация пройдена — запуск пайплайна")
         self.running = True
@@ -1066,10 +1285,22 @@ class App:
         log.info("[GUI] Поток запущен")
 
     def _run_pipeline(self) -> None:
-        """Выполнить пайплайн в отдельном потоке."""
+        """Выполнить пайплайн в отдельном потоке (один файл или очередь из папки)."""
         log.info("[PIPELINE] ═══════════════════════════════════════════════")
         log.info(f"[PIPELINE] Поток пайплайна запущен: {threading.current_thread().name}")
         log.info(f"[PIPELINE] PID: {os.getpid()}")
+
+        audio_queue = getattr(self, "_audio_queue", None) or Settings.collect_audio_files(
+            self.settings.audio_path
+        )
+        total = len(audio_queue)
+        if total == 0:
+            self._log("[PIPELINE] Нет аудиофайлов для обработки")
+            self.running = False
+            self._stop_progress_ticker()
+            self.root.after(0, lambda: self.start_btn.configure(state=tk.NORMAL))
+            self.root.after(0, lambda: self.cancel_btn.configure(state=tk.DISABLED))
+            return
 
         try:
             from ..pipeline.branches import FinalHorizontal, FinalVertical
@@ -1079,108 +1310,146 @@ class App:
             from ..pipeline.stages import AudioStage, GeminiStage, TranscribeStage
 
             log.info("[PIPELINE] Все модули пайплайна импортированы")
+            log.info(f"[PIPELINE] Очередь: {total} аудиофайл(ов)")
 
-            ctx = PipelineContext(
-                audio_path=self.settings.audio_path,
-                broll_horizontal=self.settings.broll_horizontal,
-                broll_vertical=self.settings.broll_vertical,
-                bgm_folder=self.settings.bgm_folder,
-                intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
-                vertical_background=self.settings.vertical_background,
-                cover_horizontal=self.settings.cover_horizontal,
-                cover_vertical=self.settings.cover_vertical,
-                output_folder=self.settings.output_folder,
-                series_name=self.settings.series_name,
-                gemini_model=self.settings.gemini_model,
-                gemini_api_key=self.settings.gemini_api_key,
-                gemini_api_keys=self.settings.gemini_api_keys,
-                whisper_model=self.settings.whisper_model,
-                whisperx_path=self.settings.whisperx_path,
-                whisper_language=self.settings.whisper_language,
-                whisper_device=self.settings.whisper_device,
-                whisper_compute_type=self.settings.whisper_compute_type,
-                voice_enhance=self.settings.voice_enhance,
-                add_bgm=self.settings.add_bgm,
-                intro_gemini=self.settings.intro_gemini,
-                keep_temp_files=self.settings.keep_temp_files,
-                caption_style=(self.caption_style_var.get() if hasattr(self, "caption_style_var") else "auto_aisie"),
-                hook_style=(self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie"),
-                target_lufs=self.settings.target_lufs,
-                vstack_top_ratio=self.settings.vstack_top_ratio,
-                h_enable_intro=self.settings.h_enable_intro,
-                h_enable_middle=self.settings.h_enable_middle,
-                h_enable_outro=self.settings.h_enable_outro,
-                h_enable_hooks=self.settings.h_enable_hooks,
-                h_enable_subtitles=self.settings.h_enable_subtitles,
-                h_enable_strong_words=self.settings.h_enable_strong_words,
-                v_enable_intro=self.settings.v_enable_intro,
-                v_enable_middle=self.settings.v_enable_middle,
-                v_enable_outro=self.settings.v_enable_outro,
-                v_enable_hooks=self.settings.v_enable_hooks,
-                v_enable_subtitles=self.settings.v_enable_subtitles,
-                v_enable_strong_words=self.settings.v_enable_strong_words,
-                s_enable_intro=self.settings.s_enable_intro,
-                s_enable_middle=self.settings.s_enable_middle,
-                s_enable_outro=self.settings.s_enable_outro,
-                s_enable_hooks=self.settings.s_enable_hooks,
-                s_enable_subtitles=self.settings.s_enable_subtitles,
-                s_enable_strong_words=self.settings.s_enable_strong_words,
-                h_intro_path=self._var_get("h_intro_path"),
-                h_mid_path=self._var_get("h_mid_path"),
-                h_outro_path=self._var_get("h_outro_path"),
-                h_intro_duration=float(self._var_get("h_intro_duration") or 3),
-                h_mid_duration=float(self._var_get("h_mid_duration") or 1),
-                h_outro_duration=float(self._var_get("h_outro_duration") or 3),
-                v_intro_duration=float(self._var_get("v_intro_duration") or 3),
-                v_mid_duration=float(self._var_get("v_mid_duration") or 1),
-                v_outro_duration=float(self._var_get("v_outro_duration") or 3),
-                s_intro_duration=float(self._var_get("s_intro_duration") or 3),
-                s_mid_duration=float(self._var_get("s_mid_duration") or 1),
-                s_outro_duration=float(self._var_get("s_outro_duration") or 3),
-                v_intro_path=self._var_get("v_intro_path"),
-                v_mid_path=self._var_get("v_mid_path"),
-                v_outro_path=self._var_get("v_outro_path"),
-                s_intro_path=self._var_get("s_intro_path"),
-                s_mid_path=self._var_get("s_mid_path"),
-                s_outro_path=self._var_get("s_outro_path"),
-                log_callback=self._log,
-            )
-            log.info("[PIPELINE] PipelineContext создан")
+            base_series = (self.settings.series_name or "").strip()
+            base_output = self.settings.output_folder
 
-            stages = [
-                ("AudioStage", AudioStage()),
-                ("TranscribeStage", TranscribeStage()),
-                ("GeminiStage", GeminiStage()),
-                ("MasterBuilder", MasterBuilder()),
-                ("FinalHorizontal", FinalHorizontal()),
-                ("FinalVertical", FinalVertical()),
-                ("ShortsCutter", ShortsCutter()),
-                ("FinalizeStage", FinalizeStage()),
-            ]
-
-            log.info(f"[PIPELINE] {len(stages)} стадий готово")
-
-            for name, stage in stages:
+            for idx, audio_file in enumerate(audio_queue, 1):
                 if self.cancel_event.is_set():
-                    ctx.log("[PIPELINE] Отмена по запросу пользователя")
-                    return
-                log.info(f"\n{'─'*48}")
-                log.info(f"  СТАДИЯ: {name} — {stage.name()}")
-                log.info(f"{'─'*48}")
-                self._log(f"\n{'─'*48}")
-                self._log(f"  {stage.name()}")
-                self._log(f"{'─'*48}")
-                ctx = stage.run(ctx)
-                self._set_progress(ctx.progress, stage=stage.name())
-                log.info(f"[PIPELINE] {name} завершена, progress={ctx.progress:.0f}%")
+                    self._log("[PIPELINE] Отмена по запросу пользователя (между файлами)")
+                    break
 
-            self._log("\n" + "═"*48)
-            self._log("  ГОТОВО!")
-            self._log("═"*48)
-            self._set_progress(100)
-            log.info("[PIPELINE] ══════════════════════════════════════════════")
-            log.info("[PIPELINE] ВСЕ СТАДИИ ЗАВЕРШЕНЫ УСПЕШНО")
-            log.info("[PIPELINE] ═══════════════════════════════════════════════")
+                stem = os.path.splitext(os.path.basename(audio_file))[0]
+                # Имя серии: явно заданное (для 1 файла) или имя файла
+                if total == 1 and base_series:
+                    series = base_series
+                else:
+                    series = base_series + ("_" if base_series else "") + stem if total > 1 else (base_series or stem)
+
+                # Подпапка результата при пакетной обработке
+                if total > 1:
+                    out_dir = os.path.join(base_output, stem)
+                    os.makedirs(out_dir, exist_ok=True)
+                else:
+                    out_dir = base_output
+
+                self._log("\n" + "═" * 48)
+                self._log(f"  АУДИО [{idx}/{total}]: {os.path.basename(audio_file)}")
+                self._log(f"  Серия: {series}")
+                self._log(f"  Вывод: {out_dir}")
+                self._log("═" * 48)
+                log.info(f"[PIPELINE] === Файл {idx}/{total}: {audio_file} → {out_dir} ===")
+
+                # Прогресс: доля текущего файла в общей шкале
+                progress_base = (idx - 1) / total * 100.0
+                progress_span = 100.0 / total
+
+                ctx = PipelineContext(
+                    audio_path=audio_file,
+                    broll_horizontal=self.settings.broll_horizontal,
+                    broll_vertical=self.settings.broll_vertical,
+                    bgm_folder=self.settings.bgm_folder,
+                    intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
+                    vertical_background=self.settings.vertical_background,
+                    cover_horizontal=self.settings.cover_horizontal,
+                    cover_vertical=self.settings.cover_vertical,
+                    output_folder=out_dir,
+                    series_name=series,
+                    gemini_model=self.settings.gemini_model,
+                    gemini_api_key=self.settings.gemini_api_key,
+                    gemini_api_keys=self.settings.gemini_api_keys,
+                    whisper_model=self.settings.whisper_model,
+                    whisperx_path=self.settings.whisperx_path,
+                    whisper_language=self.settings.whisper_language,
+                    whisper_device=self.settings.whisper_device,
+                    whisper_compute_type=self.settings.whisper_compute_type,
+                    voice_enhance=self.settings.voice_enhance,
+                    add_bgm=self.settings.add_bgm,
+                    intro_gemini=self.settings.intro_gemini,
+                    keep_temp_files=self.settings.keep_temp_files,
+                    caption_style=(self.caption_style_var.get() if hasattr(self, "caption_style_var") else "auto_aisie"),
+                    hook_style=(self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie"),
+                    target_lufs=self.settings.target_lufs,
+                    vstack_top_ratio=self.settings.vstack_top_ratio,
+                    h_enable_intro=self.settings.h_enable_intro,
+                    h_enable_middle=self.settings.h_enable_middle,
+                    h_enable_outro=self.settings.h_enable_outro,
+                    h_enable_hooks=self.settings.h_enable_hooks,
+                    h_enable_subtitles=self.settings.h_enable_subtitles,
+                    h_enable_strong_words=self.settings.h_enable_strong_words,
+                    v_enable_intro=self.settings.v_enable_intro,
+                    v_enable_middle=self.settings.v_enable_middle,
+                    v_enable_outro=self.settings.v_enable_outro,
+                    v_enable_hooks=self.settings.v_enable_hooks,
+                    v_enable_subtitles=self.settings.v_enable_subtitles,
+                    v_enable_strong_words=self.settings.v_enable_strong_words,
+                    s_enable_intro=self.settings.s_enable_intro,
+                    s_enable_middle=self.settings.s_enable_middle,
+                    s_enable_outro=self.settings.s_enable_outro,
+                    s_enable_hooks=self.settings.s_enable_hooks,
+                    s_enable_subtitles=self.settings.s_enable_subtitles,
+                    s_enable_strong_words=self.settings.s_enable_strong_words,
+                    h_intro_path=self._var_get("h_intro_path"),
+                    h_mid_path=self._var_get("h_mid_path"),
+                    h_outro_path=self._var_get("h_outro_path"),
+                    h_intro_duration=float(self._var_get("h_intro_duration") or 3),
+                    h_mid_duration=float(self._var_get("h_mid_duration") or 1),
+                    h_outro_duration=float(self._var_get("h_outro_duration") or 3),
+                    v_intro_duration=float(self._var_get("v_intro_duration") or 3),
+                    v_mid_duration=float(self._var_get("v_mid_duration") or 1),
+                    v_outro_duration=float(self._var_get("v_outro_duration") or 3),
+                    s_intro_duration=float(self._var_get("s_intro_duration") or 3),
+                    s_mid_duration=float(self._var_get("s_mid_duration") or 1),
+                    s_outro_duration=float(self._var_get("s_outro_duration") or 3),
+                    v_intro_path=self._var_get("v_intro_path"),
+                    v_mid_path=self._var_get("v_mid_path"),
+                    v_outro_path=self._var_get("v_outro_path"),
+                    s_intro_path=self._var_get("s_intro_path"),
+                    s_mid_path=self._var_get("s_mid_path"),
+                    s_outro_path=self._var_get("s_outro_path"),
+                    log_callback=self._log,
+                )
+                log.info(f"[PIPELINE] PipelineContext создан для {os.path.basename(audio_file)}")
+
+                stages = [
+                    ("AudioStage", AudioStage()),
+                    ("TranscribeStage", TranscribeStage()),
+                    ("GeminiStage", GeminiStage()),
+                    ("MasterBuilder", MasterBuilder()),
+                    ("FinalHorizontal", FinalHorizontal()),
+                    ("FinalVertical", FinalVertical()),
+                    ("ShortsCutter", ShortsCutter()),
+                    ("FinalizeStage", FinalizeStage()),
+                ]
+
+                for name, stage in stages:
+                    if self.cancel_event.is_set():
+                        ctx.log("[PIPELINE] Отмена по запросу пользователя")
+                        break
+                    log.info(f"\n{'─'*48}")
+                    log.info(f"  [{idx}/{total}] СТАДИЯ: {name} — {stage.name()}")
+                    log.info(f"{'─'*48}")
+                    self._log(f"\n{'─'*48}")
+                    self._log(f"  [{idx}/{total}] {stage.name()}")
+                    self._log(f"{'─'*48}")
+                    ctx = stage.run(ctx)
+                    # Масштабируем progress стадии в общий прогресс
+                    global_progress = progress_base + (ctx.progress / 100.0) * progress_span
+                    self._set_progress(global_progress, stage=f"[{idx}/{total}] {stage.name()}")
+                    log.info(f"[PIPELINE] {name} завершена, local={ctx.progress:.0f}% global={global_progress:.0f}%")
+
+                if self.cancel_event.is_set():
+                    break
+
+            if not self.cancel_event.is_set():
+                self._log("\n" + "═" * 48)
+                self._log(f"  ГОТОВО! Обработано файлов: {total}")
+                self._log("═" * 48)
+                self._set_progress(100)
+                log.info("[PIPELINE] ══════════════════════════════════════════════")
+                log.info(f"[PIPELINE] ВСЕ ФАЙЛЫ ЗАВЕРШЕНЫ УСПЕШНО ({total})")
+                log.info("[PIPELINE] ═══════════════════════════════════════════════")
 
         except Exception as e:
             log.error("[PIPELINE] ╔══════════════════════════════════════════════╗")
@@ -1192,7 +1461,6 @@ class App:
             for line in traceback.format_exc().splitlines():
                 log.error(f"[PIPELINE]   {line}")
             self._log(f"\n  ОШИБКА: {e}")
-            # Показать ошибку в GUI
             self.root.after(0, lambda err=e: messagebox.showerror("Ошибка пайплайна", f"{type(err).__name__}: {err}"))
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
