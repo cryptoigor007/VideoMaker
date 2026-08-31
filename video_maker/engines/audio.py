@@ -10,6 +10,8 @@ import subprocess
 
 log = logging.getLogger(__name__)
 
+_PROBE_CACHE: dict[str, float] = {}
+
 
 def probe_duration(path: str) -> float:
     """Получить длительность медиафайла в секундах.
@@ -17,6 +19,13 @@ def probe_duration(path: str) -> float:
     Устойчиво к битым/неполным файлам: при ошибке ffprobe возвращает 0.0
     (вызывающий код обычно пропускает клипы с dur <= 0.05).
     """
+    # session cache (abspath → duration)
+    if path:
+        key = os.path.abspath(path)
+        if key in _PROBE_CACHE:
+            return _PROBE_CACHE[key]
+    else:
+        key = ""
     if not path or not os.path.exists(path):
         log.warning("[АУДИО] probe_duration: путь не существует: %s", path)
         return 0.0
@@ -56,6 +65,8 @@ def probe_duration(path: str) -> float:
         try:
             val = float(dur)
             if val > 0:
+                if key:
+                    _PROBE_CACHE[key] = val
                 return val
         except (TypeError, ValueError):
             pass
@@ -73,6 +84,8 @@ def probe_duration(path: str) -> float:
         except (TypeError, ValueError):
             continue
     if best > 0:
+        if key:
+            _PROBE_CACHE[key] = best
         return best
 
     log.warning(

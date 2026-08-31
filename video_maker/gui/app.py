@@ -1435,8 +1435,7 @@ class App:
                     ("TranscribeStage", TranscribeStage()),
                     ("GeminiStage", GeminiStage()),
                     ("MasterBuilder", MasterBuilder()),
-                    ("FinalHorizontal", FinalHorizontal()),
-                    ("FinalVertical", FinalVertical()),
+		    ("ParallelFinals", ParallelFinals()),
                     ("ShortsCutter", ShortsCutter()),
                     ("FinalizeStage", FinalizeStage()),
                 ]

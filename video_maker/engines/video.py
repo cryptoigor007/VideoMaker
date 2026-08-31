@@ -214,27 +214,23 @@ def fit_video_to_duration(
     broll_root: str = "",
     move_used: bool = True,
 ) -> str:
-    """Последовательно набрать минимум клипов под целевую длительность.
-
-    Логика:
-    1. Порядок списка (ротация подпапок уже в collect_video_files).
-    2. Набираем клипы пока сумма >= target.
-    3. После успеха — уникальные исходники в {broll_root}/used/.
+    """Одна команда 4K: scale на лету → concat → trim → твоё аудио.
+    Без промежуточных norm_XXX.mp4. 3840x2160 @ 28M.
     """
     _log = log_fn or log.info
-    _log(f"[ВИДЕО 4K M1] Подбор B-roll под {target_duration:.1f} сек (последовательный)")
+    width, height = 3840, 2160
+    bitrate = "28M"
+    _log(f"[ВИДЕО 4K] Быстрая склейка под {target_duration:.1f}с ({width}x{height} @ {bitrate})")
 
     if not video_files:
         raise FileNotFoundError("Нет видеофайлов для склейки")
 
     ffmpeg = _ffmpeg_bin()
 
-    ordered = list(video_files)
-
     selected: list[str] = []
     total_dur = 0.0
     skipped_bad = 0
-    for vf in ordered:
+    for vf in video_files:
         try:
             dur = probe_duration(vf)
         except Exception as e:
@@ -254,13 +250,12 @@ def fit_video_to_duration(
     if skipped_bad:
         _log(f"[ВИДЕО] Пропущено проблемных клипов: {skipped_bad}")
 
-    # Если даже все файлы короче — повторяем цикл (редко, но нужно)
     if total_dur < target_duration and selected:
         _log(f"[ВИДЕО] Все клипы короче цели ({total_dur:.1f} < {target_duration:.1f}), повторяем")
         safety = 0
-        while total_dur < target_duration and safety < 500:
+        while total_dur < target_duration and safety < 200:
             safety += 1
-            for vf in ordered:
+            for vf in list(selected):
                 try:
                     dur = probe_duration(vf)
                 except Exception:
@@ -277,83 +272,52 @@ def fit_video_to_duration(
 
     _log(f"[ВИДЕО] Выбрано клипов: {len(selected)} (сумма {total_dur:.1f}s ≥ {target_duration:.1f}s)")
 
-    # Оптимизация: один клип и он длиннее цели → просто trim + scale, без concat
-    if len(selected) == 1:
-        vf = selected[0]
-        tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
-        norm_path = os.path.join(tmp_dir, "norm_000.mp4")
-        cmd_norm = [
-            ffmpeg, "-y",
-            "-i", vf,
-            "-t", str(target_duration),
-            "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
-            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-            "-pix_fmt", "yuv420p",
-            "-an",
-            norm_path,
+    n = len(selected)
+    inputs: list[str] = []
+    for vf in selected:
+        inputs.extend(["-i", vf])
+
+    has_audio = bool(audio_file and os.path.exists(audio_file))
+    if has_audio:
+        inputs.extend(["-i", audio_file])
+
+    filters = []
+    for i in range(n):
+        filters.append(
+            f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{i}]"
+        )
+    concat_in = "".join(f"[v{i}]" for i in range(n))
+    filters.append(f"{concat_in}concat=n={n}:v=1:a=0[v]")
+    filter_complex = ";".join(filters)
+
+    cmd = [
+        ffmpeg, "-y",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", "[v]",
+        "-t", str(target_duration),
+        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+    ]
+    if has_audio:
+        cmd += [
+            "-map", f"{n}:a",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
         ]
-        run_vt_encode(cmd_norm, [vf], norm_path, log_fn=_log, stage_name="NORM")
-        import shutil
-        shutil.move(norm_path, output_path)
-        try:
-            os.rmdir(tmp_dir)
-        except OSError:
-            pass
     else:
-        normalized_files = []
-        tmp_dir = os.path.join(os.path.dirname(output_path), "_concat_tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
+        cmd += ["-an"]
+    cmd.append(output_path)
 
-        for i, vf in enumerate(selected):
-            norm_path = os.path.join(tmp_dir, f"norm_{i:03d}.mp4")
-            cmd_norm = [
-                ffmpeg, "-y",
-                "-i", vf,
-                "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-                "-pix_fmt", "yuv420p",
-                "-an",
-                norm_path,
-            ]
-            run_vt_encode(cmd_norm, [vf], norm_path, log_fn=_log, stage_name="NORM")
-            normalized_files.append(norm_path)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout or "")[-600:]
+        _log(f"[ВИДЕО] Ошибка: {err}")
+        raise RuntimeError(f"Быстрая склейка failed: {err}")
 
-        list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
-        with open(list_path, "w") as f:
-            f.writelines(f"file '{nf}'\n" for nf in normalized_files)
-
-        cmd = [
-            ffmpeg, "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", list_path,
-            "-t", str(target_duration),
-            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-            "-pix_fmt", "yuv420p",
-            "-r", "30",
-            "-an",
-            output_path,
-        ]
-        run_vt_encode(cmd, normalized_files, output_path, log_fn=_log, stage_name="CONCAT")
-
-        for p in [list_path] + normalized_files:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        try:
-            os.rmdir(tmp_dir)
-        except OSError:
-            pass
-
-    if audio_file and os.path.exists(audio_file):
-        from .audio import replace_audio
-        tmp_out = output_path + ".tmp.mp4"
-        os.rename(output_path, tmp_out)
-        replace_audio(tmp_out, audio_file, output_path, log_fn=_log)
-        os.remove(tmp_out)
-
-    # После успешной склейки — перенос использованных исходников в used/
     if move_used and broll_root:
         move_to_used(broll_root, selected, log_fn=_log)
 
@@ -387,74 +351,62 @@ def vstack_video_image(
     log_fn=None,
     top_ratio: float = 0.6,
 ) -> str:
-    """Вертикаль 9:16 2160x3840:
-    - видео +30%, нижняя грань ровно по середине кадра;
-    - картинка только в НИЖНЕЙ половине, её верх — сразу под низом видео;
-    - картинка увеличена на +20% относительно области низа, crop по центру.
-    """
+    """Вертикаль 9:16 2160x3840 — один проход, без повторного replace_audio."""
     _log = log_fn or log.info
-    _log("[ВИДЕО 4K] vertical: video +30% (низ=середина), image bottom +20%")
+    _log("[ВИДЕО 4K] vertical vstack (один проход)")
 
     ffmpeg = _ffmpeg_bin()
     target_w, target_h = 2160, 3840
-    mid_y = _even(target_h // 2)          # низ видео / верх картинки
-    bottom_h = _even(target_h - mid_y)    # высота нижней зоны
+    mid_y = _even(target_h // 2)
+    bottom_h = _even(target_h - mid_y)
 
     vid_w = _even(int(target_w * 1.30))
-    # +20% к размеру нижней области, потом crop в bottom_h
     bg_w = _even(int(target_w * 1.20))
     bg_h = _even(int(bottom_h * 1.20))
+
     _log(
         f"[ВИДЕО 4K] canvas={target_w}x{target_h} mid_y={mid_y} "
         f"bottom={bottom_h} vid_w={vid_w} bg_scale={bg_w}x{bg_h}"
     )
 
-    # [bg]: заполняет нижнюю половину (верх картинки = mid_y)
-    # [vid]: overlay, низ видео = mid_y
     filter_complex = (
         f"[1:v]scale={bg_w}:{bg_h}:force_original_aspect_ratio=increase,"
         f"crop={target_w}:{bottom_h},setsar=1,"
         f"pad={target_w}:{target_h}:0:{mid_y}:black[bg];"
         f"[0:v]scale={vid_w}:-2:force_original_aspect_ratio=decrease,setsar=1[vid];"
-        f"[bg][vid]overlay=x=(W-w)/2:y={mid_y}-h:shortest=1[out]"
+        f"[bg][vid]overlay=x=(W-w)/2:y={mid_y}-h:shortest=1[outv]"
     )
 
+    dur = probe_duration(video_path)
     ext = os.path.splitext(background_path)[1].lower()
-    if ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"):
-        from .audio import probe_duration
-        dur = probe_duration(video_path)
-        cmd = [
-            ffmpeg, "-y", "-i", video_path,
-            "-loop", "1", "-i", background_path,
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-            "-pix_fmt", "yuv420p", "-r", "30", "-t", str(dur),
-            output_path,
-        ]
+    is_image = ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp")
+
+    cmd = [ffmpeg, "-y", "-i", video_path]
+    if is_image:
+        cmd += ["-loop", "1", "-i", background_path]
     else:
-        cmd = [
-            ffmpeg, "-y", "-i", video_path, "-i", background_path,
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-            "-pix_fmt", "yuv420p", "-r", "30", "-shortest",
-            output_path,
-        ]
+        cmd += ["-i", background_path]
 
-    run_vt_encode(
-        cmd,
-        [video_path, background_path],
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "0:a?",
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "1",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
+        "-t", str(dur),
         output_path,
-        log_fn=_log,
-        stage_name="VSTACK",
-    )
+    ]
 
-    from .audio import replace_audio
-    tmp_out = output_path + ".tmp.mp4"
-    os.rename(output_path, tmp_out)
-    replace_audio(tmp_out, video_path, output_path, log_fn=_log)
-    os.remove(tmp_out)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    _log(f"[ВИДЕО 4K] VSTACK → {os.path.basename(output_path)}")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout or "")[-600:]
+        _log(f"[ВИДЕО] VSTACK ошибка: {err}")
+        raise RuntimeError(f"VSTACK failed: {err}")
+
     return output_path
 
 
@@ -465,17 +417,34 @@ def cut_segment(
     output_path: str,
     log_fn=None,
 ) -> str:
-    """Ообрезать сегмент из видео."""
+    """Обрезать сегмент. Сначала stream copy (быстро), fallback — VideoToolbox."""
     _log = log_fn or log.info
     _log(f"[ВИДЕО] Обрезка: {start:.1f} — {start + duration:.1f}")
 
     ffmpeg = _ffmpeg_bin()
+    # Быстрый путь: copy (без перекодирования, качество = исходник)
+    cmd_copy = [
+        ffmpeg, "-y",
+        "-ss", str(start),
+        "-i", video_path,
+        "-t", str(duration),
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+        output_path,
+    ]
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    res = subprocess.run(cmd_copy, capture_output=True, text=True)
+    if res.returncode == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
+        _log("[ВИДЕО] Обрезка: stream copy OK")
+        return output_path
+
+    _log("[ВИДЕО] Обрезка: copy не удался → VideoToolbox")
     cmd = [
         ffmpeg, "-y",
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "1",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         output_path,
@@ -532,11 +501,30 @@ def add_intro_outro_mid(
         f"explicit_outro={explicit_outro or '(нет)'}"
     )
 
-    intro_path = explicit_intro if explicit_intro and os.path.isfile(explicit_intro) else ""
-    middle_path = explicit_middle if explicit_middle and os.path.isfile(explicit_middle) else ""
-    outro_path = explicit_outro if explicit_outro and os.path.isfile(explicit_outro) else ""
-    if explicit_outro and not outro_path:
+    # Явные пути учитываются ТОЛЬКО если соответствующая галочка включена
+    intro_path = (
+        explicit_intro
+        if enable_intro and explicit_intro and os.path.isfile(explicit_intro)
+        else ""
+    )
+    middle_path = (
+        explicit_middle
+        if enable_middle and explicit_middle and os.path.isfile(explicit_middle)
+        else ""
+    )
+    outro_path = (
+        explicit_outro
+        if enable_outro and explicit_outro and os.path.isfile(explicit_outro)
+        else ""
+    )
+    if enable_outro and explicit_outro and not outro_path:
         _log(f"[IMO] explicit_outro указан, но файл не найден: {explicit_outro}")
+    if not enable_intro:
+        _log("[IMO] intro выключен чекбоксом — путь/поиск игнорируются")
+    if not enable_middle:
+        _log("[IMO] middle выключен чекбоксом — путь/поиск игнорируются")
+    if not enable_outro:
+        _log("[IMO] outro выключен чекбоксом — путь/поиск игнорируются")
 
     folder_files: list[str] = []
     if intro_outro_folder and os.path.isdir(intro_outro_folder):

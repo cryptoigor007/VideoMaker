@@ -99,6 +99,7 @@ class PipelineContext:
     progress: float = 0.0
     stage_name: str = ""
     log_callback: Any = None
+    cancel_event: Any = None  # threading.Event из GUI
 
     def log(self, msg: str) -> None:
         """Логировать сообщение."""
