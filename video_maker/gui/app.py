@@ -81,6 +81,7 @@ BOOL_VARS = [
     "v_intro", "v_middle", "v_outro", "v_hooks", "v_subs", "v_strong",
     "s_intro", "s_middle", "s_outro", "s_hooks", "s_subs", "s_strong",
     "voice_enhance_var", "add_bgm_var", "intro_gemini_var", "keep_temp_var",
+    "prevent_sleep_var", "shutdown_when_done_var",
 ]
 
 
@@ -207,6 +208,11 @@ class App:
                 return
             self.cancel_event.set()
             self._kill_ffmpeg_processes()
+            try:
+                from ..engines.power import prevent_sleep_stop
+                prevent_sleep_stop()
+            except Exception:
+                pass
 
         # Всегда: и при running=False
         self._save_settings()
@@ -449,11 +455,15 @@ class App:
         ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
+        self.prevent_sleep_var = tk.BooleanVar(value=True)
+        self.shutdown_when_done_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(audio_settings, text="Не засыпать во время обработки", variable=self.prevent_sleep_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(audio_settings, text="Выключить компьютер по завершению", variable=self.shutdown_when_done_var).pack(anchor="w", pady=2)
 
-        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "large-v3-turbo") or "large-v3-turbo")
+        self.whisper_model_var = tk.StringVar(value=getattr(self.settings, "whisper_model", "large-v3") or "large-v3")
         self.whisper_lang_var = tk.StringVar(value="ru")
-        self.whisper_dev_var = tk.StringVar(value="auto")
-        self.whisper_comp_var = tk.StringVar(value="auto")
+        self.whisper_dev_var = tk.StringVar(value="cpu")
+        self.whisper_comp_var = tk.StringVar(value="int8")
         self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
 
         checks_frame = self._add_section(left_col, "Этапы обработки")
@@ -979,7 +989,7 @@ class App:
                 keys = [k.strip() for k in raw.split(",") if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
-            self.settings.whisper_model = self.whisper_model_var.get() or "large-v3-turbo"
+            self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
             self.settings.whisper_language = self.whisper_lang_var.get()
             self.settings.whisper_device = self.whisper_dev_var.get()
             self.settings.whisper_compute_type = self.whisper_comp_var.get()
@@ -1159,13 +1169,15 @@ class App:
 
         # WhisperX settings
         self.settings.whisperx_path = self.whisperx_path_var.get()
-        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3-turbo"
+        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
         self.settings.whisper_language = self.whisper_lang_var.get()
         self.settings.whisper_device = self.whisper_dev_var.get()
         self.settings.whisper_compute_type = self.whisper_comp_var.get()
 
         # Other settings
         self.settings.keep_temp_files = self.keep_temp_var.get()
+        self.settings.prevent_sleep = self.prevent_sleep_var.get()
+        self.settings.shutdown_when_done = self.shutdown_when_done_var.get()
         try:
             self.settings.target_lufs = float(self.target_lufs_var.get().strip() or -14.0)
         except (ValueError, TypeError, AttributeError):
@@ -1289,6 +1301,11 @@ class App:
         log.info("[PIPELINE] ═══════════════════════════════════════════════")
         log.info(f"[PIPELINE] Поток пайплайна запущен: {threading.current_thread().name}")
         log.info(f"[PIPELINE] PID: {os.getpid()}")
+
+        from ..engines.power import prevent_sleep_start, prevent_sleep_stop, shutdown_computer
+        pipeline_ok = False
+        if getattr(self.settings, "prevent_sleep", True):
+            prevent_sleep_start(log_fn=self._log)
 
         audio_queue = getattr(self, "_audio_queue", None) or Settings.collect_audio_files(
             self.settings.audio_path
@@ -1450,6 +1467,7 @@ class App:
                 log.info("[PIPELINE] ══════════════════════════════════════════════")
                 log.info(f"[PIPELINE] ВСЕ ФАЙЛЫ ЗАВЕРШЕНЫ УСПЕШНО ({total})")
                 log.info("[PIPELINE] ═══════════════════════════════════════════════")
+                pipeline_ok = True
 
         except Exception as e:
             log.error("[PIPELINE] ╔══════════════════════════════════════════════╗")
@@ -1464,6 +1482,15 @@ class App:
             self.root.after(0, lambda err=e: messagebox.showerror("Ошибка пайплайна", f"{type(err).__name__}: {err}"))
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
+            try:
+                from ..engines.power import prevent_sleep_stop, shutdown_computer
+                prevent_sleep_stop(log_fn=self._log)
+                if pipeline_ok and getattr(self.settings, "shutdown_when_done", False):
+                    self._log("[POWER] Выключение компьютера по завершению...")
+                    log.info("[POWER] shutdown_when_done=True — выключаем")
+                    shutdown_computer(delay_sec=30, log_fn=self._log)
+            except Exception as pe:
+                log.warning("[POWER] %s", pe)
             self.running = False
             self._stop_progress_ticker()
             self.cancel_event.clear()
@@ -1477,6 +1504,11 @@ class App:
         self._log("\n  ОТМЕНА: остановка после текущей стадии + убийство ffmpeg...")
         self.cancel_btn.configure(state=tk.DISABLED)
         self._kill_ffmpeg_processes()
+        try:
+            from ..engines.power import prevent_sleep_stop
+            prevent_sleep_stop()
+        except Exception:
+            pass
 
     def _heartbeat(self) -> None:
         """Heartbeat для отслеживания состояния окна (каждые 5 секунд)."""
