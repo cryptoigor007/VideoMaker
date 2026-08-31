@@ -1324,6 +1324,7 @@ class App:
             from ..pipeline.finalize import FinalizeStage
             from ..pipeline.master import MasterBuilder
             from ..pipeline.shorts import ShortsCutter
+            from ..pipeline.parallel_finals import ParallelFinals
             from ..pipeline.stages import AudioStage, GeminiStage, TranscribeStage
 
             log.info("[PIPELINE] Все модули пайплайна импортированы")

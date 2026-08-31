@@ -17,6 +17,30 @@ from .ffmpeg_resilient import (
 log = logging.getLogger(__name__)
 
 
+
+def _work_tmp_dir(preferred: str = "") -> str:
+    """Каталог для промежуточных файлов: предпочитаем внутренний диск, не /Volumes."""
+    candidates = []
+    if preferred and not str(preferred).startswith("/Volumes/"):
+        candidates.append(preferred)
+    home_tmp = os.path.join(os.path.expanduser("~"), "video_maker", "_tmp")
+    candidates.append(home_tmp)
+    candidates.append("/tmp/video_maker")
+    if preferred:
+        candidates.append(preferred)
+    for d in candidates:
+        try:
+            os.makedirs(d, exist_ok=True)
+            test = os.path.join(d, f".w_{os.getpid()}")
+            with open(test, "wb") as f:
+                f.write(b"1")
+            os.remove(test)
+            return d
+        except OSError:
+            continue
+    return preferred or "/tmp"
+
+
 def _ffmpeg_bin() -> str:
     """ffmpeg с поддержкой libass."""
     try:
@@ -480,7 +504,10 @@ def add_intro_outro_mid(
     ffmpeg = _ffmpeg_bin()
     if not output_dir:
         output_dir = os.path.dirname(video_path)
+    # промежуточные still/IMO — на внутренний диск если output на /Volumes
+    work_dir = _work_tmp_dir(output_dir)
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(work_dir, exist_ok=True)
 
     main_w, main_h, _ = _ffprobe_video_info(video_path)
     main_dur = probe_duration(video_path)
@@ -619,7 +646,7 @@ def add_intro_outro_mid(
             _log(f"[IMO] {label}: видеофайл → {path}")
             return path
         dur = max(0.5, float(duration or 1.0))
-        out = os.path.join(output_dir, f"{label}_still_{uuid.uuid4().hex[:8]}.mp4")
+        out = os.path.join(work_dir, f"{label}_still_{uuid.uuid4().hex[:8]}.mp4")
         w, h = _even(main_w), _even(main_h)
         try:
             img_cmd = [

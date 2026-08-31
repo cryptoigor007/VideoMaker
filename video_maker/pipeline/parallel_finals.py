@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from copy import copy
 
 from .branches import FinalHorizontal, FinalVertical
 from .stages import PipelineContext, Stage
@@ -12,14 +11,13 @@ log = logging.getLogger(__name__)
 
 
 class ParallelFinals(Stage):
-    """Final H и Final V одновременно. Пишут в разные поля ctx и разные файлы."""
+    """Final H и Final V одновременно. Разные файлы и поля ctx."""
 
     def name(self) -> str:
         return "Final H∥V"
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[FINAL] Параллельный запуск Horizontal + Vertical...")
-
         errors: list[str] = []
 
         def run_h() -> None:
@@ -47,8 +45,8 @@ class ParallelFinals(Stage):
         if errors:
             raise RuntimeError("Parallel finals failed: " + "; ".join(errors))
 
-        if not ctx.final_horizontal and not ctx.final_vertical:
-            raise RuntimeError("Parallel finals: нет ни final_horizontal, ни final_vertical")
+        if not getattr(ctx, "final_horizontal", None) and not getattr(ctx, "final_vertical", None):
+            raise RuntimeError("Parallel finals: нет final_horizontal и final_vertical")
 
         ctx.progress = 75.0
         return ctx
