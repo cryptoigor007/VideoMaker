@@ -1427,6 +1427,7 @@ class App:
                     s_outro_path=self._var_get("s_outro_path"),
                     log_callback=self._log,
                 )
+                ctx.cancel_event = self.cancel_event  # для ShortsCutter / отмены внутри стадий
                 log.info(f"[PIPELINE] PipelineContext создан для {os.path.basename(audio_file)}")
 
                 stages = [
@@ -1450,7 +1451,14 @@ class App:
                     self._log(f"\n{'─'*48}")
                     self._log(f"  [{idx}/{total}] {stage.name()}")
                     self._log(f"{'─'*48}")
+                    _t_stage = __import__("time").time()
+                    log.info("[PIPELINE] >>> stage %s START", stage.name())
                     ctx = stage.run(ctx)
+                    log.info(
+                        "[PIPELINE] <<< stage %s done in %.1fs",
+                        stage.name(),
+                        __import__("time").time() - _t_stage,
+                    )
                     # Масштабируем progress стадии в общий прогресс
                     global_progress = progress_base + (ctx.progress / 100.0) * progress_span
                     self._set_progress(global_progress, stage=f"[{idx}/{total}] {stage.name()}")

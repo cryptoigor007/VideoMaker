@@ -8,6 +8,17 @@ import subprocess
 import tempfile
 import uuid
 
+from .ffmpeg_resilient import (
+    SubtitleStageFailed,
+    calculate_adaptive_bitrate,
+    classify_ffmpeg_error,
+    ensure_storage,
+    path_is_readable,
+    run_ffmpeg,
+    atomic_replace,
+    verify_mp4,
+)
+
 log = logging.getLogger(__name__)
 
 try:
@@ -673,10 +684,26 @@ def _build_hook_events(
         else:
             hooks_list = []
 
-    # Shorts: один packaging-хук клипа
+    # Shorts: один packaging-хук клипа (абсолютные времена на полном ролике;
+    # burn_subtitles потом сдвинет через _filter_and_shift_events)
     if clip and (clip.get("hook") or "").strip():
-        hs = float(clip.get("hook_start", clip.get("start", 0)) or 0)
+        c0 = float(clip.get("start", 0) or 0)
+        c1 = float(clip.get("end", c0 + 15) or (c0 + 15))
+        hs = float(clip.get("hook_start", c0) or 0)
         he = float(clip.get("hook_end", hs + 2.8) or (hs + 2.8))
+        # если модель дала относительные 0..dur — переводим в абсолютные
+        if hs < c0 - 0.05:
+            hs = c0 + max(0.0, hs)
+        if he < c0 - 0.05:
+            he = c0 + max(0.0, he)
+        if hs < c0:
+            hs = c0
+        if he <= hs:
+            he = hs + 2.5
+        # хук только в начале клипа (не в конце — там CTA)
+        if hs > c0 + 3.0:
+            hs = c0
+            he = min(c0 + 2.8, max(c0 + 1.5, c1 - 5.0))
         hooks_list = [{
             "text": str(clip.get("hook")).strip(),
             "start": hs,
@@ -920,6 +947,8 @@ def burn_subtitles(
     use_aisie: bool = True,
     caption_style: str = "auto_aisie",
     hook_style: str = "auto_aisie",
+    bitrate: str | None = None,
+    source_clips: list | None = None,
 ) -> str:
     _log = log_fn or log.info
     _log("[СУБТИТРЫ] burn: karaoke in-line + hooks/CTA (без glow-overlay, strong только внутри строки)")
@@ -1088,38 +1117,142 @@ def burn_subtitles(
 
     ffmpeg = _ffmpeg_bin()
     esc = _escape_ass_path(ass_path)
+
+    # --- adaptive / explicit bitrate (4K: clamp 18–40M) ---
     pixels = playres_x * playres_y
-    if pixels >= 3000 * 1600:
-        bitrate = "50M"
-    elif pixels >= 1800 * 1000:
-        bitrate = "25M"
+    if bitrate:
+        br = bitrate if str(bitrate).upper().endswith("M") else f"{bitrate}M"
     else:
-        bitrate = "12M"
+        if pixels >= 3000 * 1600:
+            br = calculate_adaptive_bitrate(
+                clips=source_clips,
+                video_path=video_path,
+                target_w=playres_x,
+                target_h=playres_y,
+                min_mbps=18.0,
+                max_mbps=40.0,
+                safety=1.12,
+                log_fn=_log,
+            )
+        elif pixels >= 1800 * 1000:
+            br = calculate_adaptive_bitrate(
+                clips=source_clips,
+                video_path=video_path,
+                target_w=playres_x,
+                target_h=playres_y,
+                min_mbps=10.0,
+                max_mbps=25.0,
+                safety=1.12,
+                log_fn=_log,
+            )
+        else:
+            br = "12M"
+    _log(f"[СУБТИТРЫ] VT target bitrate={br} ({playres_x}x{playres_y})")
+
+    out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    tmp_out = os.path.join(out_dir, f".vm_subs_{uuid.uuid4().hex[:10]}.mp4")
+
     vt = [
-        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+        "-c:v", "h264_videotoolbox", "-b:v", br, "-allow_sw", "0",
         "-pix_fmt", "yuv420p", "-c:a", "copy",
     ]
-    cmd = [ffmpeg, "-y", "-i", video_path, "-vf", f"subtitles='{esc}'", *vt, output_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        _log(f"[СУБТИТРЫ] VT fail → libx264: {(result.stderr or '')[-200:]}")
-        cmd2 = [
-            ffmpeg, "-y", "-i", video_path, "-vf", f"ass='{esc}'",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-c:a", "copy", output_path,
-        ]
-        result2 = subprocess.run(cmd2, capture_output=True, text=True)
-        try:
-            os.remove(ass_path)
-        except OSError:
-            pass
-        if result2.returncode != 0:
-            _log(f"[СУБТИТРЫ] ffmpeg error: {(result2.stderr or '')[-300:]}")
-            return video_path
-    else:
-        try:
-            os.remove(ass_path)
-        except OSError:
-            pass
-    _log(f"[СУБТИТРЫ] готово → {output_path}")
-    return output_path
+
+    def _cleanup_tmp():
+        for pth in (tmp_out, ass_path):
+            try:
+                if pth and os.path.exists(pth):
+                    os.remove(pth)
+            except OSError:
+                pass
+
+    def _run_vt(vf_expr: str):
+        ensure_storage(video_path, tmp_out, log_fn=_log)
+        cmd = [ffmpeg, "-y", "-i", video_path, "-vf", vf_expr, *vt, tmp_out]
+        return run_ffmpeg(cmd, log_fn=_log)
+
+    filters_to_try = [
+        f"subtitles='{esc}'",
+        f"ass='{esc}'",
+    ]
+    last_err = ""
+    max_io_rounds = 4
+
+    try:
+        for vf_expr in filters_to_try:
+            filter_name = "subtitles" if "subtitles=" in vf_expr else "ass"
+            for io_round in range(max_io_rounds):
+                _log(
+                    f"[СУБТИТРЫ] VT encode filter={filter_name} "
+                    f"round={io_round + 1}/{max_io_rounds}"
+                )
+                result = None
+                try:
+                    result = _run_vt(vf_expr)
+                except SubtitleStageFailed:
+                    raise
+                except Exception as e:
+                    last_err = str(e)
+                    _log(f"[СУБТИТРЫ] exception: {e}")
+
+                if (
+                    result is not None
+                    and result.returncode == 0
+                    and verify_mp4(tmp_out, log_fn=_log)
+                ):
+                    atomic_replace(tmp_out, output_path)
+                    _cleanup_tmp()
+                    _log(f"[СУБТИТРЫ] готово → {output_path}")
+                    return output_path
+
+                stderr = (result.stderr if result else last_err) or ""
+                rc = result.returncode if result else -1
+                reason = classify_ffmpeg_error(stderr, rc)
+                last_err = stderr[-400:] if stderr else last_err
+                _log(f"[СУБТИТРЫ] fail reason={reason} rc={rc}: {last_err[-200:]}")
+
+                try:
+                    if os.path.exists(tmp_out):
+                        os.remove(tmp_out)
+                except OSError:
+                    pass
+
+                if reason == "io":
+                    try:
+                        ensure_storage(video_path, tmp_out, log_fn=_log)
+                    except SubtitleStageFailed:
+                        _cleanup_tmp()
+                        msg = (
+                            "SUBTITLE_STAGE_FAILED: SSD недоступен во время "
+                            "наложения субтитров. Подключите диск и повторите.\n"
+                            + (last_err or "")
+                        )
+                        raise SubtitleStageFailed(msg)
+                    continue
+
+                if reason == "filter":
+                    break
+
+                if reason == "encoder":
+                    _cleanup_tmp()
+                    msg = (
+                        "SUBTITLE_STAGE_FAILED: VideoToolbox encoder error "
+                        "(без fallback на libx264 4K).\n" + (last_err or "")
+                    )
+                    raise SubtitleStageFailed(msg)
+
+                if io_round < 1:
+                    continue
+                break
+
+        _cleanup_tmp()
+        msg = (
+            "SUBTITLE_STAGE_FAILED: не удалось наложить субтитры через "
+            "VideoToolbox.\n" + (last_err or "")
+        )
+        raise SubtitleStageFailed(msg)
+    except SubtitleStageFailed:
+        raise
+    except Exception as e:
+        _cleanup_tmp()
+        raise SubtitleStageFailed(f"SUBTITLE_STAGE_FAILED: {e}") from e

@@ -6103,3 +6103,175 @@
 2026-08-31 03:59:05,319 [INFO] video_maker.gui.app: [GUI] add_bgm = True
 2026-08-31 03:59:05,319 [INFO] video_maker.gui.app: [GUI] output_folder (final) = /Volumes/SSD/untitled folder
 2026-08-31 03:59:05,320 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:28:13,864 [INFO] __main__: LIFECYCLE start pid=8967 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-31 16:28:13,864 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-31 16:28:14,151 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-31 16:28:14,648 [INFO] __main__: Импорт App...
+2026-08-31 16:28:14,724 [INFO] __main__: Создание App(root)...
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] PID: 8967
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-31 16:28:14,724 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-31 16:28:14,746 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-31 16:28:14,747 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-31 16:28:14,747 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-31 16:28:14,747 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-31 16:28:14,886 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-31 16:28:14,886 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-31 16:28:14,886 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+5+35
+2026-08-31 16:28:14,886 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-31 16:28:14,887 [INFO] video_maker.gui.app: [GUI] Настройки загружены из /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:28:14,887 [WARNING] video_maker.gui.app: [GUI] Том ещё не смонтирован: /Volumes/SSD ([Errno 2] No such file or directory: '/Volumes/SSD')
+2026-08-31 16:28:14,916 [INFO] video_maker.gui.app: [GUI] Том доступен: /Volumes/video
+2026-08-31 16:28:14,956 [WARNING] video_maker.gui.app: [GUI] Пути пока недоступны (откройте том в Finder или подождите): /Volumes/SSD/ютюб /тайный кризис человечества /аудио дорожки  — копия; /Volumes/SSD/untitled folder
+2026-08-31 16:28:14,956 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-31 16:28:14,959 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:28:14,959 [INFO] video_maker.gui.app: [WHISPER] Found: /Users/dreamstore/whisperx/bin/whisperx
+2026-08-31 16:28:14,959 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:28:14,959 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-31 16:28:14,960 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:28:14,960 [INFO] __main__: LIFECYCLE app_created
+2026-08-31 16:28:15,038 [INFO] __main__: LIFECYCLE window geometry=960x1458+5+30 screen=2560x1600
+2026-08-31 16:28:15,039 [INFO] __main__: LIFECYCLE mainloop_enter
+2026-08-31 16:28:19,888 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:24,890 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:29,892 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:34,895 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:39,897 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:44,899 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:49,909 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:54,911 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:28:59,914 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:04,916 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:09,919 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:14,922 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:19,924 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:24,930 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:29,934 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:34,936 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:39,940 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:44,943 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:49,947 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:54,951 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:29:59,954 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:04,956 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:09,958 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:14,960 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:19,964 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:24,968 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:29,970 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:34,977 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:39,980 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:44,982 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:49,985 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:54,987 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:30:59,989 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:04,992 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:09,996 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:14,999 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:20,002 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:25,005 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:30,008 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:35,010 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:40,012 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:45,014 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:50,017 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:31:55,019 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:32:00,022 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=960x1458+5+30
+2026-08-31 16:32:00,194 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-31 16:32:00,194 [INFO] video_maker.gui.app: [GUI] ║       КНОПКА «СОЗДАТЬ ВИДЕО» НАЖАТА         ║
+2026-08-31 16:32:00,194 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-31 16:32:00,194 [INFO] video_maker.gui.app: [GUI] Сбор настроек из GUI...
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] audio_path = /Volumes/SSD/ютюб /тайный кризис человечества /аудио дорожки  — копия
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] broll_horizontal = /Volumes/video/broll_downloads/Wide
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] broll_vertical = 
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] vertical_background = /Users/dreamstore/Downloads/Firefly-2.jpg
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] bgm_folder = /Volumes/video/broll_downloads/ссд/тайный кризис человечества /фоновая музыка
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] imo_folder = 
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] output_folder = /Volumes/SSD/untitled folder
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] gemini_model = gemini-3.6-flash
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] series_name = 
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] whisper_language = ru
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] caption_style = clean_pro
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] hook_style = marker
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] whisper_device = auto
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] whisper_compute_type = auto
+2026-08-31 16:32:00,196 [INFO] video_maker.gui.app: [GUI] keep_temp_files = False
+2026-08-31 16:32:00,197 [INFO] video_maker.gui.app: [GUI] target_lufs = -14.0
+2026-08-31 16:32:00,197 [INFO] video_maker.gui.app: [GUI] voice_enhance = False
+2026-08-31 16:32:00,197 [INFO] video_maker.gui.app: [GUI] add_bgm = True
+2026-08-31 16:32:00,197 [INFO] video_maker.gui.app: [GUI] output_folder (final) = /Volumes/SSD/untitled folder
+2026-08-31 16:32:00,200 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:49:34,828 [INFO] __main__: LIFECYCLE start pid=9895 cwd=/Users/dreamstore/video_maker python=3.14.7
+2026-08-31 16:49:34,829 [INFO] __main__: Создание корневого окна Tk()...
+2026-08-31 16:49:35,094 [INFO] __main__: LIFECYCLE tk_created root=.
+2026-08-31 16:49:35,628 [INFO] __main__: Импорт App...
+2026-08-31 16:49:35,699 [INFO] __main__: Создание App(root)...
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] Инициализация App.__init__()
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] Python: 3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] PID: 9895
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] Рабочая папка: /Users/dreamstore/video_maker
+2026-08-31 16:49:35,699 [INFO] video_maker.gui.app: [GUI] Создание корневого окна Tk()
+2026-08-31 16:49:35,721 [INFO] video_maker.gui.app: [GUI] Окно настроено: 960x780, min 860x680
+2026-08-31 16:49:35,721 [INFO] video_maker.gui.app: [GUI] Настройки загружены: model=gemini-3.6-flash, whisper=large-v3
+2026-08-31 16:49:35,721 [INFO] video_maker.gui.app: [GUI] self.running = False
+2026-08-31 16:49:35,721 [INFO] video_maker.gui.app: [GUI] Привязан обработчик WM_DELETE_WINDOW → _on_close()
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] Привязан обработчик необработанных исключений
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] Вызов _setup_theme()...
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] _setup_theme(): настройка стилей...
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] _setup_theme(): theme=clam
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] _setup_theme(): все стили применены
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] _setup_theme() завершён
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] Вызов _build_ui()...
+2026-08-31 16:49:35,722 [INFO] video_maker.gui.app: [GUI] _build_ui(): начало построения интерфейса
+2026-08-31 16:49:35,858 [INFO] video_maker.gui.app: [GUI] _build_ui(): интерфейс построен
+2026-08-31 16:49:35,858 [INFO] video_maker.gui.app: [GUI] _build_ui() завершён
+2026-08-31 16:49:35,858 [INFO] video_maker.gui.app: LIFECYCLE heartbeat visible=1 viewable=1 geometry=200x200+5+35
+2026-08-31 16:49:35,858 [INFO] video_maker.gui.app: [GUI] Вызов _load_settings()...
+2026-08-31 16:49:35,859 [INFO] video_maker.gui.app: [GUI] Настройки загружены из /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:49:35,862 [INFO] video_maker.gui.app: [GUI] Том доступен: /Volumes/SSD
+2026-08-31 16:49:35,890 [INFO] video_maker.gui.app: [GUI] Том доступен: /Volumes/video
+2026-08-31 16:49:35,921 [INFO] video_maker.gui.app: [GUI] _load_settings() завершён
+2026-08-31 16:49:35,923 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json
+2026-08-31 16:49:35,923 [INFO] video_maker.gui.app: [WHISPER] Found: /Users/dreamstore/whisperx/bin/whisperx
+2026-08-31 16:49:35,923 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:49:35,923 [INFO] video_maker.gui.app: [GUI] App.__init__() ЗАВЕРШЁН — окно готово
+2026-08-31 16:49:35,923 [INFO] video_maker.gui.app: [GUI] ═══════════════════════════════════════════════
+2026-08-31 16:49:35,923 [INFO] __main__: LIFECYCLE app_created
+2026-08-31 16:49:35,999 [INFO] __main__: LIFECYCLE window geometry=960x1458+5+30 screen=2560x1600
+2026-08-31 16:49:35,999 [INFO] __main__: LIFECYCLE mainloop_enter
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] ╔══════════════════════════════════════════════╗
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] ║       КНОПКА «СОЗДАТЬ ВИДЕО» НАЖАТА         ║
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] ╚══════════════════════════════════════════════╝
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] Сбор настроек из GUI...
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] audio_path = /Volumes/SSD/ютюб /тайный кризис человечества /аудио дорожки  — копия
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] broll_horizontal = /Volumes/video/broll_downloads/Wide
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] broll_vertical = 
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] vertical_background = /Users/dreamstore/Downloads/Firefly-2.jpg
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] bgm_folder = /Volumes/video/broll_downloads/ссд/тайный кризис человечества /фоновая музыка
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] imo_folder = 
+2026-08-31 16:49:38,519 [INFO] video_maker.gui.app: [GUI] output_folder = /Volumes/SSD/untitled folder
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] gemini_model = gemini-3.6-flash
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] series_name = 
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] whisper_language = ru
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] caption_style = clean_pro
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] hook_style = marker
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] whisper_device = auto
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] whisper_compute_type = auto
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] keep_temp_files = False
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] target_lufs = -14.0
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] voice_enhance = False
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] add_bgm = True
+2026-08-31 16:49:38,520 [INFO] video_maker.gui.app: [GUI] output_folder (final) = /Volumes/SSD/untitled folder
+2026-08-31 16:49:38,522 [INFO] video_maker.gui.app: [GUI] Настройки сохранены в /Users/dreamstore/.video_maker_settings.json

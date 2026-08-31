@@ -7,6 +7,13 @@ import random
 import subprocess
 import uuid
 
+from .ffmpeg_resilient import (
+    VideoEncodeFailed,
+    calculate_adaptive_bitrate,
+    run_vt_encode,
+    vt_encode_args,
+)
+
 log = logging.getLogger(__name__)
 
 
@@ -281,16 +288,12 @@ def fit_video_to_duration(
             "-i", vf,
             "-t", str(target_duration),
             "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
-            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
             "-pix_fmt", "yuv420p",
             "-an",
             norm_path,
         ]
-        res = subprocess.run(cmd_norm, capture_output=True, text=True)
-        if res.returncode != 0:
-            _log(f"[ВИДЕО] Ошибка нормализации: {res.stderr[-400:]}")
-            raise RuntimeError(f"Norm failed: {res.stderr[-400:]}")
-        # Копируем как финальный видео-слой
+        run_vt_encode(cmd_norm, [vf], norm_path, log_fn=_log, stage_name="NORM")
         import shutil
         shutil.move(norm_path, output_path)
         try:
@@ -308,15 +311,12 @@ def fit_video_to_duration(
                 ffmpeg, "-y",
                 "-i", vf,
                 "-vf", "scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+                "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
                 "-pix_fmt", "yuv420p",
                 "-an",
                 norm_path,
             ]
-            res = subprocess.run(cmd_norm, capture_output=True, text=True)
-            if res.returncode != 0:
-                _log(f"[ВИДЕО] Ошибка нормализации клипа {vf}: {res.stderr[-300:]}")
-                raise RuntimeError(f"Norm failed: {res.stderr[-300:]}")
+            run_vt_encode(cmd_norm, [vf], norm_path, log_fn=_log, stage_name="NORM")
             normalized_files.append(norm_path)
 
         list_path = os.path.join(os.path.dirname(output_path), "concat_list.txt")
@@ -328,16 +328,13 @@ def fit_video_to_duration(
             "-f", "concat", "-safe", "0",
             "-i", list_path,
             "-t", str(target_duration),
-            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
             "-pix_fmt", "yuv420p",
             "-r", "30",
             "-an",
             output_path,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            _log(f"[ВИДЕО] Ошибка concat: {res.stderr[-400:]}")
-            raise RuntimeError(f"Concat failed: {res.stderr[-400:]}")
+        run_vt_encode(cmd, normalized_files, output_path, log_fn=_log, stage_name="CONCAT")
 
         for p in [list_path] + normalized_files:
             try:
@@ -370,16 +367,18 @@ def _even(n: int) -> int:
 
 
 
-def _encode_vt_args(width: int = 3840, height: int = 2160) -> list[str]:
-    """Apple VideoToolbox: быстро + высокий bitrate под 4K без soft x264."""
+def _encode_vt_args(width: int = 3840, height: int = 2160, bitrate: str | None = None) -> list[str]:
+    """Apple VideoToolbox only (no allow_sw / no libx264). Default ~28M for 4K."""
     pixels = max(1, int(width) * int(height))
-    if pixels >= 3000 * 1600:
-        br = "50M"
+    if bitrate:
+        br = bitrate if str(bitrate).upper().endswith("M") else f"{bitrate}M"
+    elif pixels >= 3000 * 1600:
+        br = "28M"
     elif pixels >= 1800 * 1000:
-        br = "25M"
+        br = "16M"
     else:
-        br = "12M"
-    return ["-c:v", "h264_videotoolbox", "-b:v", br, "-allow_sw", "1", "-pix_fmt", "yuv420p"]
+        br = "10M"
+    return vt_encode_args(br)
 
 def vstack_video_image(
     video_path: str,
@@ -429,7 +428,7 @@ def vstack_video_image(
             "-loop", "1", "-i", background_path,
             "-filter_complex", filter_complex,
             "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
             "-pix_fmt", "yuv420p", "-r", "30", "-t", str(dur),
             output_path,
         ]
@@ -438,16 +437,18 @@ def vstack_video_image(
             ffmpeg, "-y", "-i", video_path, "-i", background_path,
             "-filter_complex", filter_complex,
             "-map", "[out]",
-            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
             "-pix_fmt", "yuv420p", "-r", "30", "-shortest",
             output_path,
         ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        err = (result.stderr or result.stdout or "")[-800:]
-        _log(f"[ВИДЕО] vstack ffmpeg error: {err}")
-        raise RuntimeError(f"vstack failed (exit {result.returncode}): {err}")
+    run_vt_encode(
+        cmd,
+        [video_path, background_path],
+        output_path,
+        log_fn=_log,
+        stage_name="VSTACK",
+    )
 
     from .audio import replace_audio
     tmp_out = output_path + ".tmp.mp4"
@@ -474,15 +475,12 @@ def cut_segment(
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         output_path,
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        _log(f"[ВИДЕО] Ошибка обрезки: {res.stderr}")
-        raise RuntimeError(f"cut_segment failed: {res.stderr}")
+    run_vt_encode(cmd, [video_path], output_path, log_fn=_log, stage_name="TRIM")
     return output_path
 
 
@@ -635,14 +633,16 @@ def add_intro_outro_mid(
         dur = max(0.5, float(duration or 1.0))
         out = os.path.join(output_dir, f"{label}_still_{uuid.uuid4().hex[:8]}.mp4")
         w, h = _even(main_w), _even(main_h)
-        r = subprocess.run([
-            ffmpeg, "-y", "-loop", "1", "-i", path, "-t", str(dur),
-            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
-            "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
-            "-pix_fmt", "yuv420p", "-r", "30", out,
-        ], capture_output=True, text=True)
-        if r.returncode != 0:
-            _log(f"[IMO] картинка→{dur}с fail {path}: {(r.stderr or '')[-300:]}")
+        try:
+            img_cmd = [
+                ffmpeg, "-y", "-loop", "1", "-i", path, "-t", str(dur),
+                "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
+                "-pix_fmt", "yuv420p", "-r", "30", out,
+            ]
+            run_vt_encode(img_cmd, [path], out, log_fn=_log, stage_name="IMO")
+        except Exception as e:
+            _log(f"[IMO] картинка→{dur}с fail {path}: {e}")
             return ""
         _log(f"[IMO] {label}: картинка → {dur}с видео: {out}")
         return out
@@ -717,15 +717,12 @@ def add_intro_outro_mid(
         *[arg for inp in inputs for arg in ("-i", inp)],
         "-filter_complex", filter_complex,
         "-map", "[outv]",
-        "-c:v", "h264_videotoolbox", "-b:v", "50M", "-allow_sw", "1",
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         output_path,
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        _log(f"[ВИДЕО] Ошибка добавления intro/outro: {res.stderr}")
-        raise RuntimeError(f"add_intro_outro_mid failed: {res.stderr}")
+    run_vt_encode(cmd, inputs, output_path, log_fn=_log, stage_name="INTRO")
 
     from .audio import replace_audio
     tmp_out = output_path + ".tmp.mp4"

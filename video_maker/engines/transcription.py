@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import os
 import subprocess
 import tempfile
@@ -42,7 +43,7 @@ def transcribe(
 
     Дефолты:
       model=large-v3, language=ru, device=cpu, compute_type=int8,
-      batch_size = DEFAULT_BATCH_SIZE, threads=все ядра.
+      batch_size=24, threads=все ядра.
     """
     _log = log_fn or log.info
 
@@ -94,7 +95,7 @@ def transcribe(
             "--output_dir", str(cleaned_path.parent),
             "--device", resolved_device,
             "--compute_type", resolved_compute,
-            "--batch_size", str(DEFAULT_BATCH_SIZE),
+            "--batch_size", str(batch_size),
             "--threads", str(n_threads),
         ]
 
@@ -109,6 +110,7 @@ def transcribe(
         wx_env["MKL_NUM_THREADS"] = str(n_threads)
 
         _log("[WHISPER] Запуск распознавания (один раз)...")
+        t0 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, env=wx_env)
 
         json_path = cleaned_path.with_suffix(".json")
@@ -148,6 +150,8 @@ def transcribe(
         segments = data.get("segments", [])
         language = data.get("language", language or "ru")
 
+        _log(f"[WHISPER] stderr tail: {(result.stderr or "")[-500:]}")
+        _log(f"[WHISPER] elapsed={time.time()-t0:.1f}s returncode={result.returncode}")
         _log(f"[WHISPER] Язык: {language} | Сегментов: {len(segments)}")
 
         return {

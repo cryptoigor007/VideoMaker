@@ -10,6 +10,7 @@ log = logging.getLogger(__name__)
 
 
 MAX_429_RETRIES = 4
+MAX_503_RETRIES = 6  # high demand / UNAVAILABLE
 
 
 def _retry_delay_seconds(message: str) -> float:
@@ -32,94 +33,117 @@ def _rotate_key(keys: list[str], key_index: int, log_fn=None) -> tuple[bool, int
 
 
 def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool = True, series_name: str = "") -> str:
-    """Построить промпт для анализа."""
+    """Промпт Gemini: packaging полного видео + Shorts-стратег (Точка наблюдения)."""
     timings = "\n".join(
         f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
-        for s in segments
+        for s in (segments or [])[:400]
     )
-
-    series_context = f"\nСерия: {series_name}" if series_name else ""
-
+    series_context = f"\nНазвание серии (если задано): «{series_name}»." if series_name else ""
     intro_section = ""
     if intro_gemini:
         intro_section = """
-ИНТРО:
-- Это анимация логотипа (3-4 сек), без голоса
-- Определи лучший момент для показа — любое подходящее место в видео
-- Если не видишь подходящего момента — верни start=0, end=0
+═══════════════════════════════════════
+6) INTRO / MIDDLE / OUTRO (для склейки)
+═══════════════════════════════════════
+- intro: {start, end} — первые 2–5с сильного входа
+- middle: список {start,end} точек разворота (0–3 шт)
+- outro: {start, end} — финальные 2–5с
 """
 
-    return f"""Ты — senior short-form content strategist и copywriter для YouTube / TikTok / Reels / YouTube 16:9.
+    return f"""Ты — опытный контент-стратег YouTube Shorts и senior packaging-editor.
 Канал: «Точка наблюдения». Сериал: «Тайный кризис человечества».{series_context}
 
-Роль: эксперт по retention и packaging (YouTube 16:9, вертикаль 9:16, Shorts/Reels).
+Ты знаешь метрики алгоритма YouTube (average view duration, average % viewed, swipe-away rate,
+replay rate, likes/comments/shares per view, CTR обложки).
 
-ЖЁСТКИЕ ПРАВИЛА ТЕКСТА НА ЭКРАНЕ:
-- ХУК и CTA — это PACKAGING, не субтитры. ЗАПРЕЩЕНО копировать фразу из транскрипта дословно.
+ЗАДАЧА: разобрать текст/таймкоды на:
+1) packaging полного ролика (wide+vertical),
+2) on-screen хуки/CTA,
+3) 4–5 Shorts-клипов максимального потенциала.
+
+═══════════════════════════════════════
+ШАГ 0. ХАРАКТЕРИСТИКИ ВХОДА (внутренне)
+═══════════════════════════════════════
+- Таймкоды: ниже дан список [start-end] текст — используй ИХ точно. Не выдумывай секунды.
+- Формат речи: монолог или диалог — определи сам.
+- Целевое число Shorts: 4–5 сильных клипов на весь текст (не «каждые 2–3 минуты»).
+  Если сильных меньше — честно меньше, не растягивай.
+- Ниша: из содержания текста (для нишевых хэштегов и тона).
+- Канал/сериал фиксированы: «Точка наблюдения» / «Тайный кризис человечества».
+
+═══════════════════════════════════════
+ЖЁСТКИЕ ПРАВИЛА ON-SCREEN ТЕКСТА
+═══════════════════════════════════════
+- ХУК и CTA — PACKAGING, не субтитры. ЗАПРЕЩЕНО копировать дословно фразу из транскрипта.
 - Переписывай: короче, острее, интрига / конфликт / вопрос / ставка.
-- Хук ≠ то, что говорит голос в этот момент. Хук — «заголовок кадра».
-- CTA ≠ финальная фраза речи. CTA — отдельный призыв написать комментарий / ответить на вопрос.
+- Хук ≠ то, что говорит голос. Хук — «заголовок кадра» в первые 0–3с.
+- CTA ≠ финальная фраза речи. CTA — отдельный призыв написать комментарий.
+- CTA только в конце (~последние 5с). Хук не ставить в зону CTA.
 
 ═══════════════════════════════════════
-1) ХУКИ ПОЛНОГО ВИДЕО — РАЗНЫЕ ДЛЯ ФОРМАТОВ
+1) HOOKS ПОЛНОГО ВИДЕО (on-screen)
 ═══════════════════════════════════════
-Сделай ДВА набора (текст разный под контекст экрана):
-
-A) hooks_wide (16:9 YouTube) — 2–4 шт:
-   - более «умный»/сериальный тон, без тикток-крика
-   - 3–7 слов, переписано, не цитата речи
-   - start/end (сек), показ 2–3.5с
-
-B) hooks_vertical (9:16 длинное вертикальное) — 2–4 шт:
-   - сильнее pattern-interrupt, короче, чем wide
-   - 3–6 слов, другой текст, чем у wide (не копируй hooks_wide)
-   - start/end
-
-Также заполни legacy "hooks" = hooks_vertical (fallback).
-
+A) hooks_wide (16:9) — 2–4 шт: умный/сериальный тон, 3–7 слов, start/end, показ 2–3.5с
+B) hooks_vertical (9:16) — 2–4 шт: сильнее pattern-interrupt, 3–6 слов, ДРУГОЙ текст, чем wide
+Legacy "hooks" = hooks_vertical.
 type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVELATION
-visual_weight: L3 или L4
+Первый хук — начало ролика; остальные — точки спада/кульминации.
 
 ═══════════════════════════════════════
-2) CTA ПОЛНОГО ВИДЕО (конец ролика, on-screen)
+2) CTA ПОЛНОГО ВИДЕО (on-screen, конец)
 ═══════════════════════════════════════
-- cta_wide: 1 фраза 3–8 слов — вопрос/спор для комментариев под длинным YouTube
-- cta_vertical: 1 фраза 3–7 слов — другой текст, заточен под вертикальную ленту
+- cta_wide: 3–8 слов — вопрос/спор для комментариев YouTube
+- cta_vertical: 3–7 слов — другой текст для вертикали
 - НЕ повторять последнюю фразу транскрипта
-- CTA показывается ТОЛЬКО в конце ролика (~последние 5 секунд). В JSON можно start=0,end=0 — тайминг выставит пайплайн.
-- Первый хук — начало ролика; второй и дальше — только в точках спада/кульминации (не дублировать в начале).
-- Примеры тона: «А ты бы так поступил?», «Пиши — согласен или нет», «Что из этого правда?»
+- start/end можно 0 — пайплайн выставит конец ролика
 
 ═══════════════════════════════════════
-3) PACKAGING ПОЛНОГО ВИДЕО (для папок wide + vertical — ОДИНАКОВЫЙ набор)
+3) PACKAGING ПОЛНОГО ВИДЕО (package_* — одинаково для wide и vertical)
 ═══════════════════════════════════════
-Отдельные поля (НЕ копировать в Shorts):
-- package_title: заголовок ролика ≤ 70 символов (YouTube/Reels)
-- package_description: 2–4 предложения + мягкий CTA (описание под видео)
-- package_hook: 3–8 слов — главный packaging-хук (текст для файла hook, не обязательно = on-screen hook)
-- package_hashtags: 8–12 штук через пробел, с #
-Эти 4 поля одинаково используются и для wide, и для vertical.
+- package_title ≤ 70 символов
+- package_description: в духе:
+  «В этом выпуске сериала «Тайный кризис человечества» на канале «Точка наблюдения» мы разбираем [тема].
+  Вы узнаете, почему [интрига1], как [интрига2]...
+  📍 В этом видео: [4–6 пунктов с таймкодами из источника]
+  👇 Напишите в комментариях: [спорный вопрос]?
+  🔔 Подписывайтесь на «Точка наблюдения»…»
+- package_hook: 3–8 слов — главный packaging-хук
+- package_hashtags: 8–12 через пробел, ОБЯЗАТЕЛЬНО #ТочкаНаблюдения #ТайныйКризисЧеловечества
 
 ═══════════════════════════════════════
-4) SHORTS (отдельный продукт на каждую нарезку)
+4) SHORTS (отдельный продукт, 4–5 клипов)
 ═══════════════════════════════════════
-- 3–6 клипов по 15–55 сек, законченная мысль
-- У КАЖДОГО Shorts СВОИ (не копировать с полного видео / package_*):
-  - hook: 3–6 слов, PACKAGING для первого кадра/обложки, НЕ дословная речь
-  - hook_start / hook_end
-  - cta: 3–7 слов в конце клипа — вопрос, чтобы написали комментарий (другой текст, чем hook)
-  - cta_start / cta_end: последние ~5 секунд клипа (не раньше)
-  - title ≤ 40 символов
-  - description: 1–2 предложения + мягкий CTA
-  - hashtags: 5–8
-- Оценка ≥ 8/10, слабые отбрасывай
+Критерии клипа:
+- самодостаточность (сетап + пик);
+- хук 0–3с (packaging-фраза, не дословная речь);
+- один смысловой пик; 15–60 сек;
+- чистые границы мысли; яркая финальная фраза;
+- эмоция/польза; потенциал комментариев.
+Если текст с отсылкой «в следующем видео» — для последнего клипа вариант А (обрезать) или Б (клиффхэнгер).
+
+У КАЖДОГО Shorts СВОИ поля (не копировать package_*):
+- text: ПОЛНЫЙ дословный текст фрагмента без «…»
+- start / end: ТОЛЬКО из таймкодов источника (абсолютные секунды всего ролика)
+- hook: 3–6 слов packaging для первого кадра
+- hook_start / hook_end: АБСОЛЮТНЫЕ секунды на таймлайне полного ролика
+  (hook_start ≈ start клипа, длительность показа ~2–3с)
+- cta: 3–7 слов — вопрос в комментарии (≠ hook)
+- cta_start / cta_end: АБСОЛЮТНЫЕ, последние ~5с клипа (cta_end ≈ end)
+- title ≤ 40 символов
+- description: 1–2 предложения + призыв комментировать + отсылка на полную серию
+  «Тайный кризис человечества» и канал «Точка наблюдения»
+- hashtags: 5–8 через пробел; ОБЯЗАТЕЛЬНО #ТочкаНаблюдения и #ТайныйКризисЧеловечества
+  + 3–6 нишевых
+- scores (опционально): hook/self/emotion/comments/reposts 1–10, total
+
+Внутренне доводи каждый клип до ≥8/10 (ни один критерий не ниже 6). Слабые отбрасывай.
+Не завышай баллы. Не выдумывай текст и таймкоды.
 
 ═══════════════════════════════════════
 5) СИЛЬНЫЕ СЛОВА + СУБТИТРЫ
 ═══════════════════════════════════════
-- strong_words: 5–15 слов с timing, caps, color
-- subtitles: смысловые куски 1.5–4с (fallback), не по словам
-
+- strong_words: 5–15 слов с timing/start/end, caps, color, visual_weight
+- subtitles: смысловые куски 1.5–4с (fallback)
 {intro_section}
 Текст с таймингами:
 {timings}
@@ -140,23 +164,23 @@ visual_weight: L3 или L4
   "cta_wide": {{"text": "Вопрос для комментариев YouTube", "start": 0.0, "end": 0.0}},
   "cta_vertical": {{"text": "Другой вопрос для вертикали", "start": 0.0, "end": 0.0}},
   "package_title": "Заголовок полного ролика ≤70",
-  "package_description": "Описание 2–4 предложения + CTA",
+  "package_description": "Описание полного выпуска + таймкоды + вопрос + подписка",
   "package_hook": "Главный packaging-хук 3–8 слов",
-  "package_hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5 #tag6 #tag7 #tag8",
+  "package_hashtags": "#ТочкаНаблюдения #ТайныйКризисЧеловечества #tag3 #tag4 #tag5 #tag6 #tag7 #tag8",
   "clips_for_shorts": [
     {{
       "text": "полный текст этого Short",
       "start": 0.0,
       "end": 18.0,
-      "hook": "PACKAGING-хук обложки, не дословная речь",
+      "hook": "PACKAGING-хук обложки",
       "hook_start": 0.0,
-      "hook_end": 2.0,
+      "hook_end": 2.5,
       "cta": "Вопрос — напиши в комментариях",
-      "cta_start": 15.0,
+      "cta_start": 13.0,
       "cta_end": 18.0,
       "title": "заголовок ≤40",
-      "description": "описание",
-      "hashtags": "#tag1 #tag2 #tag3 #tag4 #tag5"
+      "description": "описание + комментарий + отсылка на сериал и канал",
+      "hashtags": "#ТочкаНаблюдения #ТайныйКризисЧеловечества #tag3 #tag4 #tag5"
     }}
   ],
   "intro": {{"start": 0.0, "end": 3.5}},
@@ -169,6 +193,7 @@ visual_weight: L3 или L4
     {{"start": 0.0, "end": 2.5, "text": "фраза субтитра", "style": "normal"}}
   ]
 }}"""
+
 
 
 def analyze(
@@ -224,11 +249,45 @@ def analyze(
                 raise RuntimeError("Gemini вернул пустой ответ")
 
             analysis = _parse_analysis(raw, segments)
-            _log(f"[GEMINI] Получено {len(analysis.get('clips_for_shorts', []))} клипов для Shorts")
+            _log(
+                f"[GEMINI] OK: shorts={len(analysis.get('clips_for_shorts', []))} "
+                f"hooks_w={len(analysis.get('hooks_wide') or [])} "
+                f"hooks_v={len(analysis.get('hooks_vertical') or [])} "
+                f"package_title={str(analysis.get('package_title') or '')[:50]!r}"
+            )
             return analysis
 
         except Exception as e:
             err_str = str(e)
+            _log(f"[GEMINI] Ошибка API: {err_str[:400]}")
+
+            # 503 / UNAVAILABLE — временный пик нагрузки Google
+            if (
+                "503" in err_str
+                or "UNAVAILABLE" in err_str
+                or "high demand" in err_str.lower()
+                or "experiencing high demand" in err_str.lower()
+            ):
+                attempt += 1
+                if attempt <= MAX_503_RETRIES:
+                    wait = min(120.0, 10.0 * (2 ** min(attempt - 1, 4)))  # 10,20,40,80,120...
+                    _log(
+                        f"[GEMINI] 503 UNAVAILABLE (high demand). "
+                        f"Жду {wait:.0f}с, повтор {attempt}/{MAX_503_RETRIES}..."
+                    )
+                    time.sleep(wait)
+                    continue
+                # после ретраев — смена ключа если есть
+                if key_index + 1 < len(keys):
+                    key_index += 1
+                    attempt = 0
+                    _log(f"[GEMINI] 503: переключаюсь на ключ {key_index+1}/{len(keys)}")
+                    time.sleep(3.0)
+                    continue
+                raise RuntimeError(
+                    "Gemini временно недоступен (503 high demand) после нескольких попыток. "
+                    "Подождите 5–15 минут или смените модель/ключ."
+                ) from e
 
             # 429 / quota exhausted
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -386,28 +445,92 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
     cta_wide = _norm_cta(data.get("cta_wide") or data.get("cta"))
     cta_vertical = _norm_cta(data.get("cta_vertical") or data.get("cta"))
 
-    # Shorts: hook + CTA на клип
+    # Shorts: hook + CTA на клип (абсолютные таймкоды на таймлайне полного ролика)
+    REQUIRED_TAGS = ["#ТочкаНаблюдения", "#ТайныйКризисЧеловечества"]
+
+    def _ensure_hashtags(raw: str) -> str:
+        tags = []
+        for part in (raw or "").replace(",", " ").split():
+            p = part.strip()
+            if not p:
+                continue
+            if not p.startswith("#"):
+                p = "#" + p.lstrip("#")
+            if p not in tags:
+                tags.append(p)
+        for req in REQUIRED_TAGS:
+            if req not in tags:
+                tags.insert(0, req)
+        # 5–12 тегов
+        return " ".join(tags[:12])
+
+    def _abs_time(val, fallback, clip_start):
+        """Если модель вернула относительное время (< начала клипа) — сдвигаем."""
+        try:
+            t = float(val)
+        except (TypeError, ValueError):
+            t = float(fallback)
+        # 0.0 or() уже обработан снаружи; относительные 0..dur
+        if t < clip_start - 0.05:
+            t = clip_start + max(0.0, t)
+        return t
+
     clips = []
     for c in data.get("clips_for_shorts") or []:
         if not isinstance(c, dict):
             continue
         c_start = float(c.get("start", 0) or 0)
         c_end = float(c.get("end", c_start + 15) or (c_start + 15))
-        hs = float(c.get("hook_start", c_start) or c_start)
-        he = float(c.get("hook_end", hs + 2.0) or (hs + 2.0))
+        if c_end <= c_start:
+            c_end = c_start + 15.0
+        # hook times
+        raw_hs = c.get("hook_start", c_start)
+        if raw_hs is None or (isinstance(raw_hs, (int, float)) and float(raw_hs) == 0.0 and c_start > 0.5):
+            # 0 при ненулевом старте клипа → начало клипа
+            hs = c_start
+        else:
+            hs = _abs_time(raw_hs, c_start, c_start)
+        he = _abs_time(c.get("hook_end", hs + 2.5), hs + 2.5, c_start)
+        if he <= hs:
+            he = hs + 2.5
+        # не залезать в CTA-зону
+        he = min(he, max(hs + 1.0, c_end - 5.0))
+
         cta_text = (c.get("cta") or "").strip() if isinstance(c.get("cta"), str) else (
             (c.get("cta") or {}).get("text", "") if isinstance(c.get("cta"), dict) else ""
         )
-        cs = float(c.get("cta_start") or max(c_start, c_end - 2.8))
-        ce = float(c.get("cta_end") or c_end)
+        cs = _abs_time(c.get("cta_start"), max(c_start, c_end - 5.0), c_start)
+        ce = _abs_time(c.get("cta_end"), c_end, c_start)
+        if ce <= cs:
+            cs = max(c_start, c_end - 5.0)
+            ce = c_end
+        # CTA строго в конце
+        if cs < c_end - 8.0:
+            cs = max(c_start, c_end - 5.0)
+            ce = c_end
+
+        ht = _ensure_hashtags(str(c.get("hashtags") or ""))
+        desc = str(c.get("description") or "").strip()
+        if "Точка наблюдения" not in desc and "точке наблюдения" not in desc.lower():
+            desc = (desc + " " if desc else "") + (
+                "Полная серия «Тайный кризис человечества» на канале «Точка наблюдения»."
+            )
+        if "коммент" not in desc.lower() and "?" not in desc:
+            desc = desc + " Напишите в комментариях, согласны ли вы."
+
         item = {
             **c,
+            "start": c_start,
+            "end": c_end,
             "hook": str(c.get("hook", "") or "").strip(),
             "hook_start": hs,
             "hook_end": he,
             "cta": cta_text,
             "cta_start": cs,
             "cta_end": ce,
+            "title": str(c.get("title") or "").strip()[:40],
+            "description": desc.strip(),
+            "hashtags": ht,
         }
         clips.append(item)
 
@@ -430,9 +553,20 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
         elif isinstance(main_hook, str):
             package_hook = main_hook.strip()
     package_hashtags = _str_field("package_hashtags", "hashtags")
-    if package_hashtags and not package_hashtags.startswith("#") and " " not in package_hashtags:
-        # список без #: оставим как есть
-        pass
+    # гарантируем обязательные теги канала/сериала
+    ph_tags = []
+    for part in (package_hashtags or "").replace(",", " ").split():
+        p = part.strip()
+        if not p:
+            continue
+        if not p.startswith("#"):
+            p = "#" + p.lstrip("#")
+        if p not in ph_tags:
+            ph_tags.append(p)
+    for req in ("#ТочкаНаблюдения", "#ТайныйКризисЧеловечества"):
+        if req not in ph_tags:
+            ph_tags.insert(0, req)
+    package_hashtags = " ".join(ph_tags[:12])
 
     return {
         "corrected_text": corrected_text,
