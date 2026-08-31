@@ -951,17 +951,39 @@ class App:
         frame = ttk.Frame(win, padding=20)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Модель Gemini:", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Модель Gemini (по умолчанию 2.5-flash):", style="Section.TLabel").pack(anchor="w")
         ttk.Combobox(
             frame, textvariable=self.model_var,
-            values=["gemini-3.6-flash", "gemini-3.6-pro", "gemini-3.6-flash-lite"],
+            values=[
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-3.6-flash",
+                "gemini-3.5-flash",
+                "gemini-3.6-pro",
+                "gemini-3.6-flash-lite",
+                "gemini-1.5-flash",
+            ],
             state="readonly", font=("SF Pro Text", 10),
         ).pack(fill=tk.X, pady=(4, 12))
 
-        ttk.Label(frame, text="API ключи Gemini (через запятую):", style="Section.TLabel").pack(anchor="w")
-        keys_str = ", ".join(self.settings.gemini_api_keys) if self.settings.gemini_api_keys else self.settings.gemini_api_key
-        self._settings_keys_var = tk.StringVar(value=keys_str)
-        ttk.Entry(frame, textvariable=self._settings_keys_var, font=("SF Pro Text", 10)).pack(fill=tk.X, pady=(4, 12))
+        ttk.Label(
+            frame,
+            text="API ключи Gemini (каждый с новой строки или через запятую):",
+            style="Section.TLabel",
+        ).pack(anchor="w")
+        keys_list = list(self.settings.gemini_api_keys or [])
+        if not keys_list and self.settings.gemini_api_key:
+            keys_list = [self.settings.gemini_api_key]
+        keys_str = "\n".join(keys_list)
+        keys_box = tk.Text(frame, height=5, font=("SF Pro Text", 10), wrap="word")
+        keys_box.pack(fill=tk.X, pady=(4, 4))
+        keys_box.insert("1.0", keys_str)
+        self._settings_keys_box = keys_box
+        ttk.Label(
+            frame,
+            text="При 429/исчерпании лимита — сразу следующий ключ. Последний рабочий запоминается.",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(0, 12))
 
         ttk.Label(frame, text="WhisperX", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
         row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
@@ -984,9 +1006,10 @@ class App:
 
         def save():
             self.settings.gemini_model = self.model_var.get()
-            raw = self._settings_keys_var.get().strip()
+            raw = self._settings_keys_box.get("1.0", "end").strip()
             if raw:
-                keys = [k.strip() for k in raw.split(",") if k.strip()]
+                import re as _re
+                keys = [k.strip() for k in _re.split(r"[\n,;]+", raw) if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
             self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"

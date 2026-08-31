@@ -1,4 +1,4 @@
-"""MasterBuilder — создание промежуточных видео (master_16x9 и master_9x16)."""
+"""MasterBuilder — только master_16x9; вертикаль собирается в Final (один encode)."""
 from __future__ import annotations
 
 import logging
@@ -10,44 +10,38 @@ log = logging.getLogger(__name__)
 
 
 class MasterBuilder(Stage):
-    """Создание промежуточных видео: master_16x9.mp4 и master_9x16.mp4."""
+    """Создаёт master_16x9. master_9x16 больше не кодируется здесь (экономия 1 encode)."""
 
     def name(self) -> str:
         return "Master"
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
-        ctx.log("[MASTER] Создание промежуточных видео...")
+        ctx.log("[MASTER] Создание master_16x9 (вертикаль — в Final, один encode)...")
 
-        # Шаг 1: Master Horizontal (16:9) — голый склей B-roll под аудио
         ctx.master_horizontal = self._build_master_horizontal(ctx)
         ctx.log(f"[MASTER] master_16x9.mp4: {ctx.master_horizontal}")
-        ctx.progress = 40.0
 
-        # Шаг 2: Master Vertical (9:16)
-        # Приоритет: 1) нативный вертикальный B-roll, 2) vstack с фоном
+        # Не кодируем master_9x16 здесь. Помечаем режим для FinalVertical.
+        ctx.master_vertical = ""
         if ctx.broll_vertical:
             vertical_files = self._collect_vertical_files(ctx.broll_vertical)
             if vertical_files:
+                # Нативный вертикальный B-roll — один fit (нужен как источник)
                 ctx.master_vertical = self._build_master_vertical_native(ctx, vertical_files)
-                ctx.log(f"[MASTER] master_9x16.mp4 (native): {ctx.master_vertical}")
+                ctx.log(f"[MASTER] master_9x16 native: {ctx.master_vertical}")
             else:
-                ctx.log("[MASTER] Вертикальный B-roll пуст, переключаемся на vstack")
-                ctx.master_vertical = self._build_master_vertical_vstack(ctx)
-                ctx.log(f"[MASTER] master_9x16.mp4 (vstack): {ctx.master_vertical}")
+                ctx.log("[MASTER] VSTACK отложен → FinalVertical (вместе с субтитрами)")
         elif ctx.vertical_background:
-            ctx.master_vertical = self._build_master_vertical_vstack(ctx)
-            ctx.log(f"[MASTER] master_9x16.mp4 (vstack): {ctx.master_vertical}")
+            ctx.log("[MASTER] VSTACK отложен → FinalVertical (вместе с субтитрами)")
         else:
-            # Это не должно произойти — валидация в Settings должна перехватить
             raise RuntimeError(
                 "Для вертикального видео нужен broll_vertical или vertical_background"
             )
 
-        ctx.progress = 50.0
+        ctx.progress = 45.0
         return ctx
 
     def _collect_vertical_files(self, folder: str) -> list[str]:
-        """Собрать вертикальные видеофайлы (9:16) с ротацией подпапок; used исключён."""
         from ..engines.video import collect_video_files, _ffprobe_video_info
         all_files = collect_video_files(folder)
         vertical = []
@@ -61,7 +55,6 @@ class MasterBuilder(Stage):
         return vertical
 
     def _build_master_horizontal(self, ctx: PipelineContext) -> str:
-        """Голый склей B-roll под аудиодорожку. БЕЗ обработки."""
         from ..engines.video import collect_video_files, fit_video_to_duration
 
         output_dir = os.path.join(ctx.output_folder, "_tmp")
@@ -71,7 +64,7 @@ class MasterBuilder(Stage):
         video_files = collect_video_files(ctx.broll_horizontal)
         if not video_files:
             raise FileNotFoundError(f"Нет видео в {ctx.broll_horizontal}")
-        ctx.log(f"[MASTER] B-roll H: {len(video_files)} файлов (ротация подпапок, used исключён)")
+        ctx.log(f"[MASTER] B-roll H: {len(video_files)} файлов")
 
         fit_video_to_duration(
             video_files=video_files,
@@ -85,7 +78,6 @@ class MasterBuilder(Stage):
         return output_path
 
     def _build_master_vertical_native(self, ctx: PipelineContext, video_files: list[str]) -> str:
-        """Нативный вертикальный мастер из 9:16 B-roll. БЕЗ обработки."""
         from ..engines.video import fit_video_to_duration
 
         output_dir = os.path.join(ctx.output_folder, "_tmp")
@@ -100,21 +92,5 @@ class MasterBuilder(Stage):
             log_fn=ctx.log,
             broll_root=ctx.broll_vertical,
             move_used=True,
-        )
-        return output_path
-
-    def _build_master_vertical_vstack(self, ctx: PipelineContext) -> str:
-        """vstack: Master (16:9) сверху + фон снизу. БЕЗ обработки."""
-        from ..engines.video import vstack_video_image
-
-        output_dir = os.path.join(ctx.output_folder, "_tmp")
-        output_path = os.path.join(output_dir, "master_9x16.mp4")
-
-        vstack_video_image(
-            video_path=ctx.master_horizontal,
-            background_path=ctx.vertical_background,
-            output_path=output_path,
-            log_fn=ctx.log,
-            top_ratio=getattr(ctx, 'vstack_top_ratio', 0.6),
         )
         return output_path

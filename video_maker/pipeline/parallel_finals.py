@@ -1,8 +1,7 @@
-"""Параллельный запуск FinalHorizontal + FinalVertical (M1)."""
+"""Final Horizontal (полный) → Final Vertical (geometry + burn)."""
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .branches import FinalHorizontal, FinalVertical
 from .stages import PipelineContext, Stage
@@ -11,42 +10,22 @@ log = logging.getLogger(__name__)
 
 
 class ParallelFinals(Stage):
-    """Final H и Final V одновременно. Разные файлы и поля ctx."""
+    """Имя историческое: H и V последовательно, без конкуренции VT/SSD.
+
+    Wide всегда полный (intro/outro/subs/hooks/CTA/BGM).
+    Vertical — оптимизированный: geometry → burn отдельно.
+    """
 
     def name(self) -> str:
-        return "Final H∥V"
+        return "Final H→V"
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
-        ctx.log("[FINAL] Параллельный запуск Horizontal + Vertical...")
-        errors: list[str] = []
+        ctx.log("[FINAL] Sequential Horizontal (полный) → Vertical (geometry+burn)...")
 
-        def run_h() -> None:
-            FinalHorizontal().run(ctx)
+        ctx = FinalHorizontal().run(ctx)
+        if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
+            return ctx
 
-        def run_v() -> None:
-            FinalVertical().run(ctx)
-
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            futs = {
-                ex.submit(run_h): "Horizontal",
-                ex.submit(run_v): "Vertical",
-            }
-            for fut in as_completed(futs):
-                label = futs[fut]
-                try:
-                    fut.result()
-                    ctx.log(f"[FINAL] ветка {label} готова")
-                except Exception as e:
-                    msg = f"{label}: {type(e).__name__}: {e}"
-                    errors.append(msg)
-                    log.exception("Parallel final %s failed", label)
-                    ctx.log(f"[FINAL] ОШИБКА {msg}")
-
-        if errors:
-            raise RuntimeError("Parallel finals failed: " + "; ".join(errors))
-
-        if not getattr(ctx, "final_horizontal", None) and not getattr(ctx, "final_vertical", None):
-            raise RuntimeError("Parallel finals: нет final_horizontal и final_vertical")
-
+        ctx = FinalVertical().run(ctx)
         ctx.progress = 75.0
         return ctx

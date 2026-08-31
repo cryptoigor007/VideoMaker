@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import os
 import shutil
 import subprocess
@@ -20,6 +21,25 @@ from .ffmpeg_resilient import (
 )
 
 log = logging.getLogger(__name__)
+
+def _strip_ass_overrides(text: str) -> str:
+    r"""Remove leaked ASS override tags from Gemini/hook/CTA plain text."""
+    if not text:
+        return ""
+    t = str(text)
+    # { ... } override blocks
+    t = re.sub(r"\{[^}]*\}", "", t)
+    # bare tags like \fad(100,150) \shad0 \be0
+    t = re.sub(
+        r"\\(?:fad|shad|be|bord|fs|fn|an|pos|c|3c|4c|alpha|a|b|i|u|s|r|q|move|org|clip|iclip|t)\b[^\\{]*",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = t.replace("\\", " ")
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 
 try:
     from ..external.aisie.styles import VISUAL_WEIGHTS, HOOK_TYPES
@@ -783,7 +803,7 @@ def _build_hook_events(
 
     events = []
     for p in prepared:
-        text_h = p["text"]
+        text_h = _strip_ass_overrides(p["text"])
         start_t = p["start"]
         end_t = p["end"]
         hook = p["raw"]
@@ -923,7 +943,7 @@ def _build_cta_events(
         f"{{{pos_t}\\c{color}\\3c{BLACK}"
         f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0"
         f"\\fad(100,150)}}"
-        f"{text_c}"
+        f"{_strip_ass_overrides(text_c)}"
     )
     return [{
         "start": start_t,
@@ -949,13 +969,18 @@ def burn_subtitles(
     hook_style: str = "auto_aisie",
     bitrate: str | None = None,
     source_clips: list | None = None,
+    force_size: tuple[int, int] | None = None,
+    ass_only: bool = False,
 ) -> str:
     _log = log_fn or log.info
     _log("[СУБТИТРЫ] burn: karaoke in-line + hooks/CTA (без glow-overlay, strong только внутри строки)")
     if not output_path:
         output_path = video_path + ".subtitled.mp4"
 
-    playres_x, playres_y = _probe_video_resolution(video_path)
+    if force_size:
+        playres_x, playres_y = int(force_size[0]), int(force_size[1])
+    else:
+        playres_x, playres_y = _probe_video_resolution(video_path)
     wide = _is_wide(playres_x, playres_y)
     platform = "youtube_16_9" if wide else "youtube_shorts"
     _log(
@@ -1064,7 +1089,7 @@ def burn_subtitles(
         events.extend(cta_ev)
         n_cta_events = len(cta_ev)
         for ce in cta_ev:
-            _log(f"[CTA] «{(ce.get('text') or '')[-60:]}» {ce['start']:.2f}–{ce['end']:.2f}s")
+            _log(f"[CTA] «{_strip_ass_overrides(ce.get('text') or '')[-60:]}» {ce['start']:.2f}–{ce['end']:.2f}s")
 
     # Отдельные top-aligned Strong events БОЛЬШЕ НЕ добавляем:
     # они и давали «увеличенные слова выше» поверх karaoke.
@@ -1114,6 +1139,10 @@ def burn_subtitles(
         f"[СУБТИТРЫ] events total={len(events)} "
         f"(subs={n_sub_events} hooks={n_hook_events} cta={n_cta_events}) → ASS"
     )
+
+    if ass_only:
+        _log(f"[СУБТИТРЫ] ass_only → {ass_path}")
+        return ass_path
 
     ffmpeg = _ffmpeg_bin()
     esc = _escape_ass_path(ass_path)

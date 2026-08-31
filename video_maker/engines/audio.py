@@ -169,6 +169,8 @@ def mix_bgm(
     bgm_folder: str,
     output_path: str,
     log_fn=None,
+    loudnorm: bool = False,
+    target_lufs: float = -14.0,
 ) -> str:
     """Смешать голос с BGM (sidechain compression) — луп до конца видео."""
     _log = log_fn or log.info
@@ -189,13 +191,23 @@ def mix_bgm(
     video_dur = probe_duration(video_path)
 
     # BGM: бесконечный луп -> громкость -18 LUFS -> обрезка по длине видео
-    filter_complex = (
-        f"[1:a]aloop=loop=-1:size=2e9,"
-        f"loudnorm=I=-18:TP=-3:LRA=11,"
-        f"atrim=0:{video_dur},"
-        f"apad=whole_dur={video_dur}[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3[out]"
-    )
+    if loudnorm:
+        filter_complex = (
+            f"[1:a]aloop=loop=-1:size=2e9,"
+            f"loudnorm=I=-18:TP=-3:LRA=11,"
+            f"atrim=0:{video_dur},"
+            f"apad=whole_dur={video_dur}[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3,"
+            f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11[out]"
+        )
+    else:
+        filter_complex = (
+            f"[1:a]aloop=loop=-1:size=2e9,"
+            f"loudnorm=I=-18:TP=-3:LRA=11,"
+            f"atrim=0:{video_dur},"
+            f"apad=whole_dur={video_dur}[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3[out]"
+        )
 
     # Всегда пишем во временный файл (ffmpeg не умеет in-place на том же пути)
     import tempfile
@@ -260,7 +272,19 @@ def apply_loudnorm(
             offset = loudnorm_data.get("target_offset", 0.0)
             
             _log(f"[АУДИО] Measured: I={float(measured_i):.1f} LUFS, TP={float(measured_tp):.1f}, LRA={float(measured_lra):.1f}")
-            
+
+            # Уже у цели → только copy, без повторного encode аудио
+            try:
+                mi = float(measured_i)
+                mtp = float(measured_tp)
+            except (TypeError, ValueError):
+                mi, mtp = -99.0, 0.0
+            if abs(mi - float(target_lufs)) <= 0.6 and mtp <= -1.0:
+                _log(f"[АУДИО] Уже ≈{target_lufs} LUFS → copy (skip loudnorm encode)")
+                import shutil
+                shutil.copy2(video_path, output_path)
+                return output_path
+
             # Second pass: apply with measured values
             filter_str = (
                 f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:"

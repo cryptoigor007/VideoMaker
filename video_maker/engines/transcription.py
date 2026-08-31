@@ -1,33 +1,66 @@
-"""Движок транскрибации — WhisperX (внешний CLI)."""
+"""Движок транскрибации — ТОЛЬКО MLX Whisper (без WhisperX).
+
+Зафиксировано:
+  path_or_hf_repo = mlx-community/whisper-large-v3-turbo
+  temperature = 0.0
+  language = ru
+  condition_on_previous_text = False
+  verbose = False
+  word_timestamps = True
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import time
 import os
-import subprocess
-import tempfile
+import time
 from pathlib import Path
-
-from .whisperx_resolve import resolve_whisperx
 
 log = logging.getLogger(__name__)
 
-# Жёсткие дефолты по требованию пользователя
-DEFAULT_MODEL = "large-v3"
+MLX_REPO = "mlx-community/whisper-large-v3-turbo"
+DEFAULT_MODEL = "large-v3-turbo"
 DEFAULT_LANGUAGE = "ru"
-DEFAULT_DEVICE = "cpu"
-DEFAULT_COMPUTE = "int8"
-DEFAULT_BATCH_SIZE = 4
 
 
-def _resolve_device_compute(device: str, compute_type: str) -> tuple[str, str]:
-    """Всегда cpu + int8 по умолчанию (стабильно на macOS)."""
-    if device == "auto" or not device:
-        device = DEFAULT_DEVICE
-    if compute_type == "auto" or not compute_type:
-        compute_type = DEFAULT_COMPUTE
-    return device, compute_type
+def _transcription_cache_key(audio_path: str, model_name: str, language: str) -> str:
+    st = os.stat(audio_path)
+    raw = f"{os.path.abspath(audio_path)}|{st.st_mtime_ns}|{st.st_size}|{model_name}|{language}|mlx"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _transcription_cache_dir() -> Path:
+    d = Path.home() / "video_maker" / "cache" / "whisper"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _normalize_segments(raw_segments: list) -> list[dict]:
+    out: list[dict] = []
+    for seg in raw_segments or []:
+        if not isinstance(seg, dict):
+            continue
+        words_out = []
+        for w in seg.get("words") or []:
+            if not isinstance(w, dict):
+                continue
+            word = (w.get("word") or w.get("text") or "").strip()
+            if not word:
+                continue
+            words_out.append({
+                "word": word,
+                "start": float(w.get("start", 0) or 0),
+                "end": float(w.get("end", 0) or 0),
+                "probability": float(w.get("probability", w.get("score", 1.0)) or 1.0),
+            })
+        out.append({
+            "start": float(seg.get("start", 0) or 0),
+            "end": float(seg.get("end", 0) or 0),
+            "text": (seg.get("text") or "").strip(),
+            "words": words_out,
+        })
+    return out
 
 
 def transcribe(
@@ -39,122 +72,82 @@ def transcribe(
     compute_type: str = "auto",
     log_fn=None,
 ) -> dict:
-    """Один вызов WhisperX с пословными таймкодами.
-
-    Дефолты:
-      model=large-v3, language=ru, device=cpu, compute_type=int8,
-      batch_size=24, threads=все ядра.
-    """
+    """Только mlx_whisper. Параметры whisperx_path/device/compute_type игнорируются."""
     _log = log_fn or log.info
+    language = language or DEFAULT_LANGUAGE
 
-    if not model_name or model_name.strip().lower() in ("auto", "default", ""):
-        model_name = DEFAULT_MODEL
+    # кэш
+    try:
+        ck = _transcription_cache_key(audio_path, MLX_REPO, language)
+        cpath = _transcription_cache_dir() / f"{ck}.json"
+        if cpath.is_file():
+            data = json.loads(cpath.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("segments") is not None:
+                _log(f"[WHISPER] Кэш HIT → {cpath.name} ({len(data.get('segments') or [])} сегментов)")
+                return data
+    except Exception as e:
+        _log(f"[WHISPER] Кэш пропуск: {e}")
 
-    _log(f"[WHISPER] Модель: {model_name}")
+    _log("[WHISPER] Движок: MLX Whisper (WhisperX НЕ используется)")
+    _log(f"[WHISPER] Модель: {MLX_REPO}")
+    _log("[WHISPER] temperature=0.0 language=ru condition_on_previous_text=False word_timestamps=True")
+    _log(f"[WHISPER] Файл: {audio_path}")
 
-    whisper_bin = resolve_whisperx(whisperx_path)
-    if not whisper_bin:
+    try:
+        import mlx_whisper
+    except ImportError as e:
         raise RuntimeError(
-            "WhisperX не найден.\n"
-            "Установите: pip install whisperx\n"
-            "Или укажите whisperx_path в настройках."
+            "mlx_whisper не установлен. Выполните: pip install mlx-whisper\n"
+            "WhisperX больше не используется."
+        ) from e
+
+    t0 = time.time()
+    try:
+        result = mlx_whisper.transcribe(
+            audio_path,
+            path_or_hf_repo=MLX_REPO,
+            temperature=0.0,
+            language=language,
+            condition_on_previous_text=False,
+            verbose=False,
+            word_timestamps=True,
         )
+    except Exception as e:
+        raise RuntimeError(
+            f"MLX Whisper ошибка: {e}\n"
+            f"Проверьте: pip install -U mlx-whisper\n"
+            f"Модель: {MLX_REPO}"
+        ) from e
 
-    _log(f"[WHISPER] Бинарник: {whisper_bin}")
+    elapsed = time.time() - t0
+    if not isinstance(result, dict):
+        raise RuntimeError(f"mlx_whisper вернул неожиданный тип: {type(result)}")
 
-    resolved_device, resolved_compute = _resolve_device_compute(device, compute_type)
-    batch_size = DEFAULT_BATCH_SIZE
-    n_threads = min(4, os.cpu_count() or 4)
+    segments = _normalize_segments(result.get("segments") or [])
+    text = (result.get("text") or "").strip()
+    lang = result.get("language") or language
+    n_words = sum(len(s.get("words") or []) for s in segments)
 
     _log(
-        f"[WHISPER] Устройство: {resolved_device}, compute_type: {resolved_compute}, "
-        f"batch_size: {batch_size}, threads: {n_threads}"
+        f"[WHISPER] MLX OK за {elapsed:.1f}s | lang={lang} | "
+        f"segments={len(segments)} words={n_words}"
     )
 
-    with tempfile.TemporaryDirectory(prefix="videomeyker_whisper_") as tmp_dir:
-        cleaned_path = Path(tmp_dir) / "cleaned.wav"
+    out = {
+        "segments": segments,
+        "language": lang,
+        "text": text,
+        "engine": "mlx_whisper",
+        "model": MLX_REPO,
+    }
 
-        _log("[WHISPER] Подготовка аудио 16kHz mono...")
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", str(audio_path),
-                "-af", "highpass=f=80,lowpass=f=8000,loudnorm=I=-16:TP=-1.5:LRA=11",
-                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
-                str(cleaned_path),
-            ],
-            capture_output=True,
-            check=True,
-        )
+    try:
+        ck = _transcription_cache_key(audio_path, MLX_REPO, language)
+        cpath = _transcription_cache_dir() / f"{ck}.json"
+        cpath.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        _log(f"[WHISPER] Кэш SAVE → {cpath.name}")
+    except Exception:
+        pass
 
-        cmd = [
-            whisper_bin,
-            str(cleaned_path),
-            "--model", model_name,
-            "--language", language or DEFAULT_LANGUAGE,
-            "--output_format", "json",
-            "--output_dir", str(cleaned_path.parent),
-            "--device", resolved_device,
-            "--compute_type", resolved_compute,
-            "--batch_size", str(batch_size),
-            "--threads", str(n_threads),
-        ]
-
-        wx_env = os.environ.copy()
-        # Подавляем шумные warning’и
-        suppress = "ignore::UserWarning:pyannote.audio.core.io,ignore::UserWarning:lightning"
-        existing_warn = wx_env.get("PYTHONWARNINGS")
-        wx_env["PYTHONWARNINGS"] = (
-            f"{existing_warn},{suppress}" if existing_warn else suppress
-        )
-        wx_env["OMP_NUM_THREADS"] = str(n_threads)
-        wx_env["MKL_NUM_THREADS"] = str(n_threads)
-
-        _log("[WHISPER] Запуск распознавания (один раз)...")
-        t0 = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, env=wx_env)
-
-        json_path = cleaned_path.with_suffix(".json")
-        err = (result.stderr or result.stdout or "").strip()
-
-        # Успех = есть JSON (даже если returncode != 0 из-за warning’ов)
-        if json_path.exists():
-            if result.returncode != 0:
-                # Известные безвредные сообщения
-                if any(x in err for x in (
-                    "Lightning automatically upgraded",
-                    "leaked semaphore",
-                    "resource_tracker",
-                )):
-                    _log("[WHISPER] Warning (Lightning/semaphore) — игнорируем, JSON есть")
-                else:
-                    _log(f"[WHISPER] returncode={result.returncode}, но JSON создан. stderr[:300]: {err[:300]}")
-        else:
-            # JSON нет — настоящая ошибка
-            if model_name == "large-v3-turbo" and any(
-                x in err.lower() for x in ("large-v3-turbo", "not found", "404", "does not exist")
-            ):
-                _log("[WHISPER] large-v3-turbo недоступна → fallback large-v3")
-                return transcribe(
-                    audio_path=audio_path,
-                    model_name="large-v3",
-                    whisperx_path=whisperx_path,
-                    language=language,
-                    device=device,
-                    compute_type=compute_type,
-                    log_fn=log_fn,
-                )
-            _log(f"[WHISPER] Ошибка: {err[:500]}")
-            raise RuntimeError(f"WhisperX завершился с ошибкой: {err[:300]}")
-
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-        segments = data.get("segments", [])
-        language = data.get("language", language or "ru")
-
-        _log(f"[WHISPER] stderr tail: {(result.stderr or "")[-500:]}")
-        _log(f"[WHISPER] elapsed={time.time()-t0:.1f}s returncode={result.returncode}")
-        _log(f"[WHISPER] Язык: {language} | Сегментов: {len(segments)}")
-
-        return {
-            "segments": segments,
-            "language": language,
-        }
+    _log(f"[WHISPER] Готово: {len(segments)} сегментов")
+    return out

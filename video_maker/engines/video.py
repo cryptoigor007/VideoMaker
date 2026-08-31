@@ -120,6 +120,9 @@ def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str
         return []
 
     def _is_video(name: str) -> bool:
+        # ._file.mp4 — AppleDouble/resource fork на macOS (не видео)
+        if not name or name.startswith(".") or name.startswith("._"):
+            return False
         return name.lower().endswith(_VIDEO_EXTS)
 
     try:
@@ -255,15 +258,19 @@ def fit_video_to_duration(
     total_dur = 0.0
     skipped_bad = 0
     for vf in video_files:
+        base = os.path.basename(vf)
+        if base.startswith(".") or base.startswith("._"):
+            skipped_bad += 1
+            continue
         try:
             dur = probe_duration(vf)
         except Exception as e:
             skipped_bad += 1
-            _log(f"[ВИДЕО] пропуск (ffprobe): {os.path.basename(vf)} — {e}")
+            _log(f"[ВИДЕО] пропуск (ffprobe): {base} — {e}")
             continue
         if dur <= 0.05:
             skipped_bad += 1
-            _log(f"[ВИДЕО] пропуск (нет длительности): {os.path.basename(vf)}")
+            # не спамим лог на каждый битый/пустой — только итог
             continue
         selected.append(vf)
         total_dur += dur
@@ -368,69 +375,167 @@ def _encode_vt_args(width: int = 3840, height: int = 2160, bitrate: str | None =
         br = "10M"
     return vt_encode_args(br)
 
+def _cached_bg_half(background_path: str, target_w: int, half_h: int, log_fn=None) -> str:
+    """Один раз отскейлить фон до 2160x1920 и кэшировать (статика)."""
+    _log = log_fn or log.info
+    import hashlib
+    st = os.stat(background_path)
+    key = hashlib.sha256(
+        f"{os.path.abspath(background_path)}|{st.st_mtime_ns}|{st.st_size}|{target_w}x{half_h}".encode()
+    ).hexdigest()[:20]
+    cache_dir = os.path.join(os.path.expanduser("~"), "video_maker", "cache", "bg")
+    os.makedirs(cache_dir, exist_ok=True)
+    out = os.path.join(cache_dir, f"{key}.png")
+    if os.path.isfile(out) and os.path.getsize(out) > 1000:
+        return out
+
+    ffmpeg = _ffmpeg_bin()
+    cmd = [
+        ffmpeg, "-y", "-i", background_path,
+        "-vf", f"scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
+               f"crop={target_w}:{half_h},setsar=1,format=rgb24",
+        "-frames:v", "1",
+        out,
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0 or not os.path.isfile(out):
+        _log("[ВИДЕО] bg cache fail — используем исходник")
+        return background_path
+    _log(f"[ВИДЕО] bg cache → {out}")
+    return out
+
+
 def vstack_video_image(
     video_path: str,
     background_path: str,
     output_path: str,
     log_fn=None,
     top_ratio: float = 0.6,
+    ass_path: str = "",
+    bitrate: str = "28M",
 ) -> str:
-    """Вертикаль 9:16 2160x3840 — один проход, без повторного replace_audio."""
+    """Геометрия 9:16 БЕЗ subtitles (subs — отдельный быстрый burn).
+
+    Граф: scale+crop video → top | cached bg → bottom | vstack → VT.
+    ass_path игнорируется здесь (совместимость API) — subs жжёт FinalVertical.
+    """
+    import time
     _log = log_fn or log.info
-    _log("[ВИДЕО 4K] vertical vstack (один проход)")
+    t0 = time.time()
+    _log("[ВИДЕО 4K] vertical geometry-only (subs отдельно)")
 
     ffmpeg = _ffmpeg_bin()
     target_w, target_h = 2160, 3840
-    mid_y = _even(target_h // 2)
-    bottom_h = _even(target_h - mid_y)
+    half_h = _even(target_h // 2)
 
-    vid_w = _even(int(target_w * 1.30))
-    bg_w = _even(int(target_w * 1.20))
-    bg_h = _even(int(bottom_h * 1.20))
+    bg = _cached_bg_half(background_path, target_w, half_h, log_fn=_log)
 
-    _log(
-        f"[ВИДЕО 4K] canvas={target_w}x{target_h} mid_y={mid_y} "
-        f"bottom={bottom_h} vid_w={vid_w} bg_scale={bg_w}x{bg_h}"
-    )
-
-    filter_complex = (
-        f"[1:v]scale={bg_w}:{bg_h}:force_original_aspect_ratio=increase,"
-        f"crop={target_w}:{bottom_h},setsar=1,"
-        f"pad={target_w}:{target_h}:0:{mid_y}:black[bg];"
-        f"[0:v]scale={vid_w}:-2:force_original_aspect_ratio=decrease,setsar=1[vid];"
-        f"[bg][vid]overlay=x=(W-w)/2:y={mid_y}-h:shortest=1[outv]"
+    # Только video scale+crop; bg уже exact size — без второго scale
+    fc = (
+        f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{half_h},setsar=1[top];"
+        f"[1:v]setsar=1,format=yuv420p[bot];"
+        f"[top][bot]vstack=inputs=2[outv]"
     )
 
     dur = probe_duration(video_path)
-    ext = os.path.splitext(background_path)[1].lower()
-    is_image = ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp")
-
-    cmd = [ffmpeg, "-y", "-i", video_path]
-    if is_image:
-        cmd += ["-loop", "1", "-i", background_path]
-    else:
-        cmd += ["-i", background_path]
-
-    cmd += [
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-map", "0:a?",
-        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "1",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
-        "-t", str(dur),
-        output_path,
-    ]
-
+    local_dir = _work_tmp_dir(os.path.dirname(output_path) or ".")
+    local_out = os.path.join(local_dir, f"vstack_{os.getpid()}_{uuid.uuid4().hex[:8]}.mp4")
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    _log(f"[ВИДЕО 4K] VSTACK → {os.path.basename(output_path)}")
+
+    def _run(use_hw: bool) -> subprocess.CompletedProcess:
+        cmd = [ffmpeg, "-y"]
+        if use_hw:
+            cmd += ["-hwaccel", "videotoolbox"]
+        cmd += [
+            "-i", video_path,
+            "-loop", "1", "-i", bg,
+            "-filter_complex", fc,
+            "-map", "[outv]",
+            "-map", "0:a?",
+            "-c:v", "h264_videotoolbox", "-b:v", bitrate,
+            "-allow_sw", "0" if use_hw else "1",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-c:a", "copy",
+            "-t", str(dur),
+            local_out,
+        ]
+        _log(f"[ВИДЕО 4K] geometry cmd hw={use_hw} bitrate={bitrate}")
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    res = _run(True)
+    if res.returncode != 0:
+        _log("[ВИДЕО] geometry hwaccel fail → retry")
+        # cleanup partial
+        try:
+            if os.path.isfile(local_out):
+                os.remove(local_out)
+        except OSError:
+            pass
+        res = _run(False)
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout or "")[-900:]
+        _log(f"[ВИДЕО] geometry ошибка: {err}")
+        raise RuntimeError(f"VSTACK geometry failed: {err}")
+
+    import shutil
+    shutil.move(local_out, output_path)
+    _log(f"[ВИДЕО 4K] geometry OK за {time.time()-t0:.1f}s → {os.path.basename(output_path)}")
+    return output_path
+
+
+def reframe_horizontal_to_vertical(
+    video_path: str,
+    output_path: str,
+    log_fn=None,
+    ass_path: str = "",
+    bitrate: str = "28M",
+) -> str:
+    """16:9 → 9:16 cover-crop без фона. Без ASS (subs отдельно)."""
+    import time
+    _log = log_fn or log.info
+    t0 = time.time()
+    _log("[ВИДЕО 4K] reframe 16:9→9:16 geometry-only")
+
+    ffmpeg = _ffmpeg_bin()
+    w, h = 2160, 3840
+    vf = (
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},setsar=1"
+    )
+    dur = probe_duration(video_path)
+    local_dir = _work_tmp_dir(os.path.dirname(output_path) or ".")
+    local_out = os.path.join(local_dir, f"reframe_{os.getpid()}_{uuid.uuid4().hex[:8]}.mp4")
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+    cmd = [
+        ffmpeg, "-y", "-hwaccel", "videotoolbox",
+        "-i", video_path,
+        "-vf", vf,
+        "-map", "0:v", "-map", "0:a?",
+        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "0",
+        "-pix_fmt", "yuv420p", "-r", "30",
+        "-c:a", "copy", "-t", str(dur),
+        local_out,
+    ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        err = (res.stderr or res.stdout or "")[-600:]
-        _log(f"[ВИДЕО] VSTACK ошибка: {err}")
-        raise RuntimeError(f"VSTACK failed: {err}")
+        cmd = [
+            ffmpeg, "-y", "-i", video_path, "-vf", vf,
+            "-map", "0:v", "-map", "0:a?",
+            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+            "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "copy", "-t", str(dur),
+            local_out,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            err = (res.stderr or res.stdout or "")[-600:]
+            raise RuntimeError(f"reframe failed: {err}")
 
+    import shutil
+    shutil.move(local_out, output_path)
+    _log(f"[ВИДЕО 4K] reframe OK за {time.time()-t0:.1f}s")
     return output_path
 
 

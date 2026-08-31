@@ -36,38 +36,50 @@ class FinalizeStage(Stage):
 
         from ..engines.audio import apply_loudnorm
 
+        def _place_video(src: str, dst: str, already_norm: bool, label: str) -> None:
+            """Copy if audio already loudnormed in BGM; else two-pass loudnorm."""
+            if not src or not os.path.exists(src):
+                return
+            if already_norm:
+                ctx.log(f"[ФИНАЛ] {label}: аудио уже ≈ target → copy (без LUFS-measure)")
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    shutil.copy2(src, dst)
+                return
+            ln = dst + ".loudnorm.mp4"
+            ctx.log(f"[ФИНАЛ] loudnorm → {label}")
+            apply_loudnorm(src, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
+            shutil.move(ln, dst)
+            self._measure(dst, ctx)
+
         if ctx.final_horizontal and os.path.exists(ctx.final_horizontal):
-            final_path = os.path.join(wide_dir, "final_16x9.mp4")
-            ln = final_path + ".loudnorm.mp4"
-            ctx.log("[ФИНАЛ] loudnorm → wide/final_16x9.mp4")
-            apply_loudnorm(ctx.final_horizontal, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
-            shutil.move(ln, final_path)
-            self._measure(final_path, ctx)
+            _place_video(
+                ctx.final_horizontal,
+                os.path.join(wide_dir, "final_16x9.mp4"),
+                bool(getattr(ctx, "horizontal_audio_normalized", False)),
+                "wide/final_16x9.mp4",
+            )
         if ctx.master_horizontal and os.path.exists(ctx.master_horizontal):
             shutil.copy2(ctx.master_horizontal, os.path.join(wide_dir, "master_16x9.mp4"))
 
         if ctx.final_vertical and os.path.exists(ctx.final_vertical):
-            final_path = os.path.join(vert_dir, "final_9x16.mp4")
-            ln = final_path + ".loudnorm.mp4"
-            ctx.log("[ФИНАЛ] loudnorm → vertical/final_9x16.mp4")
-            apply_loudnorm(ctx.final_vertical, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
-            shutil.move(ln, final_path)
-            self._measure(final_path, ctx)
+            _place_video(
+                ctx.final_vertical,
+                os.path.join(vert_dir, "final_9x16.mp4"),
+                bool(getattr(ctx, "vertical_audio_normalized", False)),
+                "vertical/final_9x16.mp4",
+            )
         if ctx.master_vertical and os.path.exists(ctx.master_vertical):
             shutil.copy2(ctx.master_vertical, os.path.join(vert_dir, "master_9x16.mp4"))
 
-        clips = ctx.analysis.get("clips_for_shorts", [])
+        clips = ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else []
+        shorts_norm = bool(getattr(ctx, "shorts_audio_normalized", False))
         for i, short_path in enumerate(ctx.shorts, 1):
             if not os.path.exists(short_path):
                 continue
             sdir = os.path.join(shorts_dir, f"short_{i:03d}")
             os.makedirs(sdir, exist_ok=True)
             final_path = os.path.join(sdir, f"short_{i:03d}.mp4")
-            ln = final_path + ".loudnorm.mp4"
-            ctx.log(f"[ФИНАЛ] loudnorm → shorts/short_{i:03d}/")
-            apply_loudnorm(short_path, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
-            shutil.move(ln, final_path)
-            self._measure(final_path, ctx)
+            _place_video(short_path, final_path, shorts_norm, f"shorts/short_{i:03d}/")
             clip = clips[i - 1] if i - 1 < len(clips) else {}
             self._write_packaging_files(
                 dir_path=sdir,

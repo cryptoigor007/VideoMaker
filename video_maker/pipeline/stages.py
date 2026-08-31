@@ -55,13 +55,16 @@ class PipelineContext:
     master_vertical: str = ""
     final_horizontal: str = ""
     final_vertical: str = ""
+    horizontal_audio_normalized: bool = False
+    vertical_audio_normalized: bool = False
+    shorts_audio_normalized: bool = False
     shorts: list[str] = field(default_factory=list)
 
     # Настройки
     gemini_model: str = ""
     gemini_api_key: str = ""
     gemini_api_keys: list = field(default_factory=list)
-    whisper_model: str = "base"
+    whisper_model: str = "large-v3-turbo"
     whisperx_path: str = ""
     whisper_language: str = "ru"
     whisper_device: str = "auto"

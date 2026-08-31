@@ -5,31 +5,131 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 
-MAX_429_RETRIES = 4
-MAX_503_RETRIES = 6  # high demand / UNAVAILABLE
+# --- Gemini Key / Model manager ---
+# 429 → сразу следующий ключ (без минутного backoff на том же ключе)
+# 503 → максимум 2 коротких retry (2с, 4с), затем следующий ключ
+# Запоминаем последний успешный ключ и модель в ~/video_maker/cache/gemini_state.json
+
+DEFAULT_MODEL_CHAIN = (
+    "gemini-2.5-flash",      # приоритет по умолчанию
+    "gemini-2.0-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-1.5-flash",
+)
+
+STATE_PATH = Path.home() / "video_maker" / "cache" / "gemini_state.json"
 
 
-def _retry_delay_seconds(message: str) -> float:
-    """Достаёт retryDelay из ответа 429 ('Please retry in 37.89s')."""
-    m = re.search(r"retry(?:\s+in)?\s*[\"']?\s*:?\s*([0-9]+(?:\.[0-9]+)?)s",
-                  message, re.IGNORECASE)
-    if not m:
-        m = re.search(r"retryDelay[\"'\s:]+([0-9]+)s", message, re.IGNORECASE)
-    return min(float(m.group(1)) + 2.0, 180.0) if m else 30.0
+def _parse_keys(*sources) -> list[str]:
+    """Ключи: список или строка (запятая / перевод строки / ;). Без дублей, порядок сохраняем."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for src in sources:
+        if not src:
+            continue
+        if isinstance(src, (list, tuple)):
+            parts = list(src)
+        else:
+            parts = re.split(r"[\n,;]+", str(src))
+        for p in parts:
+            k = p.strip()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            out.append(k)
+    return out
 
 
-def _rotate_key(keys: list[str], key_index: int, log_fn=None) -> tuple[bool, int]:
-    """Переключиться на следующий ключ. Возвращает (success, new_index)."""
-    if key_index + 1 >= len(keys):
-        return False, key_index
-    new_index = key_index + 1
-    if log_fn:
-        log_fn(f"[GEMINI] Ключ [{key_index+1}/{len(keys)}] исчерпан, переключаюсь на ключ [{new_index+1}/{len(keys)}]")
-    return True, new_index
+def _load_state() -> dict:
+    try:
+        if STATE_PATH.is_file():
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    try:
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+class GeminiKeyManager:
+    """Ротация ключей + выбор модели. Не держит пайплайн на 120с backoff."""
+
+    def __init__(self, keys: list[str], preferred_model: str = "", log_fn=None):
+        self.keys = keys
+        self.log = log_fn or log.info
+        self.n = len(keys)
+        state = _load_state()
+        # стартуем с последнего успешного ключа
+        start = int(state.get("last_key_index", 0) or 0)
+        if start < 0 or start >= self.n:
+            start = 0
+        self.key_index = start
+        self.exhausted: set[int] = set()  # индексы с 429 / invalid в этой сессии
+        self.model = (preferred_model or "").strip() or state.get("last_model") or DEFAULT_MODEL_CHAIN[0]
+        self.model_chain = self._build_model_chain(self.model)
+        self.model_index = 0
+        self.log(
+            f"[GEMINI] Ключей: {self.n} | старт с ключа {self.key_index+1}/{self.n} | "
+            f"модель: {self.model_chain[0]}"
+        )
+
+    def _build_model_chain(self, preferred: str) -> list[str]:
+        chain: list[str] = []
+        if preferred:
+            chain.append(preferred)
+        for m in DEFAULT_MODEL_CHAIN:
+            if m not in chain:
+                chain.append(m)
+        return chain
+
+    @property
+    def current_key(self) -> str:
+        return self.keys[self.key_index]
+
+    @property
+    def current_model(self) -> str:
+        return self.model_chain[self.model_index]
+
+    def mark_success(self) -> None:
+        _save_state({
+            "last_key_index": self.key_index,
+            "last_model": self.current_model,
+        })
+
+    def rotate_key(self, reason: str) -> bool:
+        """Пометить текущий ключ и перейти к следующему живому. False = ключи кончились."""
+        self.exhausted.add(self.key_index)
+        self.log(
+            f"[GEMINI] {reason} → ключ {self.key_index+1}/{self.n} пропускаем "
+            f"(exhausted={len(self.exhausted)}/{self.n})"
+        )
+        for _ in range(self.n):
+            self.key_index = (self.key_index + 1) % self.n
+            if self.key_index not in self.exhausted:
+                self.log(f"[GEMINI] Переключение на ключ {self.key_index+1}/{self.n}")
+                return True
+        return False
+
+    def next_model(self) -> bool:
+        if self.model_index + 1 < len(self.model_chain):
+            self.model_index += 1
+            self.log(f"[GEMINI] Модель → {self.current_model}")
+            # при смене модели можно снова пробовать ключи (кроме invalid — но invalid редкий)
+            return True
+        return False
+
 
 
 def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool = True, series_name: str = "") -> str:
@@ -200,21 +300,15 @@ def analyze(
     transcription: dict,
     api_key: str = "",
     api_keys: list[str] | None = None,
-    model_name: str = "gemini-3.6-flash",
+    model_name: str = "gemini-2.5-flash",
     intro_gemini: bool = True,
     series_name: str = "",
     log_fn=None,
 ) -> dict:
-    """Единый вызов Gemini → пакет ANALYSIS. Поддержка ротации ключей и ретраев."""
+    """Единый вызов Gemini → пакет ANALYSIS. Нормальная ротация ключей/моделей."""
     _log = log_fn or log.info
-    _log(f"[GEMINI] Анализ моделью {model_name}")
 
-    keys = []
-    if api_keys:
-        keys = [k.strip() for k in api_keys if k.strip()]
-    if api_key and api_key not in keys:
-        keys.insert(0, api_key)
-
+    keys = _parse_keys(api_keys, api_key)
     if not keys:
         _log("[GEMINI] API ключ не задан, пропускаем")
         return _empty_analysis()
@@ -225,30 +319,33 @@ def analyze(
         return _empty_analysis()
 
     full_text = " ".join(s.get("text", "") for s in segments)
-
     prompt = _build_analysis_prompt(full_text, segments, intro_gemini, series_name)
 
-    key_index = 0
-    attempt = 0
-    per_day_seen = False
+    km = GeminiKeyManager(keys, preferred_model=model_name, log_fn=_log)
+    _log(f"[GEMINI] Анализ | ключей={km.n} | модель={km.current_model}")
 
-    while key_index < len(keys):
-        key = keys[key_index]
+    # лимиты: на один ключ для 503 — не больше 2 коротких retry
+    max_503_per_key = 2
+    consecutive_503 = 0
+    json_retries = 0
+    # общий потолок попыток = ключи × модели × (1 + 503 retries) — без бесконечного цикла
+    max_attempts = max(km.n * len(km.model_chain) * 3, 6)
+    attempt = 0
+
+    while attempt < max_attempts:
+        attempt += 1
+        key = km.current_key
+        model = km.current_model
         try:
             from google import genai
             client = genai.Client(api_key=key)
-
-            _log(f"[GEMINI] Запрос к модели {model_name} (ключ {key_index+1}/{len(keys)})")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-
+            _log(f"[GEMINI] Запрос model={model} key={km.key_index+1}/{km.n} try={attempt}")
+            response = client.models.generate_content(model=model, contents=prompt)
             raw = response.text
             if not raw or not raw.strip():
                 raise RuntimeError("Gemini вернул пустой ответ")
-
             analysis = _parse_analysis(raw, segments)
+            km.mark_success()
             _log(
                 f"[GEMINI] OK: shorts={len(analysis.get('clips_for_shorts', []))} "
                 f"hooks_w={len(analysis.get('hooks_wide') or [])} "
@@ -261,89 +358,84 @@ def analyze(
             err_str = str(e)
             _log(f"[GEMINI] Ошибка API: {err_str[:400]}")
 
-            # 503 / UNAVAILABLE — временный пик нагрузки Google
+            # --- 429 / quota: сразу следующий ключ, без sleep ---
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                consecutive_503 = 0
+                if not km.rotate_key("429 quota"):
+                    if km.next_model():
+                        km.exhausted.clear()  # новая модель — новые квоты
+                        continue
+                    raise RuntimeError(
+                        "Gemini: квота исчерпана на всех ключах/моделях. "
+                        "Добавьте ключи или подождите сброса лимита."
+                    ) from e
+                time.sleep(0.5)
+                continue
+
+            # --- 503 / UNAVAILABLE: 2 коротких retry, потом ключ ---
             if (
                 "503" in err_str
                 or "UNAVAILABLE" in err_str
                 or "high demand" in err_str.lower()
-                or "experiencing high demand" in err_str.lower()
+                or "overloaded" in err_str.lower()
             ):
-                attempt += 1
-                if attempt <= MAX_503_RETRIES:
-                    wait = min(120.0, 10.0 * (2 ** min(attempt - 1, 4)))  # 10,20,40,80,120...
+                consecutive_503 += 1
+                if consecutive_503 <= max_503_per_key:
+                    wait = 2.0 * consecutive_503  # 2с, 4с — НЕ 10/20/40/80/120
                     _log(
-                        f"[GEMINI] 503 UNAVAILABLE (high demand). "
-                        f"Жду {wait:.0f}с, повтор {attempt}/{MAX_503_RETRIES}..."
+                        f"[GEMINI] 503 temporary — короткий retry {consecutive_503}/"
+                        f"{max_503_per_key} через {wait:.0f}с"
                     )
                     time.sleep(wait)
                     continue
-                # после ретраев — смена ключа если есть
-                if key_index + 1 < len(keys):
-                    key_index += 1
-                    attempt = 0
-                    _log(f"[GEMINI] 503: переключаюсь на ключ {key_index+1}/{len(keys)}")
-                    time.sleep(3.0)
+                consecutive_503 = 0
+                if not km.rotate_key("503 after short retries"):
+                    if km.next_model():
+                        km.exhausted.clear()
+                        continue
+                    raise RuntimeError(
+                        "Gemini временно недоступен (503) на всех ключах. Попробуйте позже."
+                    ) from e
+                time.sleep(0.5)
+                continue
+
+            # --- invalid key ---
+            if "API_KEY_INVALID" in err_str or "API key not valid" in err_str:
+                consecutive_503 = 0
+                if not km.rotate_key("invalid key"):
+                    raise RuntimeError(
+                        "Недействительный Gemini API ключ (все ключи)."
+                    ) from e
+                continue
+
+            # --- model not found → следующая модель ---
+            if "NOT_FOUND" in err_str and "model" in err_str.lower():
+                consecutive_503 = 0
+                _log(f"[GEMINI] Модель {model} недоступна")
+                if km.next_model():
                     continue
                 raise RuntimeError(
-                    "Gemini временно недоступен (503 high demand) после нескольких попыток. "
-                    "Подождите 5–15 минут или смените модель/ключ."
+                    f"Модель Gemini недоступна: {model_name} и fallback-цепочка."
                 ) from e
 
-            # 429 / quota exhausted
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                per_day_seen = per_day_seen or "PerDay" in err_str
-
-                # Есть запасной ключ — переключаемся
-                if key_index + 1 < len(keys):
-                    key_index += 1
-                    attempt = 0
-                    if log_fn:
-                        log_fn(f"[GEMINI] Ключ [{key_index}/{len(keys)}] исчерпан, переключаюсь на следующий...")
-                    time.sleep(2.0)
-                    continue
-
-                # Ключ один — ждём с экспоненциальным бэкоффом
-                if attempt < MAX_429_RETRIES:
-                    attempt += 1
-                    wait = max(_retry_delay_seconds(err_str) * min(attempt, 3), 15.0)
-                    if log_fn:
-                        log_fn(f"[GEMINI] Лимит запросов (429). Жду {wait:.0f}с и повторяю (попытка {attempt}/{MAX_429_RETRIES})...")
-                    time.sleep(wait)
-                    continue
-
-                tail = (" Суточный лимит free-тарифа — 20 запросов/день на модель; добавьте ещё ключи." if per_day_seen else "")
-                raise RuntimeError(f"Gemini: квота исчерпана после {MAX_429_RETRIES} ожиданий.{tail}") from e
-
-            # Invalid API key
-            if "API_KEY_INVALID" in err_str or "API key not valid" in err_str:
-                if key_index + 1 < len(keys):
-                    key_index += 1
-                    if log_fn:
-                        log_fn("[GEMINI] Ключ недействителен, переключаюсь на следующий...")
-                    continue
-                raise RuntimeError("Недействительный Gemini API ключ. Проверьте ключ в Google AI Studio.") from e
-
-            # Model not found
-            if "NOT_FOUND" in err_str and "model" in err_str.lower():
-                raise RuntimeError(f"Модель Gemini недоступна: {model_name}. Проверьте название модели.") from e
-
-            # JSON parse error — retry once with stricter prompt
+            # --- JSON parse ---
             if isinstance(e, (json.JSONDecodeError, ValueError)) and "JSON" in err_str:
-                if attempt < 1:
-                    attempt += 1
-                    if log_fn:
-                        log_fn("[GEMINI] Ошибка парсинга JSON, повторный запрос с строгими требованиями...")
-                    prompt += "\n\nВАЖНО: Верни ТОЛЬКО валидный JSON без markdown, без комментариев, без лишнего текста."
-                    time.sleep(2.0)
+                if json_retries < 1:
+                    json_retries += 1
+                    _log("[GEMINI] JSON parse error — повтор со строгим промптом")
+                    prompt += (
+                        "\n\nВАЖНО: Верни ТОЛЬКО валидный JSON без markdown, "
+                        "без комментариев, без лишнего текста."
+                    )
+                    time.sleep(1.0)
                     continue
+                raise
 
-            # Other errors — don't swallow, raise
             _log(f"[GEMINI] Ошибка: {e}")
             raise
 
-    # Если вышли из цикла — все ключи исчерпаны
-    _log("[GEMINI] Все ключи исчерпаны")
-    raise RuntimeError("Все Gemini API ключи исчерпаны или недействительны")
+    raise RuntimeError("Gemini: превышено число попыток (ключи/модели)")
+
 
 
 def _parse_analysis(raw: str, segments: list[dict]) -> dict:
