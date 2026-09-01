@@ -1,9 +1,5 @@
-# VideoMaker FIX | 2026.09.01-r5 | 2026-09-01
-# CHANGED: -hwaccel videotoolbox на ВСЕХ видео-входах encode-путей
-#   + inject_hwaccel в run_vt_encode (центрально)
-#   + fit_video_to_duration, cut_segment re-encode
-#   encode: h264_videotoolbox как и было
-# PREV: 2026.09.01-r4 (explicit outro + hooks)
+# VideoMaker FIX | 2026.09.01-r12 | 2026-09-01
+# CHANGED: громкий ERROR если outro включён но файл не найден
 # REPLACE: video_maker/engines/video.py
 
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
@@ -18,7 +14,6 @@ import uuid
 from .ffmpeg_resilient import (
     VideoEncodeFailed,
     calculate_adaptive_bitrate,
-    inject_hwaccel,
     run_vt_encode,
     vt_encode_args,
 )
@@ -315,12 +310,11 @@ def fit_video_to_duration(
     n = len(selected)
     inputs: list[str] = []
     for vf in selected:
-        # decode B-roll на VideoToolbox (Apple Silicon)
-        inputs.extend(["-hwaccel", "videotoolbox", "-i", vf])
+        # без -hwaccel: concat+scale на M1 быстрее software decode + VT encode
+        inputs.extend(["-i", vf])
 
     has_audio = bool(audio_file and os.path.exists(audio_file))
     if has_audio:
-        # аудио — без hwaccel
         inputs.extend(["-i", audio_file])
 
     filters = []
@@ -339,7 +333,7 @@ def fit_video_to_duration(
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-t", str(target_duration),
-        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "0",
         "-pix_fmt", "yuv420p",
         "-r", "30",
     ]
@@ -351,7 +345,6 @@ def fit_video_to_duration(
     else:
         cmd += ["-an"]
     cmd.append(output_path)
-    cmd = inject_hwaccel(cmd)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
@@ -429,7 +422,7 @@ def vstack_video_image(
     """Геометрия 9:16 БЕЗ subtitles (subs — отдельный быстрый burn).
 
     Граф: scale+crop video → top | cached bg → bottom | vstack → VT.
-    ass_path игнорируется здесь (совместимость API) — subs жжёт FinalVertical.
+    ass_path: если задан — subtitles в том же encode (без второго прохода).
     """
     import time
     _log = log_fn or log.info
@@ -442,10 +435,16 @@ def vstack_video_image(
 
     bg = _cached_bg_half(background_path, target_w, half_h, log_fn=_log)
 
-    # Только video scale+crop; bg уже exact size — без второго scale
+    # scale+crop; опционально ASS на верхней половине (один encode)
+    ass_filter = ""
+    if ass_path and os.path.isfile(ass_path):
+        from .subtitles import _escape_ass_path
+        esc = _escape_ass_path(ass_path)
+        ass_filter = f",subtitles='{esc}'"
+        _log(f"[ВИДЕО 4K] vstack+ASS one-pass: {ass_path}")
     fc = (
         f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
-        f"crop={target_w}:{half_h},setsar=1[top];"
+        f"crop={target_w}:{half_h},setsar=1{ass_filter}[top];"
         f"[1:v]setsar=1,format=yuv420p[bot];"
         f"[top][bot]vstack=inputs=2[outv]"
     )
@@ -455,37 +454,27 @@ def vstack_video_image(
     local_out = os.path.join(local_dir, f"vstack_{os.getpid()}_{uuid.uuid4().hex[:8]}.mp4")
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-    def _run(use_hw: bool) -> subprocess.CompletedProcess:
-        cmd = [ffmpeg, "-y"]
-        if use_hw:
-            cmd += ["-hwaccel", "videotoolbox"]
-        cmd += [
+    def _run() -> subprocess.CompletedProcess:
+        # Без -hwaccel: scale/crop/vstack быстрее (как cf44e6a ~1.6x)
+        cmd = [
+            ffmpeg, "-y",
             "-i", video_path,
             "-loop", "1", "-i", bg,
             "-filter_complex", fc,
             "-map", "[outv]",
             "-map", "0:a?",
             "-c:v", "h264_videotoolbox", "-b:v", bitrate,
-            "-allow_sw", "0" if use_hw else "1",
+            "-allow_sw", "0",
             "-pix_fmt", "yuv420p",
             "-r", "30",
             "-c:a", "copy",
             "-t", str(dur),
             local_out,
         ]
-        _log(f"[ВИДЕО 4K] geometry cmd hw={use_hw} bitrate={bitrate}")
+        _log(f"[ВИДЕО 4K] geometry cmd (no hwaccel decode) bitrate={bitrate}")
         return subprocess.run(cmd, capture_output=True, text=True)
 
-    res = _run(True)
-    if res.returncode != 0:
-        _log("[ВИДЕО] geometry hwaccel fail → retry")
-        # cleanup partial
-        try:
-            if os.path.isfile(local_out):
-                os.remove(local_out)
-        except OSError:
-            pass
-        res = _run(False)
+    res = _run()
     if res.returncode != 0:
         err = (res.stderr or res.stdout or "")[-900:]
         _log(f"[ВИДЕО] geometry ошибка: {err}")
@@ -522,7 +511,7 @@ def reframe_horizontal_to_vertical(
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     cmd = [
-        ffmpeg, "-y", "-hwaccel", "videotoolbox",
+        ffmpeg, "-y",
         "-i", video_path,
         "-vf", vf,
         "-map", "0:v", "-map", "0:a?",
@@ -536,7 +525,7 @@ def reframe_horizontal_to_vertical(
         cmd = [
             ffmpeg, "-y", "-i", video_path, "-vf", vf,
             "-map", "0:v", "-map", "0:a?",
-            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "0",
             "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "copy", "-t", str(dur),
             local_out,
         ]
@@ -582,11 +571,10 @@ def cut_segment(
     _log("[ВИДЕО] Обрезка: copy не удался → VideoToolbox")
     cmd = [
         ffmpeg, "-y",
-        "-hwaccel", "videotoolbox",
         "-ss", str(start),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "1",
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         output_path,
@@ -795,7 +783,11 @@ def add_intro_outro_mid(
     )
 
     if not (intro_path or middle_path or outro_path):
-        _log("[ВИДЕО] Файлы интро/мидл/аутро не найдены, пропускаем")
+        _log(
+            "[ВИДЕО][ОШИБКА IMO] Файлы интро/мидл/аутро НЕ найдены — "
+            f"enable_intro={enable_intro} enable_middle={enable_middle} enable_outro={enable_outro} | "
+            f"explicit_outro={explicit_outro!r} folder={intro_outro_folder!r} — ПРОПУСК без изменений"
+        )
         return video_path
 
     inputs = [video_path]
@@ -874,6 +866,166 @@ def add_intro_outro_mid(
     replace_audio(tmp_out, video_path, output_path, log_fn=_log)
     os.remove(tmp_out)
 
+    return output_path
+
+
+
+
+def compose_final_one_pass(
+    video_path: str,
+    output_path: str,
+    *,
+    intro_path: str = "",
+    middle_path: str = "",
+    outro_path: str = "",
+    ass_path: str = "",
+    mid_point: float | None = None,
+    log_fn=None,
+    bitrate: str = "28M",
+) -> str:
+    """Один encode: intro/middle/outro + субтитры (ASS) на основном ролике.
+
+    Раньше: encode IMO → encode burn_subtitles (2 прохода).
+    Теперь: один filter_complex + один h264_videotoolbox.
+
+    ASS накладывается только на основной контент (не на intro/outro).
+    Аудио берётся из исходного video_path (replace_audio после).
+    """
+    _log = log_fn or log.info
+    intro_path = (intro_path or "").strip()
+    middle_path = (middle_path or "").strip()
+    outro_path = (outro_path or "").strip()
+    ass_path = (ass_path or "").strip()
+
+    has_imo = bool(intro_path or middle_path or outro_path)
+    has_ass = bool(ass_path and os.path.isfile(ass_path))
+
+    if not has_imo and not has_ass:
+        _log("[COMPOSE] нечего добавлять — возврат исходника")
+        return video_path
+
+    # Только ASS без IMO → один burn-проход через subtitles filter
+    if has_ass and not has_imo:
+        ffmpeg = _ffmpeg_bin()
+        main_w, main_h, _ = _ffprobe_video_info(video_path)
+        from .subtitles import _escape_ass_path
+        esc = _escape_ass_path(ass_path)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        cmd = [
+            ffmpeg, "-y",
+            "-i", video_path,
+            "-vf", f"subtitles='{esc}'",
+            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "0",
+            "-pix_fmt", "yuv420p", "-r", "30",
+            "-c:a", "copy",
+            output_path,
+        ]
+        run_vt_encode(cmd, [video_path], output_path, log_fn=_log, stage_name="COMPOSE_ASS")
+        _log(f"[COMPOSE] one-pass ASS only → {output_path}")
+        return output_path
+
+    # Только IMO без ASS → существующий путь
+    if has_imo and not has_ass:
+        out_dir = os.path.dirname(output_path) or "."
+        return add_intro_outro_mid(
+            video_path,
+            intro_outro_folder="",
+            enable_intro=bool(intro_path),
+            enable_middle=bool(middle_path),
+            enable_outro=bool(outro_path),
+            output_dir=out_dir,
+            log_fn=_log,
+            explicit_intro=intro_path,
+            explicit_middle=middle_path,
+            explicit_outro=outro_path,
+        )
+
+    # IMO + ASS — один encode
+    _log("[COMPOSE] one-pass IMO+ASS (было 2 encode)")
+    ffmpeg = _ffmpeg_bin()
+    main_w, main_h, _ = _ffprobe_video_info(video_path)
+    main_dur = probe_duration(video_path)
+    if mid_point is None:
+        mid_point = main_dur / 2.0
+    mid_point = float(mid_point)
+
+    from .subtitles import _escape_ass_path
+    esc = _escape_ass_path(ass_path)
+    scale = (
+        f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,"
+        f"pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2"
+    )
+    # субтитры на основном сегменте
+    main_vf = f"{scale},subtitles='{esc}'"
+
+    inputs = [video_path]
+    filter_parts = []
+    concat_inputs = []
+    idx = 1  # 0 = main
+
+    if intro_path and os.path.isfile(intro_path):
+        inputs.append(intro_path)
+        filter_parts.append(f"[{idx}:v]{scale}[v_intro];")
+        concat_inputs.append("[v_intro]")
+        idx += 1
+    else:
+        intro_path = ""
+
+    if middle_path and os.path.isfile(middle_path):
+        # main split + middle
+        filter_parts.append(
+            f"[0:v]trim=0:{mid_point},setpts=PTS-STARTPTS,{main_vf}[v_main1];"
+        )
+        inputs.append(middle_path)
+        filter_parts.append(f"[{idx}:v]{scale}[v_mid];")
+        concat_inputs.append("[v_main1]")
+        concat_inputs.append("[v_mid]")
+        filter_parts.append(
+            f"[0:v]trim={mid_point}:{main_dur},setpts=PTS-STARTPTS,{main_vf}[v_main2];"
+        )
+        concat_inputs.append("[v_main2]")
+        idx += 1
+    else:
+        filter_parts.append(f"[0:v]{main_vf}[v_main];")
+        concat_inputs.append("[v_main]")
+        middle_path = ""
+
+    if outro_path and os.path.isfile(outro_path):
+        inputs.append(outro_path)
+        filter_parts.append(f"[{idx}:v]{scale}[v_outro];")
+        concat_inputs.append("[v_outro]")
+        idx += 1
+    else:
+        outro_path = ""
+
+    filter_parts.append(
+        f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]"
+    )
+    filter_complex = "".join(filter_parts)
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    cmd = [
+        ffmpeg, "-y",
+        *[arg for inp in inputs for arg in ("-i", inp)],
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "0",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+        output_path,
+    ]
+    # inject_hwaccel через run_vt_encode
+    run_vt_encode(cmd, inputs, output_path, log_fn=_log, stage_name="COMPOSE")
+
+    from .audio import replace_audio
+    tmp_out = output_path + ".tmp.mp4"
+    os.rename(output_path, tmp_out)
+    replace_audio(tmp_out, video_path, output_path, log_fn=_log)
+    try:
+        os.remove(tmp_out)
+    except OSError:
+        pass
+    _log(f"[COMPOSE] one-pass done → {output_path}")
     return output_path
 
 

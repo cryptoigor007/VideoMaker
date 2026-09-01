@@ -1,6 +1,5 @@
-# VideoMaker FIX | 2026.09.01-r4 | 2026-09-01
-# CHANGED: в add_intro_outro_mid передаются s_intro/mid/outro_duration.
-# PREV: cf44e6a (длительности для Shorts не передавались → дефолты 3/1/3)
+# VideoMaker FIX | 2026.09.01-r12 | 2026-09-01
+# CHANGED: Shorts IMO path=enable; удаление лишних short_XXX
 # REPLACE: video_maker/pipeline/shorts.py
 
 """ShortsCutter — отдельный продукт: cut из geometry → burn (hooks/CTA shorts) → BGM."""
@@ -84,6 +83,11 @@ class ShortsCutter(Stage):
         os.makedirs(short_dir, exist_ok=True)
         final_path = os.path.join(short_dir, f"short_{index:03d}.mp4")
         cut_path = os.path.join(short_dir, f"short_{index:03d}_cut.mp4")
+        # Resume: уже готовый short — не пересобирать
+        if os.path.isfile(final_path) and os.path.getsize(final_path) > 10_000:
+            ctx.log(f"[SHORTS] #{index} уже есть → пропуск {final_path}")
+            return final_path
+
 
         ctx.log(
             f"[SHORTS] #{index} отдельный рендер: cut {start:.1f}-{end:.1f}s "
@@ -98,27 +102,43 @@ class ShortsCutter(Stage):
         )
         current = cut_path
 
-        # intro/middle/outro shorts (если включены)
-        if getattr(ctx, "s_enable_intro", False) or getattr(ctx, "s_enable_middle", False) or getattr(ctx, "s_enable_outro", False):
+        # intro/middle/outro shorts (explicit → add_intro_outro_mid)
+        # Путь с вкладки = включить (даже если галочка серая)
+        def _sp(*names):
+            for n in names:
+                v = (getattr(ctx, n, None) or "").strip()
+                if v:
+                    return v
+            return ""
+        s_intro = _sp("s_intro_path", "h_intro_path", "v_intro_path")
+        s_mid = _sp("s_mid_path", "h_mid_path", "v_mid_path")
+        s_outro = _sp("s_outro_path", "h_outro_path", "v_outro_path")
+        en_i = bool(getattr(ctx, "s_enable_intro", False)) or bool(s_intro)
+        en_m = bool(getattr(ctx, "s_enable_middle", False)) or bool(s_mid)
+        en_o = bool(getattr(ctx, "s_enable_outro", False)) or bool(s_outro)
+        ctx.log(
+            f"[IMO/S] #{index} enable intro={en_i} mid={en_m} outro={en_o} | outro={s_outro or '—'}"
+        )
+        if en_i or en_m or en_o:
             from ..engines.video import add_intro_outro_mid
             current = add_intro_outro_mid(
                 current,
                 ctx.intro_middle_outro_folder,
-                enable_intro=bool(getattr(ctx, "s_enable_intro", False)),
-                enable_middle=bool(getattr(ctx, "s_enable_middle", False)),
-                enable_outro=bool(getattr(ctx, "s_enable_outro", False)),
+                enable_intro=en_i,
+                enable_middle=en_m,
+                enable_outro=en_o,
                 output_dir=short_dir,
                 log_fn=ctx.log,
                 analysis=ctx.analysis,
-                explicit_intro=(getattr(ctx, "s_intro_path", "") or ""),
-                explicit_middle=(getattr(ctx, "s_mid_path", "") or ""),
-                explicit_outro=(getattr(ctx, "s_outro_path", "") or ""),
+                explicit_intro=s_intro,
+                explicit_middle=s_mid,
+                explicit_outro=s_outro,
                 intro_duration=float(getattr(ctx, "s_intro_duration", 3) or 3),
                 middle_duration=float(getattr(ctx, "s_mid_duration", 1) or 1),
                 outro_duration=float(getattr(ctx, "s_outro_duration", 3) or 3),
             )
 
-        # Свой burn: clip= передаёт тайминги/хуки/CTA именно для shorts
+        # burn: clip= тайминги/хуки/CTA для shorts
         if (
             getattr(ctx, "s_enable_hooks", True)
             or getattr(ctx, "s_enable_subtitles", True)
@@ -152,6 +172,22 @@ class ShortsCutter(Stage):
 
         if os.path.abspath(current) != os.path.abspath(final_path):
             shutil.copy2(current, final_path)
+
+        # Убрать промежуточные файлы — в папке только финальное видео + данные ЭТОГО шорта
+        for name in os.listdir(short_dir):
+            p = os.path.join(short_dir, name)
+            if not os.path.isfile(p):
+                continue
+            if os.path.abspath(p) == os.path.abspath(final_path):
+                continue
+            # оставляем только short_XXX.mp4 и *.txt sidecars
+            if name.endswith(".txt"):
+                continue
+            try:
+                os.remove(p)
+                ctx.log(f"[SHORTS] cleanup intermediate: {name}")
+            except OSError:
+                pass
 
         self._write_sidecar_files(clip, short_dir, index)
         self._write_metadata(
@@ -209,8 +245,26 @@ class ShortsCutter(Stage):
                 log.exception("Shorts clip %s failed", i)
 
         ctx.shorts = results
-        # BGM+loudnorm уже в каждом short
         ctx.shorts_audio_normalized = bool(ctx.add_bgm and ctx.bgm_folder)
+        # Убрать лишние short_XXX от старых прогонов (индекс > текущего числа клипов)
+        n = len(clips)
+        try:
+            for name in list(os.listdir(output_dir)):
+                if not name.startswith("short_"):
+                    continue
+                # short_001 → 1
+                try:
+                    num = int(name.split("_")[1][:3])
+                except Exception:
+                    continue
+                if num > n:
+                    import shutil
+                    p = os.path.join(output_dir, name)
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                        ctx.log(f"[SHORTS] удалена старая папка {name}")
+        except OSError as e:
+            ctx.log(f"[SHORTS] cleanup dirs: {e}")
         ctx.log(f"[SHORTS] Готово: {len(results)} шт → {output_dir}")
         ctx.progress = 90.0
         return ctx

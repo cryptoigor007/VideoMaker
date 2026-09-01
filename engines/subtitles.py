@@ -1,6 +1,4 @@
-# VideoMaker FIX | 2026.09.01-r5 | 2026-09-01
-# CHANGED: -hwaccel videotoolbox на decode при burn субтитров/хуков
-# PREV: 2026.09.01-r4 (shorts hook timing)
+# VideoMaker FIX | 2026.09.01-r12 | 2026-09-01
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -23,7 +21,6 @@ from .ffmpeg_resilient import (
     run_ffmpeg,
     atomic_replace,
     verify_mp4,
-    inject_hwaccel,
 )
 
 log = logging.getLogger(__name__)
@@ -727,7 +724,7 @@ def _build_hook_events(
                     hook_text = ph.strip()
         if hook_text:
             hs = float(clip.get("hook_start", c0) or 0)
-            he = float(clip.get("hook_end", hs + 2.8) or (hs + 2.8))
+            he = float(clip.get("hook_end", hs + 5.0) or (hs + 5.0))
             # относительные 0..dur → абсолютные
             if hs < c0 - 0.05:
                 hs = c0 + max(0.0, hs)
@@ -740,10 +737,10 @@ def _build_hook_events(
             # хук только в начале клипа (не в конце — там CTA)
             if hs > c0 + 3.0:
                 hs = c0
-                he = min(c0 + 2.8, max(c0 + 1.5, c1 - 5.0))
+                he = min(c0 + 5.0, max(c0 + 1.5, c1 - 5.0))
             # гарантируем начало на первом кадре клипа
             hs = c0
-            he = min(max(he, c0 + 2.5), c0 + 3.5, max(c0 + 2.5, c1 - 5.0))
+            he = min(max(he, c0 + 5.0), c0 + 5.5, max(c0 + 5.0, c1 - 5.0))
             if he <= hs:
                 he = hs + 2.5
             hooks_list = [{
@@ -754,6 +751,47 @@ def _build_hook_events(
                 "type": "CURIOSITY",
                 "visual_weight": "L4",
             }]
+    # Full final (16:9 и 9:16, НЕ Shorts): ровно 1 packaging-хук на ролик.
+    # Gemini отдаёт 2–4 hooks_wide/hooks_vertical — оставляем один.
+    # Shorts (clip=) уже заменены на свой clip.hook выше — разные тексты.
+    if clip is None and hooks_list:
+        def _hs(h):
+            return float(h.get("start", h.get("timing", 0)) or 0) if isinstance(h, dict) else 0
+        hooks_list = sorted(
+            [h for h in hooks_list if isinstance(h, dict) and (h.get("text") or "").strip()],
+            key=_hs,
+        )
+        # Для wide/vertical предпочитаем разный источник текста
+        ph_text = ""
+        if wide:
+            # горизонталь: package_hook или первый hooks_wide
+            ph = analysis.get("package_hook") or analysis.get("hook")
+            if isinstance(ph, dict):
+                ph_text = (ph.get("text") or "").strip()
+            elif isinstance(ph, str):
+                ph_text = ph.strip()
+            if not ph_text and hooks_list:
+                ph_text = (hooks_list[0].get("text") or "").strip()
+        else:
+            # вертикаль: свой текст — hooks_vertical[0] / package, не копируем wide
+            ph = analysis.get("hook") or analysis.get("package_hook")
+            if isinstance(ph, dict):
+                ph_text = (ph.get("text") or "").strip()
+            elif isinstance(ph, str):
+                ph_text = ph.strip()
+            if not ph_text and hooks_list:
+                ph_text = (hooks_list[0].get("text") or "").strip()
+        if ph_text:
+            hooks_list = [{
+                "text": ph_text,
+                "start": 0.0,
+                "end": 5.0,
+                "timing": 0.0,
+                "type": "CURIOSITY",
+                "visual_weight": "L4",
+            }]
+        else:
+            hooks_list = hooks_list[:1]
     if not hooks_list:
         return []
 
@@ -767,7 +805,7 @@ def _build_hook_events(
     # Граница CTA / конца ролика — для фильтра последнего хука
     cta_t = float(cta_start) if cta_start is not None and cta_start > 0 else None
     if cta_t is None and video_duration and video_duration > 3:
-        cta_t = max(0.0, float(video_duration) - 5.0)
+        cta_t = max(0.0, float(video_duration) - 7.0)
     MIN_GAP_BEFORE_CTA = 5.0  # жёсткий минимум; лучше 10, но 5 уже отсекает overlap
 
     MARKER_COLORS = (
@@ -790,7 +828,7 @@ def _build_hook_events(
         text_h = text_h.upper()
 
         start_t = float(hook.get("start", hook.get("timing", 0)) or 0)
-        end_t = float(hook.get("end", start_t + 2.8) or (start_t + 2.8))
+        end_t = float(hook.get("end", start_t + 5.0) or (start_t + 5.0))
 
         if idx == 0:
             # Первый хук — сразу на первом кадре сегмента.
@@ -800,16 +838,16 @@ def _build_hook_events(
                 c0 = float(clip.get("start", 0) or 0)
                 c1 = float(clip.get("end", c0 + 15) or (c0 + 15))
                 start_t = c0
-                # 2.5–3.2с показа, не заезжая на CTA (последние 5с клипа)
-                end_t = min(c0 + 3.2, max(c0 + 2.5, c1 - 5.0))
+                # ~5с показа, не заезжая на CTA (последние 5с клипа)
+                end_t = min(c0 + 5.0, max(c0 + 5.0, c1 - 5.0))
                 if end_t <= start_t:
                     end_t = start_t + 2.5
             else:
                 start_t = 0.0
-                if end_t < 2.0:
-                    end_t = 2.8
-                if end_t > 4.0:
-                    end_t = 3.2
+                if end_t < 4.0:
+                    end_t = 5.0
+                if end_t > 5.5:
+                    end_t = 5.0
         else:
             n_words = max(1, len(text_h.split()))
             min_dur = max(2.0, n_words * 0.45)
@@ -886,24 +924,31 @@ def _build_cta_events(
     analysis, playres_x, playres_y, wide, base_size,
     clip=None, video_duration: float = 0.0,
 ):
-    """CTA только в конце: последние ~5 секунд, позиция КАК У ХУКА (верх)."""
-    CTA_DUR = 5.0
+    """CTA только в конце: последние ~7 секунд, позиция КАК У ХУКА (верх)."""
+    CTA_DUR = 7.0
 
     text_c = ""
     start_t = 0.0
     end_t = 0.0
 
-    if clip and (clip.get("cta") or "").strip():
-        text_c = str(clip.get("cta")).strip()
+    if clip is not None:
+        text_c = str(clip.get("cta") or "").strip()
+        if not text_c:
+            raw_c = analysis.get("cta_vertical") or analysis.get("cta") or ""
+            if isinstance(raw_c, dict):
+                text_c = (raw_c.get("text") or "").strip()
+            else:
+                text_c = str(raw_c or "").strip()
+        if not text_c:
+            text_c = "НАПИШИ В КОММЕНТАРИЯХ ЧТО ДУМАЕШЬ"
         c_end = float(clip.get("end", 0) or 0)
         c_start = float(clip.get("start", 0) or 0)
-        # absolute times (burn later shifts by clip)
         end_t = float(clip.get("cta_end") or c_end or 0)
         start_t = float(clip.get("cta_start") or 0)
         if end_t <= 0:
             end_t = c_end
         if start_t <= 0 or (end_t - start_t) < 2.0 or start_t < (c_end - CTA_DUR - 1):
-            # принудительно последние 5с клипа
+            # принудительно последние CTA_DUR сек клипа
             end_t = c_end
             start_t = max(c_start, c_end - CTA_DUR)
     else:
@@ -929,9 +974,10 @@ def _build_cta_events(
                 dur = max(dur, float(seg.get("end") or 0))
 
         if not text_c:
-            return []
+            # CTA обязателен при enable_hooks — fallback если Gemini не дал текст
+            text_c = "НАПИШИ В КОММЕНТАРИЯХ ЧТО ДУМАЕШЬ"
 
-        # Всегда последние ~5 секунд ролика (игнорируем start=0 от Gemini)
+        # Всегда последние ~7 секунд ролика (игнорируем start=0 от Gemini)
         if dur > 3:
             end_t = dur
             start_t = max(0.0, dur - CTA_DUR)
@@ -1094,13 +1140,13 @@ def burn_subtitles(
             except Exception:
                 pass
         # CTA start заранее, чтобы отфильтровать последний хук
-        cta_start_guess = max(0.0, float(vid_dur) - 5.0) if vid_dur > 3 else None
+        cta_start_guess = max(0.0, float(vid_dur) - 7.0) if vid_dur > 3 else None
         if clip and (clip.get("cta") or "").strip():
             try:
                 c_end = float(clip.get("end", 0) or 0)
                 cta_start_guess = max(
                     float(clip.get("start", 0) or 0),
-                    float(clip.get("cta_start") or (c_end - 5.0)),
+                    float(clip.get("cta_start") or (c_end - 7.0)),
                 )
             except Exception:
                 pass
@@ -1231,13 +1277,12 @@ def burn_subtitles(
 
     def _run_vt(vf_expr: str):
         ensure_storage(video_path, tmp_out, log_fn=_log)
+        # Без -hwaccel: libass/subtitles на CPU; hwaccel здесь замедляет (VT↔RAM).
         cmd = [
             ffmpeg, "-y",
-            "-hwaccel", "videotoolbox",
             "-i", video_path,
             "-vf", vf_expr, *vt, tmp_out,
         ]
-        cmd = inject_hwaccel(cmd)
         return run_ffmpeg(cmd, log_fn=_log)
 
     filters_to_try = [

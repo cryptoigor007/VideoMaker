@@ -1,6 +1,4 @@
-# VideoMaker FIX | 2026.09.01-r5 | 2026-09-01
-# CHANGED: inject_hwaccel() — авто -hwaccel videotoolbox перед каждым видео -i
-#   вызывается из run_vt_encode → покрывает intro/outro/cut/и др.
+# VideoMaker FIX | 2026.09.01-r12 | 2026-09-01
 # REPLACE: video_maker/engines/ffmpeg_resilient.py
 
 """Устойчивый запуск ffmpeg/VideoToolbox: classify, SSD wait, retry, без libx264."""
@@ -254,12 +252,11 @@ _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff"
 
 
 def inject_hwaccel(cmd: list[str]) -> list[str]:
-    """Вставить -hwaccel videotoolbox перед каждым видео-входом (-i).
+    """Вставить -hwaccel videotoolbox перед видео -i.
 
-    Не трогаем:
-      - уже есть -hwaccel перед этим -i
-      - -loop 1 (картинка→видео)
-      - чисто аудио / картинки как вход (hwaccel для них бесполезен или падает)
+    На M1/macOS при filter_complex (scale/concat/subtitles) hwaccel ЧАСТО МЕДЛЕННЕЕ:
+    кадры VT→CPU→VT. Используйте только на простых путях без тяжёлых фильтров.
+    Не трогаем: уже hwaccel, -loop 1, audio/image inputs.
     """
     if not cmd:
         return cmd
@@ -375,7 +372,8 @@ def run_vt_encode(
     tmp_out = os.path.join(out_dir, f".vm_vt_{uuid.uuid4().hex[:10]}.mp4")
 
     cmd = list(cmd)
-    cmd = inject_hwaccel(cmd)
+    # НЕ inject_hwaccel: на intro/subs/concat hwaccel замедляет (см. r10).
+    # Encode остаётся h264_videotoolbox в самой cmd.
     if cmd and cmd[-1] == output_path:
         cmd[-1] = tmp_out
     elif output_path in cmd:
