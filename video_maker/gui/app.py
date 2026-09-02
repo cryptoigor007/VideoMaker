@@ -483,7 +483,7 @@ class App:
         for label, prefix, defaults in [
             ("16:9 Гориз.", "h", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
             ("9:16 Вертик.", "v", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
-            ("Shorts", "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": True, "strong": True}),
+            ("Shorts", "s", {"intro": False, "middle": False, "outro": False, "hooks": True, "subs": False, "strong": False}),
         ]:
             row = ttk.Frame(checks_frame)
             row.pack(fill=tk.X, pady=(0, 6))

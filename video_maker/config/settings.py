@@ -49,13 +49,13 @@ class Settings:
     v_enable_subtitles: bool = True
     v_enable_strong_words: bool = True
 
-    # Чекбоксы — Shorts этап
+    # Чекбоксы — Shorts этап (r20: по умолчанию только Hook+CTA)
     s_enable_intro: bool = False
     s_enable_middle: bool = False
     s_enable_outro: bool = False
     s_enable_hooks: bool = True
-    s_enable_subtitles: bool = True
-    s_enable_strong_words: bool = True
+    s_enable_subtitles: bool = False
+    s_enable_strong_words: bool = False
 
     # Аудио / WhisperX — дефолты по требованию пользователя
     whisper_model: str = "large-v3"

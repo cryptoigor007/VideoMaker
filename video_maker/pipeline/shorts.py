@@ -1,9 +1,9 @@
-# VideoMaker FIX | 2026.09.02-r19 | 2026-09-02
-# CHANGED: shorts no re-mix BGM if long already mixed; burn only hook+CTA
-# PREV: 2026.09.02-r17
+# VideoMaker FIX | 2026.09.03-r24 | 2026-09-03
+# CHANGED: skip short Hook/CTA if overlap long zones; HOOK_DUR/CTA_DUR via subtitles
+# PREV: 2026.09.03-r23
 # REPLACE: video_maker/pipeline/shorts.py
 
-"""ShortsCutter — cut из vertical (copy) → burn только hook+CTA → BGM."""
+"""ShortsCutter — cut из final_9x16 (stream copy) → burn только Hook+CTA → BGM reuse."""
 from __future__ import annotations
 
 import logging
@@ -48,19 +48,14 @@ class ShortsCutter(Stage):
         end = float(clip.get("end", 0))
         duration = end - start
 
-        # Только geometry (без vertical burn) — свой burn с clip/hooks/CTA shorts
-        src = getattr(ctx, "master_vertical", "") or ""
+        # r20: cut из готового final_9x16 (один encode vertical).
+        # master_vertical после one_encode == final (с ASS long). Stream copy.
+        src = getattr(ctx, "final_vertical", "") or ""
         if not src or not os.path.isfile(src):
-            # fallback: final_vertical (хуже — уже чужие хуки)
-            src = getattr(ctx, "final_vertical", "") or ""
-            if src and os.path.isfile(src):
-                ctx.log(
-                    f"[SHORTS] #{index}: нет master_vertical, fallback final_9x16 "
-                    "(хуки vertical, не shorts)"
-                )
-            else:
-                ctx.log(f"[SHORTS] Клип {index}: нет вертикального исходника")
-                return None
+            src = getattr(ctx, "master_vertical", "") or ""
+        if not src or not os.path.isfile(src):
+            ctx.log(f"[SHORTS] Клип {index}: нет вертикального исходника (final/master)")
+            return None
 
         video_duration = probe_duration(src)
         if start >= video_duration or duration <= 0:
@@ -86,8 +81,8 @@ class ShortsCutter(Stage):
         cut_path = os.path.join(short_dir, f"short_{index:03d}_cut.mp4")
 
         ctx.log(
-            f"[SHORTS] #{index} copy from vertical: cut {start:.1f}-{end:.1f}s "
-            f"(stream copy preferred) → burn only Hook+CTA"
+            f"[SHORTS] #{index} copy from final_9x16: cut {start:.1f}-{end:.1f}s "
+            f"(stream copy) → burn only Hook+CTA"
         )
         cut_segment(
             video_path=src,
@@ -118,17 +113,49 @@ class ShortsCutter(Stage):
                 outro_duration=float(getattr(ctx, "s_outro_duration", 3) or 3),
             )
 
-        # Stage C: burn ТОЛЬКО hook + CTA (субтитры — только если явно включены)
-        # enable_subtitles по умолчанию False для shorts; если True — burn_subtitles
-        # сам ограничит события по словам клипа через clip=
+        # r24: shorts = только Hook + CTA; skip если пересечение с long Hook/CTA зоной
+        # (final_9x16 уже содержит long ASS → двойное наложение).
         s_hooks = bool(getattr(ctx, "s_enable_hooks", True))
-        s_subs = bool(getattr(ctx, "s_enable_subtitles", False))  # default OFF for shorts
+        s_subs = bool(getattr(ctx, "s_enable_subtitles", False))
         s_strong = bool(getattr(ctx, "s_enable_strong_words", False))
+
+        # Зоны long vertical Hook / CTA = то, что реально прожжено в final_9x16
+        # (long always forces Hook 0..HOOK_DUR and CTA last CTA_DUR sec).
+        try:
+            from ..engines.subtitles import HOOK_DUR, CTA_DUR
+        except Exception:
+            HOOK_DUR, CTA_DUR = 4.5, 7.0
+        long_hook_end = float(HOOK_DUR)
+        full_dur = float(video_duration or 0)
+        if full_dur > CTA_DUR:
+            long_cta_start = full_dur - float(CTA_DUR)
+        else:
+            long_cta_start = max(0.0, full_dur * 0.5)
+
+        # short_start/end уже в переменных start/end
+        skip_hook = bool(s_hooks and start < long_hook_end)
+        skip_cta = bool(s_hooks and end > long_cta_start)
+        clip = dict(clip)
+        if skip_hook:
+            clip["_skip_hook"] = True
+            ctx.log(
+                f"[SHORTS] #{index} skip Hook: short_start={start:.2f} < "
+                f"long_hook_end={long_hook_end:.2f} (уже в final_9x16)"
+            )
+        if skip_cta:
+            clip["_skip_cta"] = True
+            ctx.log(
+                f"[SHORTS] #{index} skip CTA: short_end={end:.2f} > "
+                f"long_cta_start={long_cta_start:.2f} (уже в final_9x16)"
+            )
+
         if s_hooks or s_subs or s_strong:
             subtitled = os.path.join(short_dir, f"short_{index:03d}_subs.mp4")
             ctx.log(
-                f"[SHORTS] #{index} burn only: hooks={s_hooks} subs={s_subs} strong={s_strong}"
+                f"[SHORTS] #{index} burn only: hooks={s_hooks} subs={s_subs} strong={s_strong} "
+                f"skip_hook={skip_hook} skip_cta={skip_cta}"
             )
+            tr = ctx.transcription if (s_subs or s_strong) else None
             current = burn_subtitles(
                 video_path=current,
                 analysis=ctx.analysis,
@@ -140,7 +167,7 @@ class ShortsCutter(Stage):
                 log_fn=ctx.log,
                 caption_style=getattr(ctx, "caption_style", "auto_aisie"),
                 hook_style=getattr(ctx, "hook_style", "auto_aisie"),
-                transcription=ctx.transcription,
+                transcription=tr,
                 use_aisie=True,
             )
 
@@ -194,7 +221,7 @@ class ShortsCutter(Stage):
                 log.warning("[SHORTS] не записал %s: %s", p, e)
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
-        ctx.log("[SHORTS] Отдельный рендер Shorts (не copy из Vertical)...")
+        ctx.log("[SHORTS] cut from final_9x16 (stream copy) + burn only Hook+CTA...")
         output_dir = os.path.join(ctx.output_folder, "shorts")
         os.makedirs(output_dir, exist_ok=True)
 

@@ -115,6 +115,9 @@ def save_checkpoint(
         "final_horizontal": getattr(ctx, "final_horizontal", "") or "",
         "final_vertical": getattr(ctx, "final_vertical", "") or "",
         "shorts": list(getattr(ctx, "shorts", []) or []),
+        "bgm_mixed": bool(getattr(ctx, "bgm_mixed", False)),
+        "bgm_source_video": getattr(ctx, "bgm_source_video", "") or "",
+        "h_did_imo": bool(getattr(ctx, "h_did_imo", False)),
         "transcription_file": tr_path if tr_path and os.path.isfile(tr_path) else "",
         "analysis_file": an_path if an_path and os.path.isfile(an_path) else "",
         "progress": float(getattr(ctx, "progress", 0) or 0),
@@ -153,11 +156,14 @@ def apply_checkpoint_to_ctx(ctx: Any, data: dict, log_fn=None) -> Any:
         "master_horizontal", "master_vertical",
         "final_horizontal", "final_vertical",
         "series_name", "audio_duration",
+        "bgm_source_video",
     ):
         if data.get(key) is not None:
             setattr(ctx, key, data[key])
     if data.get("shorts"):
         ctx.shorts = list(data["shorts"])
+    ctx.bgm_mixed = bool(data.get("bgm_mixed", False))
+    ctx.h_did_imo = bool(data.get("h_did_imo", False))
     completed = list(data.get("completed_stages") or [])
     ctx.progress = float(data.get("progress") or 0)
 

@@ -1,6 +1,6 @@
-# VideoMaker FIX | 2026.09.01-r5 | 2026-09-01
-# CHANGED: -hwaccel videotoolbox на decode при burn субтитров/хуков
-# PREV: 2026.09.01-r4 (shorts hook timing)
+# VideoMaker FIX | 2026.09.03-r24 | 2026-09-03
+# CHANGED: Hook 4.5s / CTA 7.0s; shorts skip Hook/CTA if overlap with long zones
+# PREV: 2026.09.01-r5
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -13,6 +13,10 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+
+# r24: display durations (long + shorts)
+HOOK_DUR = 4.5   # was ~2.5–3.2
+CTA_DUR = 7.0    # was 5.0
 
 from .ffmpeg_resilient import (
     SubtitleStageFailed,
@@ -725,9 +729,11 @@ def _build_hook_events(
                     hook_text = (ph.get("text") or "").strip()
                 elif isinstance(ph, str):
                     hook_text = ph.strip()
-        if hook_text:
+        if clip.get("_skip_hook"):
+            hooks_list = []
+        elif hook_text:
             hs = float(clip.get("hook_start", c0) or 0)
-            he = float(clip.get("hook_end", hs + 2.8) or (hs + 2.8))
+            he = float(clip.get("hook_end", hs + HOOK_DUR) or (hs + HOOK_DUR))
             # относительные 0..dur → абсолютные
             if hs < c0 - 0.05:
                 hs = c0 + max(0.0, hs)
@@ -736,16 +742,16 @@ def _build_hook_events(
             if hs < c0:
                 hs = c0
             if he <= hs:
-                he = hs + 2.5
+                he = hs + HOOK_DUR
             # хук только в начале клипа (не в конце — там CTA)
-            if hs > c0 + 3.0:
+            if hs > c0 + HOOK_DUR:
                 hs = c0
-                he = min(c0 + 2.8, max(c0 + 1.5, c1 - 5.0))
-            # гарантируем начало на первом кадре клипа
+                he = min(c0 + HOOK_DUR, max(c0 + 2.0, c1 - CTA_DUR))
+            # гарантируем начало на первом кадре клипа, длительность ~HOOK_DUR
             hs = c0
-            he = min(max(he, c0 + 2.5), c0 + 3.5, max(c0 + 2.5, c1 - 5.0))
+            he = min(max(he, c0 + HOOK_DUR), c0 + HOOK_DUR + 0.5, max(c0 + 2.5, c1 - CTA_DUR))
             if he <= hs:
-                he = hs + 2.5
+                he = hs + HOOK_DUR
             hooks_list = [{
                 "text": hook_text,
                 "start": hs,
@@ -775,8 +781,8 @@ def _build_hook_events(
     # Граница CTA / конца ролика — для фильтра последнего хука
     cta_t = float(cta_start) if cta_start is not None and cta_start > 0 else None
     if cta_t is None and video_duration and video_duration > 3:
-        cta_t = max(0.0, float(video_duration) - 5.0)
-    MIN_GAP_BEFORE_CTA = 5.0  # жёсткий минимум; лучше 10, но 5 уже отсекает overlap
+        cta_t = max(0.0, float(video_duration) - CTA_DUR)
+    MIN_GAP_BEFORE_CTA = CTA_DUR  # не пересекаться с CTA-зоной
 
     MARKER_COLORS = (
         "&H00952DFF&",  # fuchsia
@@ -798,29 +804,27 @@ def _build_hook_events(
         text_h = text_h.upper()
 
         start_t = float(hook.get("start", hook.get("timing", 0)) or 0)
-        end_t = float(hook.get("end", start_t + 2.8) or (start_t + 2.8))
+        end_t = float(hook.get("end", start_t + HOOK_DUR) or (start_t + HOOK_DUR))
 
         if idx == 0:
-            # Первый хук — сразу на первом кадре сегмента.
-            # Для Shorts (clip=) времена АБСОЛЮТНЫЕ на полном ролике → start = clip.start,
-            # иначе после cut+_filter_and_shift хук на 0..3с полного видео выпадёт из окна клипа.
+            # Первый хук — сразу на первом кадре. Длительность ~HOOK_DUR (r24).
+            # Для Shorts (clip=) времена АБСОЛЮТНЫЕ на полном ролике → start = clip.start.
             if clip:
                 c0 = float(clip.get("start", 0) or 0)
                 c1 = float(clip.get("end", c0 + 15) or (c0 + 15))
                 start_t = c0
-                # 2.5–3.2с показа, не заезжая на CTA (последние 5с клипа)
-                end_t = min(c0 + 3.2, max(c0 + 2.5, c1 - 5.0))
+                end_t = min(c0 + HOOK_DUR, max(c0 + 3.0, c1 - CTA_DUR))
                 if end_t <= start_t:
-                    end_t = start_t + 2.5
+                    end_t = start_t + HOOK_DUR
             else:
                 start_t = 0.0
-                if end_t < 2.0:
-                    end_t = 2.8
-                if end_t > 4.0:
-                    end_t = 3.2
+                if end_t < HOOK_DUR - 0.5:
+                    end_t = HOOK_DUR
+                if end_t > HOOK_DUR + 0.5:
+                    end_t = HOOK_DUR
         else:
             n_words = max(1, len(text_h.split()))
-            min_dur = max(2.0, n_words * 0.45)
+            min_dur = max(HOOK_DUR * 0.8, n_words * 0.5)
             if end_t - start_t < min_dur:
                 end_t = start_t + min_dur
 
@@ -894,8 +898,9 @@ def _build_cta_events(
     analysis, playres_x, playres_y, wide, base_size,
     clip=None, video_duration: float = 0.0,
 ):
-    """CTA только в конце: последние ~5 секунд, позиция КАК У ХУКА (верх)."""
-    CTA_DUR = 5.0
+    """CTA только в конце: последние ~CTA_DUR секунд, позиция КАК У ХУКА (верх)."""
+    if clip and clip.get("_skip_cta"):
+        return []
 
     text_c = ""
     start_t = 0.0
@@ -911,7 +916,7 @@ def _build_cta_events(
         if end_t <= 0:
             end_t = c_end
         if start_t <= 0 or (end_t - start_t) < 2.0 or start_t < (c_end - CTA_DUR - 1):
-            # принудительно последние 5с клипа
+            # принудительно последние CTA_DUR сек клипа
             end_t = c_end
             start_t = max(c_start, c_end - CTA_DUR)
     else:
@@ -939,7 +944,7 @@ def _build_cta_events(
         if not text_c:
             return []
 
-        # Всегда последние ~5 секунд ролика (игнорируем start=0 от Gemini)
+        # Всегда последние ~CTA_DUR секунд ролика (игнорируем start=0 от Gemini)
         if dur > 3:
             end_t = dur
             start_t = max(0.0, dur - CTA_DUR)
@@ -1129,13 +1134,13 @@ def burn_subtitles(
             except Exception:
                 pass
         # CTA start заранее, чтобы отфильтровать последний хук
-        cta_start_guess = max(0.0, float(vid_dur) - 5.0) if vid_dur > 3 else None
+        cta_start_guess = max(0.0, float(vid_dur) - CTA_DUR) if vid_dur > 3 else None
         if clip and (clip.get("cta") or "").strip():
             try:
                 c_end = float(clip.get("end", 0) or 0)
                 cta_start_guess = max(
                     float(clip.get("start", 0) or 0),
-                    float(clip.get("cta_start") or (c_end - 5.0)),
+                    float(clip.get("cta_start") or (c_end - CTA_DUR)),
                 )
             except Exception:
                 pass

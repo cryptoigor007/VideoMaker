@@ -1,6 +1,6 @@
-# VideoMaker FIX | 2026.09.02-r19 | 2026-09-02
-# CHANGED: BGM once; clean geo for shorts cuts when clips exist; 1 Hook long
-# PREV: 2026.09.02-r17
+# VideoMaker FIX | 2026.09.03-r22 | 2026-09-03
+# CHANGED: BGM always mix once on wide; vertical/shorts always reuse (no re-mix, no IMO skip)
+# PREV: 2026.09.02-r21
 # REPLACE: video_maker/pipeline/branches.py
 """Branches — создание финальных видео (final_16x9 и final_9x16)."""
 from __future__ import annotations
@@ -57,6 +57,7 @@ class FinalHorizontal(Stage):
                 outro_duration=float(getattr(ctx, "h_outro_duration", 3) or 3),
             )
             did_imo = True
+            ctx.h_did_imo = True
 
         # Единственный полный encode wide: burn ASS (hooks/subs/strong)
         if ctx.h_enable_hooks or ctx.h_enable_subtitles or ctx.h_enable_strong_words:
@@ -164,7 +165,9 @@ class FinalHorizontal(Stage):
 class FinalVertical(Stage):
     """Финальное вертикальное видео (9:16).
 
-    r17: при need_vstack — один encode (geometry 9:16 + burn ASS).
+    r22: при need_vstack — СТРОГО один encode (geometry 9:16 + burn ASS).
+    Shorts режутся из final_9x16 (stream copy). Отдельный geometry-only запрещён.
+    BGM: mix один раз на wide → vertical всегда reuse (stream copy audio, -t по video).
     """
 
     def name(self) -> str:
@@ -181,7 +184,7 @@ class FinalVertical(Stage):
         current = ctx.master_vertical or ""
         one_encode = False
 
-        # --- r17/r19: vertical final = geometry [+ ASS]; clean geo for shorts cuts ---
+        # --- r20: vertical = один encode geometry [+ ASS]. Без geometry-only. ---
         if need_vstack:
             import time
             from ..engines.video import vstack_video_image
@@ -192,10 +195,6 @@ class FinalVertical(Stage):
                 or ctx.v_enable_subtitles
                 or ctx.v_enable_strong_words
             )
-            shorts_clips = []
-            if ctx.analysis:
-                shorts_clips = list(ctx.analysis.get("clips_for_shorts") or [])
-            need_clean_geo = bool(shorts_clips)
 
             ass_path = ""
             if need_burn:
@@ -218,52 +217,23 @@ class FinalVertical(Stage):
                 )
                 ctx.log(f"[VERTICAL] ASS ready in {time.time()-t_ass:.1f}s → {ass_path}")
 
-            geo_path = os.path.join(output_dir, "master_9x16_geo.mp4")
-
-            if need_clean_geo and need_burn and ass_path:
-                # Shorts need clean geo (stream copy) + final with ASS separately
-                t0 = time.time()
-                ctx.log("[VERTICAL] geometry-only for shorts master...")
-                geo = vstack_video_image(
-                    video_path=ctx.master_horizontal,
-                    background_path=ctx.vertical_background,
-                    output_path=geo_path,
-                    log_fn=ctx.log,
-                    top_ratio=getattr(ctx, "vstack_top_ratio", 0.6),
-                    ass_path="",
-                )
-                ctx.master_vertical = geo
-                ctx.log(f"[VERTICAL] geo for shorts OK in {time.time()-t0:.1f}s")
-                t1 = time.time()
-                ctx.log("[VERTICAL] one encode: geometry + ASS → final_9x16")
-                current = vstack_video_image(
-                    video_path=ctx.master_horizontal,
-                    background_path=ctx.vertical_background,
-                    output_path=output_path,
-                    log_fn=ctx.log,
-                    top_ratio=getattr(ctx, "vstack_top_ratio", 0.6),
-                    ass_path=ass_path,
-                )
-                one_encode = False  # geo + final
-                ctx.log(f"[VERTICAL] final+ASS elapsed={time.time()-t1:.1f}s")
-            else:
-                # Single pass: geo [+ ASS] → final; master_vertical = same
-                t0 = time.time()
-                ctx.log(
-                    f"[VERTICAL] one encode: geometry"
-                    f"{' + ASS' if ass_path else ''} → final_9x16"
-                )
-                current = vstack_video_image(
-                    video_path=ctx.master_horizontal,
-                    background_path=ctx.vertical_background,
-                    output_path=output_path,
-                    log_fn=ctx.log,
-                    top_ratio=getattr(ctx, "vstack_top_ratio", 0.6),
-                    ass_path=ass_path or "",
-                )
-                ctx.master_vertical = current
-                one_encode = True
-                ctx.log(f"[VERTICAL] one-encode elapsed={time.time()-t0:.1f}s")
+            # Single pass only: geometry [+ ASS] → final_9x16
+            t0 = time.time()
+            ctx.log(
+                f"[VERTICAL] one encode: geometry"
+                f"{' + ASS' if ass_path else ''} → final_9x16"
+            )
+            current = vstack_video_image(
+                video_path=ctx.master_horizontal,
+                background_path=ctx.vertical_background,
+                output_path=output_path,
+                log_fn=ctx.log,
+                top_ratio=getattr(ctx, "vstack_top_ratio", 0.6),
+                ass_path=ass_path or "",
+            )
+            ctx.master_vertical = current
+            one_encode = True
+            ctx.log(f"[VERTICAL] one-encode elapsed={time.time()-t0:.1f}s")
         else:
             current = ctx.master_vertical
             if ctx.v_enable_intro or ctx.v_enable_middle or ctx.v_enable_outro:
@@ -300,10 +270,11 @@ class FinalVertical(Stage):
                     use_aisie=True,
                 )
 
-        # BGM: не мешать повторно — копируем уже смешанную дорожку с wide
+        # BGM r22: mix ровно один раз на wide → vertical всегда reuse.
+        # Запрещены: re-mix, skip reuse (IMO/duration). -t по длительности video.
         if getattr(ctx, "bgm_mixed", False) and getattr(ctx, "final_horizontal", ""):
             src_a = ctx.final_horizontal
-            if src_a and os.path.isfile(src_a):
+            if src_a and os.path.isfile(src_a) and current and os.path.isfile(current):
                 bgm_out = os.path.join(output_dir, "final_9x16_bgm.mp4")
                 current = self._copy_audio_from(current, src_a, bgm_out, ctx)
                 ctx.vertical_audio_normalized = True
@@ -311,7 +282,7 @@ class FinalVertical(Stage):
             elif ctx.voice_enhance:
                 current = self._apply_audio_post(current, ctx, output_path)
         elif ctx.add_bgm and ctx.bgm_folder:
-            # wide не мешал (нет H BGM) — единственный mix здесь
+            # Wide не мешал BGM (выключен на H) — единственный mix здесь
             from ..engines.audio import mix_bgm
             bgm_out = os.path.join(output_dir, "final_9x16_bgm.mp4")
             current = mix_bgm(current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True)
@@ -345,8 +316,16 @@ class FinalVertical(Stage):
         return current
 
     def _copy_audio_from(self, video_path: str, audio_src_video: str, output_path: str, ctx: PipelineContext) -> str:
-        """Подставить аудио из уже смешанного long-видео (без повторного mix BGM)."""
+        """Подставить аудио из уже смешанного long-видео (без повторного mix BGM).
+
+        Длительность берём от video_path (-t), чтобы не удлинять/не обрезать кадры.
+        """
         import subprocess
+        from ..engines.audio import probe_duration
+
+        dur = probe_duration(video_path)
+        t_args = ["-t", f"{dur:.3f}"] if dur > 0.5 else []
+
         cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
@@ -354,7 +333,7 @@ class FinalVertical(Stage):
             "-map", "0:v:0", "-map", "1:a:0?",
             "-c:v", "copy",
             "-c:a", "copy",
-            "-shortest",
+            *t_args,
             output_path,
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
@@ -368,11 +347,11 @@ class FinalVertical(Stage):
             "-map", "0:v:0", "-map", "1:a:0?",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-            "-shortest",
+            *t_args,
             output_path,
         ]
         subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        if os.path.isfile(output_path):
+        if os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
             return output_path
         ctx.log("[BGM] copy audio failed — keep original video audio")
         return video_path

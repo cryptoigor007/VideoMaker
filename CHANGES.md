@@ -1,3 +1,26 @@
+# VideoMaker — r21 (2026-09-02)
+
+## r21 — vertical one_encode + safe BGM + shorts only Hook+CTA
+
+### Исправлено
+1. **Vertical dual-pass убран**: больше нет `geometry-only` + `geometry+ASS`.
+   Строго один encode: geometry + ASS → `final_9x16`, `one_encode=True`.
+2. **Shorts**: cut stream-copy из `final_9x16`; по умолчанию burn только Hook+CTA
+   (`s_enable_subtitles=False`, `s_enable_strong_words=False`).
+3. **BGM reuse**: не копируем аудио с wide на vertical, если:
+   - на wide был IMO, а на vertical — нет, или
+   - длительности расходятся > 0.5 с.
+   Иначе — безопасный copy с `-t` по длительности video.
+4. **PipelineContext**: явные поля `bgm_mixed`, `bgm_source_video`, `h_did_imo`.
+5. **Checkpoint**: сохраняет/восстанавливает `bgm_mixed`, `h_did_imo`.
+
+### Не тронуто
+- FAST IMO (`path=FAST`)
+- 1 Hook + 1 CTA на long wide/vertical
+- REPLACE-семантика, resume, пути с пробелами/кириллицей
+
+---
+
 # VideoMaker — итоговые исправления (29.08.2026)
 
 ## Что исправлено

@@ -59,6 +59,11 @@ class PipelineContext:
     vertical_audio_normalized: bool = False
     shorts_audio_normalized: bool = False
     shorts: list[str] = field(default_factory=list)
+    # BGM: mix ровно один раз на long, дальше reuse
+    bgm_mixed: bool = False
+    bgm_source_video: str = ""
+    # IMO applied on horizontal (для безопасного reuse audio на vertical)
+    h_did_imo: bool = False
 
     # Настройки
     gemini_model: str = ""
@@ -95,8 +100,8 @@ class PipelineContext:
     s_enable_middle: bool = False
     s_enable_outro: bool = False
     s_enable_hooks: bool = True
-    s_enable_subtitles: bool = True
-    s_enable_strong_words: bool = True
+    s_enable_subtitles: bool = False   # r20: shorts default = only Hook+CTA
+    s_enable_strong_words: bool = False  # r20: no karaoke by default on shorts
 
     # Прогресс
     progress: float = 0.0
