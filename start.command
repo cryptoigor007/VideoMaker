@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PROJECT_DIR="/Users/dreamstore/video_maker"
+PROJECT_DIR="/Users/dreamstore/VideoMaker"
 cd "$PROJECT_DIR" || exit 1
 
 echo "========================================"

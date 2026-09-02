@@ -1,11 +1,9 @@
-# VideoMaker FIX | 2026.09.01-r5 | 2026-09-01
-# CHANGED: -hwaccel videotoolbox на ВСЕХ видео-входах encode-путей
-#   + inject_hwaccel в run_vt_encode (центрально)
-#   + fit_video_to_duration, cut_segment re-encode
-#   encode: h264_videotoolbox как и было
-# PREV: 2026.09.01-r4 (explicit outro + hooks)
+# VideoMaker FIX | 2026.09.02-r14 | 2026-09-02
+# CHANGED: intro/outro/middle = REPLACE сегментов main (не удлиняют ролик)
+#   intro → first N sec, outro → last M sec, middle @ Gemini mid_point
+#   audio = master only, без pad/silence; тайминги субтитров не плывут
+# PREV: 2026.09.02-r13 (append/pad — сломало звук и субтитры)
 # REPLACE: video_maker/engines/video.py
-
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
 from __future__ import annotations
 
@@ -798,61 +796,171 @@ def add_intro_outro_mid(
         _log("[ВИДЕО] Файлы интро/мидл/аутро не найдены, пропускаем")
         return video_path
 
-    inputs = [video_path]
+
+    # ============================================================
+    # r14: intro/outro/middle НЕ удлиняют ролик — REPLACE сегментов main.
+    #   intro  → первые intro_dur сек main
+    #   outro  → последние outro_dur сек main
+    #   middle → сегмент [mid_point : mid_point+middle_dur] (время из Gemini)
+    # Аудио: только copy из master, без pad/silence.
+    # ============================================================
+
+    intro_real_dur = 0.0
     if intro_path:
-        inputs.append(intro_path)
-    if middle_path:
-        inputs.append(middle_path)
+        try:
+            intro_real_dur = float(probe_duration(intro_path))
+        except Exception as e:
+            _log(f"[IMO] intro probe fail: {e}, fallback={intro_duration}")
+            intro_real_dur = float(intro_duration or 3.0)
+        if intro_real_dur <= 0.05:
+            _log(f"[IMO] intro duration invalid — disable")
+            intro_path, intro_real_dur = "", 0.0
+        else:
+            _log(f"[IMO] intro REPLACE first {intro_real_dur:.2f}s of main")
+
+    outro_real_dur = 0.0
     if outro_path:
-        inputs.append(outro_path)
-    _log(f"[IMO] concat inputs={len(inputs)} (1=main + overlays)")
+        try:
+            outro_real_dur = float(probe_duration(outro_path))
+        except Exception as e:
+            _log(f"[IMO] outro probe fail: {e}, fallback={outro_duration}")
+            outro_real_dur = float(outro_duration or 3.0)
+        if outro_real_dur <= 0.05:
+            _log(f"[IMO] outro duration invalid — disable")
+            outro_path, outro_real_dur = "", 0.0
+        else:
+            _log(f"[IMO] outro REPLACE last {outro_real_dur:.2f}s of main")
+
+    middle_real_dur = 0.0
+    if middle_path:
+        try:
+            middle_real_dur = float(probe_duration(middle_path))
+        except Exception as e:
+            _log(f"[IMO] middle probe fail: {e}, fallback={middle_duration}")
+            middle_real_dur = float(middle_duration or 1.0)
+        if middle_real_dur <= 0.05:
+            _log(f"[IMO] middle duration invalid — disable")
+            middle_path, middle_real_dur = "", 0.0
+        else:
+            # clamp mid_point so middle fits inside main between intro and outro zones
+            lo = intro_real_dur
+            hi = main_dur - outro_real_dur - middle_real_dur
+            if hi < lo:
+                _log(f"[IMO] middle не влезает между intro/outro — disable")
+                middle_path, middle_real_dur = "", 0.0
+            else:
+                if mid_point < lo:
+                    mid_point = lo
+                if mid_point > hi:
+                    mid_point = hi
+                _log(
+                    f"[IMO] middle REPLACE at {mid_point:.2f}s "
+                    f"dur={middle_real_dur:.2f}s (Gemini/clamp)"
+                )
+
+    # Safety: intro+outro+middle must fit
+    used = intro_real_dur + outro_real_dur + middle_real_dur
+    if used >= main_dur - 0.3:
+        _log(f"[IMO] WARN: overlays {used:.1f}s >= main {main_dur:.1f}s — clamp outro")
+        outro_real_dur = max(0.5, main_dur - intro_real_dur - middle_real_dur - 0.5)
+        if outro_real_dur <= 0.05:
+            outro_path, outro_real_dur = "", 0.0
+
+    if not (intro_path or middle_path or outro_path):
+        _log("[IMO] нечего накладывать — пропуск")
+        return video_path
 
     scale_filter = (
         f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,"
-        f"pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2"
+        f"pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     )
 
+    # Build ordered segments of main that remain (gaps filled by overlays)
+    # Timeline of main [0, main_dur):
+    #   [0, intro_dur)           → intro
+    #   [intro_dur, mid)         → main  (if middle)
+    #   [mid, mid+mid_dur)       → middle
+    #   [mid+mid_dur, main-outro)→ main
+    #   [main-outro, main)       → outro
+    # Without middle:
+    #   [0, intro_dur) → intro
+    #   [intro_dur, main-outro) → main
+    #   [main-outro, main) → outro
+
+    inputs = [video_path]
+    input_idx = { "main": 0 }
+    if intro_path:
+        inputs.append(intro_path)
+        input_idx["intro"] = len(inputs) - 1
     if middle_path:
-        filter_parts = []
-        idx = 1
-        if intro_path:
-            filter_parts.append(f"[{idx}:v]{scale_filter}[v_intro];")
-            idx += 1
-        filter_parts.append(f"[0:v]trim=0:{mid_point},setpts=PTS-STARTPTS[v_main1];")
-        if middle_path:
-            filter_parts.append(f"[{idx}:v]{scale_filter}[v_mid];")
-            idx += 1
-        filter_parts.append(f"[0:v]trim={mid_point}:{main_dur},setpts=PTS-STARTPTS[v_main2];")
-        concat_inputs = []
-        if intro_path:
-            concat_inputs.append("[v_intro]")
-        concat_inputs.append("[v_main1]")
-        if middle_path:
-            concat_inputs.append("[v_mid]")
-        concat_inputs.append("[v_main2]")
-        if outro_path:
-            filter_parts.append(f"[{idx}:v]{scale_filter}[v_outro];")
-            concat_inputs.append("[v_outro]")
+        inputs.append(middle_path)
+        input_idx["middle"] = len(inputs) - 1
+    if outro_path:
+        inputs.append(outro_path)
+        input_idx["outro"] = len(inputs) - 1
+
+    _log(
+        f"[IMO] REPLACE mode inputs={len(inputs)} | "
+        f"intro={intro_real_dur:.2f}s middle={middle_real_dur:.2f}s@{'%.2f'%mid_point if middle_path else '-'} "
+        f"outro={outro_real_dur:.2f}s | main={main_dur:.2f}s"
+    )
+
+    filter_parts = []
+    concat_labels = []
+    vcount = 0
+
+    def add_overlay(key: str, dur_label: str):
+        nonlocal vcount
+        i = input_idx[key]
+        lab = f"v{vcount}"
+        vcount += 1
+        filter_parts.append(f"[{i}:v]{scale_filter}[{lab}];")
+        concat_labels.append(f"[{lab}]")
+
+    def add_main_trim(t0: float, t1: float):
+        nonlocal vcount
+        if t1 - t0 <= 0.04:
+            return
+        lab = f"v{vcount}"
+        vcount += 1
         filter_parts.append(
-            f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]"
+            f"[0:v]trim={t0:.4f}:{t1:.4f},setpts=PTS-STARTPTS[{lab}];"
         )
-        filter_complex = "".join(filter_parts)
+        concat_labels.append(f"[{lab}]")
+
+    # --- assemble timeline ---
+    t = 0.0
+    if intro_path:
+        add_overlay("intro", "intro")
+        t = intro_real_dur
     else:
-        filter_parts = []
-        idx = 1
-        concat_inputs = []
-        if intro_path:
-            filter_parts.append(f"[{idx}:v]{scale_filter}[v_intro];")
-            concat_inputs.append("[v_intro]")
-            idx += 1
-        concat_inputs.append("[0:v]")
-        if outro_path:
-            filter_parts.append(f"[{idx}:v]{scale_filter}[v_outro];")
-            concat_inputs.append("[v_outro]")
-        filter_parts.append(
-            f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}:v=1:a=0[outv]"
-        )
-        filter_complex = "".join(filter_parts)
+        t = 0.0
+
+    if middle_path:
+        # main before middle
+        add_main_trim(t, mid_point)
+        add_overlay("middle", "middle")
+        t = mid_point + middle_real_dur
+        # main after middle until outro zone
+        end_main = main_dur - outro_real_dur
+        add_main_trim(t, end_main)
+        t = end_main
+    else:
+        end_main = main_dur - outro_real_dur
+        add_main_trim(t, end_main)
+        t = end_main
+
+    if outro_path:
+        add_overlay("outro", "outro")
+
+    if not concat_labels:
+        _log("[IMO] пустой concat — пропуск")
+        return video_path
+
+    filter_parts.append(
+        f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0[outv]"
+    )
+    filter_complex = "".join(filter_parts)
 
     output_path = os.path.join(output_dir, f"with_intro_outro_{uuid.uuid4().hex[:8]}.mp4")
 
@@ -868,12 +976,21 @@ def add_intro_outro_mid(
     ]
     run_vt_encode(cmd, inputs, output_path, log_fn=_log, stage_name="INTRO")
 
+    # --- AUDIO: только из master, без pad/silence, длительности совпадают ---
     from .audio import replace_audio
     tmp_out = output_path + ".tmp.mp4"
     os.rename(output_path, tmp_out)
     replace_audio(tmp_out, video_path, output_path, log_fn=_log)
-    os.remove(tmp_out)
+    try:
+        os.remove(tmp_out)
+    except OSError:
+        pass
 
+    _log(
+        f"[IMO] done REPLACE → {os.path.basename(output_path)} | "
+        f"intro={intro_real_dur:.2f}s middle={middle_real_dur:.2f}s "
+        f"outro={outro_real_dur:.2f}s | audio=master copy"
+    )
     return output_path
 
 
