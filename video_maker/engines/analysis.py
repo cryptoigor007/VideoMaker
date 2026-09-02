@@ -1,8 +1,10 @@
 """Движок анализа — Gemini API."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -24,6 +26,77 @@ DEFAULT_MODEL_CHAIN = (
 )
 
 STATE_PATH = Path.home() / "video_maker" / "cache" / "gemini_state.json"
+
+# Stage D: response cache key = hash(audio) + model + schema
+ANALYSIS_SCHEMA_VERSION = "v1-package-hooks-subs-shorts"
+ANALYSIS_CACHE_DIR = Path.home() / "video_maker" / "cache" / "gemini_analysis"
+
+
+def _audio_fingerprint(audio_path: str) -> str:
+    """Стабильный fingerprint аудио: path + size + mtime (быстро, без полного hash файла)."""
+    if not audio_path or not os.path.isfile(audio_path):
+        return "noaudio"
+    try:
+        st = os.stat(audio_path)
+        raw = f"{os.path.abspath(audio_path)}|{st.st_size}|{st.st_mtime_ns}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]
+    except OSError:
+        return "noaudio"
+
+
+def _analysis_cache_key(
+    audio_path: str,
+    model_name: str,
+    intro_gemini: bool,
+    series_name: str,
+    transcription: dict | None,
+) -> str:
+    """Gemini cache key = hash(audio) + model + schema (+ intro/series + text fingerprint)."""
+    audio_fp = _audio_fingerprint(audio_path)
+    text = ""
+    if transcription:
+        segs = transcription.get("segments") or []
+        text = " ".join((s.get("text") or "") for s in segs[:50])
+    text_fp = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    raw = (
+        f"{audio_fp}|{model_name}|{ANALYSIS_SCHEMA_VERSION}|"
+        f"intro={int(bool(intro_gemini))}|series={series_name or ''}|txt={text_fp}"
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:40]
+
+
+def _analysis_cache_get(key: str, log_fn=None) -> dict | None:
+    _log = log_fn or log.info
+    try:
+        ANALYSIS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path = ANALYSIS_CACHE_DIR / f"{key}.json"
+        if not path.is_file():
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or not data:
+            return None
+        _log(f"[GEMINI] cache HIT key={key[:12]}…")
+        return data
+    except Exception as e:
+        _log(f"[GEMINI] cache read fail: {e}")
+        return None
+
+
+def _analysis_cache_put(key: str, analysis: dict, log_fn=None) -> None:
+    _log = log_fn or log.info
+    try:
+        ANALYSIS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path = ANALYSIS_CACHE_DIR / f"{key}.json"
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(analysis, f, ensure_ascii=False, indent=0)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        _log(f"[GEMINI] cache STORE key={key[:12]}…")
+    except Exception as e:
+        _log(f"[GEMINI] cache write fail: {e}")
 
 
 def _parse_keys(*sources) -> list[str]:
@@ -183,11 +256,11 @@ replay rate, likes/comments/shares per view, CTR обложки).
 ═══════════════════════════════════════
 1) HOOKS ПОЛНОГО ВИДЕО (on-screen)
 ═══════════════════════════════════════
-A) hooks_wide (16:9) — 2–4 шт: умный/сериальный тон, 3–7 слов, start/end, показ 2–3.5с
-B) hooks_vertical (9:16) — 2–4 шт: сильнее pattern-interrupt, 3–6 слов, ДРУГОЙ текст, чем wide
+A) hooks_wide (16:9) — РОВНО 1 шт: умный/сериальный тон, 3–7 слов, start≈0, показ 2–3.5с
+B) hooks_vertical (9:16) — РОВНО 1 шт: сильнее pattern-interrupt, 3–6 слов, ДРУГОЙ текст, чем wide
 Legacy "hooks" = hooks_vertical.
 type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVELATION
-Первый хук — начало ролика; остальные — точки спада/кульминации.
+Хук — только в начале ролика. Больше одного хука на long-видео ЗАПРЕЩЕНО.
 
 ═══════════════════════════════════════
 2) CTA ПОЛНОГО ВИДЕО (on-screen, конец)
@@ -304,8 +377,12 @@ def analyze(
     intro_gemini: bool = True,
     series_name: str = "",
     log_fn=None,
+    audio_path: str = "",
 ) -> dict:
-    """Единый вызов Gemini → пакет ANALYSIS. Нормальная ротация ключей/моделей."""
+    """Единый вызов Gemini → пакет ANALYSIS. Нормальная ротация ключей/моделей.
+
+    Stage D: cache key = hash(audio) + model + schema.
+    """
     _log = log_fn or log.info
 
     keys = _parse_keys(api_keys, api_key)
@@ -313,16 +390,28 @@ def analyze(
         _log("[GEMINI] API ключ не задан, пропускаем")
         return _empty_analysis()
 
-    segments = transcription.get("segments", [])
+    segments = transcription.get("segments", []) if transcription else []
     if not segments:
         _log("[GEMINI] Нет сегментов для анализа")
         return _empty_analysis()
+
+    # Stage D — response cache
+    cache_key = _analysis_cache_key(
+        audio_path or "",
+        model_name or "gemini-2.5-flash",
+        bool(intro_gemini),
+        series_name or "",
+        transcription,
+    )
+    cached = _analysis_cache_get(cache_key, log_fn=_log)
+    if cached is not None:
+        return cached
 
     full_text = " ".join(s.get("text", "") for s in segments)
     prompt = _build_analysis_prompt(full_text, segments, intro_gemini, series_name)
 
     km = GeminiKeyManager(keys, preferred_model=model_name, log_fn=_log)
-    _log(f"[GEMINI] Анализ | ключей={km.n} | модель={km.current_model}")
+    _log(f"[GEMINI] Анализ | ключей={km.n} | модель={km.current_model} | cache_key={cache_key[:12]}…")
 
     # лимиты: на один ключ для 503 — не больше 2 коротких retry
     max_503_per_key = 2
@@ -352,6 +441,7 @@ def analyze(
                 f"hooks_v={len(analysis.get('hooks_vertical') or [])} "
                 f"package_title={str(analysis.get('package_title') or '')[:50]!r}"
             )
+            _analysis_cache_put(cache_key, analysis, log_fn=_log)
             return analysis
 
         except Exception as e:
@@ -499,6 +589,11 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
 
     hooks_vertical = _norm_hook_list(data.get("hooks_vertical") or data.get("hooks") or [])
     hooks_wide = _norm_hook_list(data.get("hooks_wide") or [])
+    # Long video: keep at most 1 hook per orientation (shorts have their own per-clip hooks)
+    if len(hooks_vertical) > 1:
+        hooks_vertical = hooks_vertical[:1]
+    if len(hooks_wide) > 1:
+        hooks_wide = hooks_wide[:1]
     if not hooks_wide:
         hooks_wide = list(hooks_vertical)
     hooks = hooks_vertical  # legacy default = vertical

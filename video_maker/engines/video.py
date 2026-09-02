@@ -1,8 +1,7 @@
-# VideoMaker FIX | 2026.09.02-r14 | 2026-09-02
-# CHANGED: intro/outro/middle = REPLACE сегментов main (не удлиняют ролик)
-#   intro → first N sec, outro → last M sec, middle @ Gemini mid_point
-#   audio = master only, без pad/silence; тайминги субтитров не плывут
-# PREV: 2026.09.02-r13 (append/pad — сломало звук и субтитры)
+# VideoMaker FIX | 2026.09.02-r17 | 2026-09-02
+# CHANGED: FAST IMO (r15) + vstack supports ass_path → one encode geo+ASS (r17)
+#   duration ≈ main; audio=master only + explicit -t; path=FAST|FALLBACK logs
+# PREV: 2026.09.02-r15 / r14
 # REPLACE: video_maker/engines/video.py
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
 from __future__ import annotations
@@ -424,15 +423,18 @@ def vstack_video_image(
     ass_path: str = "",
     bitrate: str = "28M",
 ) -> str:
-    """Геометрия 9:16 БЕЗ subtitles (subs — отдельный быстрый burn).
+    """Геометрия 9:16; при переданном ass_path — один encode (geometry + burn ASS).
 
-    Граф: scale+crop video → top | cached bg → bottom | vstack → VT.
-    ass_path игнорируется здесь (совместимость API) — subs жжёт FinalVertical.
+    Граф: scale+crop video → top | cached bg → bottom | vstack [| ass] → VT.
     """
     import time
     _log = log_fn or log.info
     t0 = time.time()
-    _log("[ВИДЕО 4K] vertical geometry-only (subs отдельно)")
+    has_ass = bool(ass_path and os.path.isfile(ass_path))
+    _log(
+        f"[ВИДЕО 4K] vertical geometry"
+        f"{' + ASS (one encode)' if has_ass else '-only'}"
+    )
 
     ffmpeg = _ffmpeg_bin()
     target_w, target_h = 2160, 3840
@@ -440,13 +442,24 @@ def vstack_video_image(
 
     bg = _cached_bg_half(background_path, target_w, half_h, log_fn=_log)
 
-    # Только video scale+crop; bg уже exact size — без второго scale
-    fc = (
-        f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
-        f"crop={target_w}:{half_h},setsar=1[top];"
-        f"[1:v]setsar=1,format=yuv420p[bot];"
-        f"[top][bot]vstack=inputs=2[outv]"
-    )
+    # video scale+crop; bg exact size; optional ASS burn in same pass
+    if has_ass:
+        from .subtitles import _escape_ass_path
+        esc = _escape_ass_path(ass_path)
+        fc = (
+            f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{half_h},setsar=1[top];"
+            f"[1:v]setsar=1,format=yuv420p[bot];"
+            f"[top][bot]vstack=inputs=2[stacked];"
+            f"[stacked]ass='{esc}'[outv]"
+        )
+    else:
+        fc = (
+            f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{half_h},setsar=1[top];"
+            f"[1:v]setsar=1,format=yuv420p[bot];"
+            f"[top][bot]vstack=inputs=2[outv]"
+        )
 
     dur = probe_duration(video_path)
     local_dir = _work_tmp_dir(os.path.dirname(output_path) or ".")
@@ -471,19 +484,41 @@ def vstack_video_image(
             "-t", str(dur),
             local_out,
         ]
-        _log(f"[ВИДЕО 4K] geometry cmd hw={use_hw} bitrate={bitrate}")
+        _log(f"[ВИДЕО 4K] geometry cmd hw={use_hw} bitrate={bitrate} ass={has_ass}")
         return subprocess.run(cmd, capture_output=True, text=True)
 
     res = _run(True)
     if res.returncode != 0:
         _log("[ВИДЕО] geometry hwaccel fail → retry")
-        # cleanup partial
         try:
             if os.path.isfile(local_out):
                 os.remove(local_out)
         except OSError:
             pass
         res = _run(False)
+    # ASS may fail (fonts/libass); fall back to geometry-only
+    if res.returncode != 0 and has_ass:
+        _log("[ВИДЕО] geometry+ASS fail → retry geometry-only")
+        try:
+            if os.path.isfile(local_out):
+                os.remove(local_out)
+        except OSError:
+            pass
+        has_ass = False
+        fc = (
+            f"[0:v]scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{half_h},setsar=1[top];"
+            f"[1:v]setsar=1,format=yuv420p[bot];"
+            f"[top][bot]vstack=inputs=2[outv]"
+        )
+        res = _run(True)
+        if res.returncode != 0:
+            try:
+                if os.path.isfile(local_out):
+                    os.remove(local_out)
+            except OSError:
+                pass
+            res = _run(False)
     if res.returncode != 0:
         err = (res.stderr or res.stdout or "")[-900:]
         _log(f"[ВИДЕО] geometry ошибка: {err}")
@@ -491,7 +526,10 @@ def vstack_video_image(
 
     import shutil
     shutil.move(local_out, output_path)
-    _log(f"[ВИДЕО 4K] geometry OK за {time.time()-t0:.1f}s → {os.path.basename(output_path)}")
+    _log(
+        f"[ВИДЕО 4K] geometry{'+ASS' if has_ass else ''} OK за "
+        f"{time.time()-t0:.1f}s → {os.path.basename(output_path)}"
+    )
     return output_path
 
 
@@ -798,11 +836,10 @@ def add_intro_outro_mid(
 
 
     # ============================================================
-    # r14: intro/outro/middle НЕ удлиняют ролик — REPLACE сегментов main.
-    #   intro  → первые intro_dur сек main
-    #   outro  → последние outro_dur сек main
-    #   middle → сегмент [mid_point : mid_point+middle_dur] (время из Gemini)
-    # Аудио: только copy из master, без pad/silence.
+    # r15 FAST IMO: intro/outro (and middle) as short VT segs matching master
+    # profile; main body via stream-copy; concat demuxer (-c copy);
+    # then master audio. On any failure → full REPLACE fallback + reason=.
+    # Duration target = main_dur; |drift| ≤ 0.15 preferred.
     # ============================================================
 
     intro_real_dur = 0.0
@@ -842,7 +879,6 @@ def add_intro_outro_mid(
             _log(f"[IMO] middle duration invalid — disable")
             middle_path, middle_real_dur = "", 0.0
         else:
-            # clamp mid_point so middle fits inside main between intro and outro zones
             lo = intro_real_dur
             hi = main_dur - outro_real_dur - middle_real_dur
             if hi < lo:
@@ -858,7 +894,6 @@ def add_intro_outro_mid(
                     f"dur={middle_real_dur:.2f}s (Gemini/clamp)"
                 )
 
-    # Safety: intro+outro+middle must fit
     used = intro_real_dur + outro_real_dur + middle_real_dur
     if used >= main_dur - 0.3:
         _log(f"[IMO] WARN: overlays {used:.1f}s >= main {main_dur:.1f}s — clamp outro")
@@ -870,129 +905,329 @@ def add_intro_outro_mid(
         _log("[IMO] нечего накладывать — пропуск")
         return video_path
 
+    import time as _time
+    _t0 = _time.monotonic()
+    output_path = os.path.join(output_dir, f"with_intro_outro_{uuid.uuid4().hex[:8]}.mp4")
     scale_filter = (
         f"scale={main_w}:{main_h}:force_original_aspect_ratio=decrease,"
         f"pad={main_w}:{main_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
     )
 
-    # Build ordered segments of main that remain (gaps filled by overlays)
-    # Timeline of main [0, main_dur):
-    #   [0, intro_dur)           → intro
-    #   [intro_dur, mid)         → main  (if middle)
-    #   [mid, mid+mid_dur)       → middle
-    #   [mid+mid_dur, main-outro)→ main
-    #   [main-outro, main)       → outro
-    # Without middle:
-    #   [0, intro_dur) → intro
-    #   [intro_dur, main-outro) → main
-    #   [main-outro, main) → outro
+    def _probe_profile(path: str) -> dict:
+        """width, height, fps, fps_str, pix_fmt for matching segments."""
+        import json
+        meta = {"width": main_w, "height": main_h, "fps": 30.0, "fps_str": "30", "pix_fmt": "yuv420p"}
+        try:
+            r = subprocess.run(
+                [
+                    "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height,r_frame_rate,pix_fmt",
+                    "-of", "json", path,
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            data = json.loads(r.stdout or "{}")
+            st = (data.get("streams") or [{}])[0]
+            meta["width"] = int(st.get("width") or main_w)
+            meta["height"] = int(st.get("height") or main_h)
+            meta["pix_fmt"] = (st.get("pix_fmt") or "yuv420p").strip() or "yuv420p"
+            fps_str = st.get("r_frame_rate") or "30/1"
+            meta["fps_str"] = str(fps_str)
+            if "/" in str(fps_str):
+                num, den = map(int, str(fps_str).split("/"))
+                meta["fps"] = num / den if den else 30.0
+            else:
+                meta["fps"] = float(fps_str)
+        except Exception:
+            pass
+        return meta
 
-    inputs = [video_path]
-    input_idx = { "main": 0 }
-    if intro_path:
-        inputs.append(intro_path)
-        input_idx["intro"] = len(inputs) - 1
-    if middle_path:
-        inputs.append(middle_path)
-        input_idx["middle"] = len(inputs) - 1
-    if outro_path:
-        inputs.append(outro_path)
-        input_idx["outro"] = len(inputs) - 1
+    master_prof = _probe_profile(video_path)
+    mw, mh = _even(master_prof["width"]), _even(master_prof["height"])
+    target_fps = master_prof["fps"] if master_prof["fps"] > 1 else 30.0
+    target_pix = master_prof.get("pix_fmt") or "yuv420p"
+    if target_pix not in ("yuv420p", "yuv422p", "yuv444p", "nv12"):
+        target_pix = "yuv420p"
 
-    _log(
-        f"[IMO] REPLACE mode inputs={len(inputs)} | "
-        f"intro={intro_real_dur:.2f}s middle={middle_real_dur:.2f}s@{'%.2f'%mid_point if middle_path else '-'} "
-        f"outro={outro_real_dur:.2f}s | main={main_dur:.2f}s"
-    )
-
-    filter_parts = []
-    concat_labels = []
-    vcount = 0
-
-    def add_overlay(key: str, dur_label: str):
-        nonlocal vcount
-        i = input_idx[key]
-        lab = f"v{vcount}"
-        vcount += 1
-        filter_parts.append(f"[{i}:v]{scale_filter}[{lab}];")
-        concat_labels.append(f"[{lab}]")
-
-    def add_main_trim(t0: float, t1: float):
-        nonlocal vcount
-        if t1 - t0 <= 0.04:
-            return
-        lab = f"v{vcount}"
-        vcount += 1
-        filter_parts.append(
-            f"[0:v]trim={t0:.4f}:{t1:.4f},setpts=PTS-STARTPTS[{lab}];"
+    def _make_seg(src: str, label: str, dur: float) -> str:
+        """Encode short overlay to exact master profile, video-only (-an)."""
+        out = os.path.join(work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4")
+        vf = (
+            f"scale={mw}:{mh}:force_original_aspect_ratio=decrease,"
+            f"pad={mw}:{mh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={target_fps:.6f}"
         )
-        concat_labels.append(f"[{lab}]")
+        cmd = [
+            ffmpeg, "-y", "-i", src, "-t", f"{dur:.4f}",
+            "-vf", vf,
+            "-an",
+            "-c:v", "h264_videotoolbox", "-b:v", "16M", "-allow_sw", "0",
+            "-pix_fmt", target_pix,
+            "-r", f"{target_fps:.6f}",
+            out,
+        ]
+        run_vt_encode(cmd, [src], out, log_fn=_log, stage_name=f"IMO_{label.upper()}")
+        return out
 
-    # --- assemble timeline ---
-    t = 0.0
-    if intro_path:
-        add_overlay("intro", "intro")
-        t = intro_real_dur
-    else:
+    def _copy_trim(src: str, t0: float, t1: float, label: str) -> str:
+        """Prefer stream-copy trim of master body (video only)."""
+        if t1 - t0 <= 0.04:
+            return ""
+        out = os.path.join(work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4")
+        dur = t1 - t0
+        # map only video — critical for concat demuxer with -an segs
+        cmd = [
+            ffmpeg, "-y",
+            "-ss", f"{t0:.4f}", "-i", src,
+            "-t", f"{dur:.4f}",
+            "-map", "0:v:0",
+            "-c:v", "copy",
+            "-avoid_negative_ts", "make_zero",
+            out,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if res.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 1000:
+            _log(f"[IMO] mid_copy {label} ok t0={t0:.3f} dur={dur:.3f}")
+            return out
+        # fallback re-encode body (rare)
+        _log(f"[IMO] mid_copy {label} failed → VT body")
+        cmd = [
+            ffmpeg, "-y",
+            "-ss", f"{t0:.4f}", "-i", src,
+            "-t", f"{dur:.4f}",
+            "-vf", f"scale={mw}:{mh},setsar=1,fps={target_fps:.6f}",
+            "-an",
+            "-c:v", "h264_videotoolbox", "-b:v", "16M", "-allow_sw", "0",
+            "-pix_fmt", target_pix,
+            out,
+        ]
+        run_vt_encode(cmd, [src], out, log_fn=_log, stage_name=f"IMO_BODY_{label}")
+        return out
+
+    def _concat_demuxer(seg_paths: list[str], out_path: str) -> None:
+        list_file = os.path.join(work_dir, f"imo_concat_{uuid.uuid4().hex[:8]}.txt")
+        with open(list_file, "w", encoding="utf-8") as f:
+            for p in seg_paths:
+                # absolute + escape single quotes for concat demuxer
+                ap = os.path.abspath(p).replace("'", "'\\''")
+                f.write(f"file '{ap}'\n")
+        cmd = [
+            ffmpeg, "-y", "-f", "concat", "-safe", "0",
+            "-i", list_file,
+            "-c", "copy",
+            out_path,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        try:
+            os.remove(list_file)
+        except OSError:
+            pass
+        if res.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) < 1000:
+            raise RuntimeError(
+                f"concat demuxer failed rc={res.returncode} "
+                f"stderr={(res.stderr or '')[:400]}"
+            )
+
+    def _try_fast() -> str:
+        """Build FAST path. Raises on any problem → caller falls back."""
+        segs: list[str] = []
+        # intro
+        if intro_path and intro_real_dur > 0.05:
+            segs.append(_make_seg(intro_path, "intro", intro_real_dur))
+        # body / middle
+        t = intro_real_dur if intro_path else 0.0
+        if middle_path and middle_real_dur > 0.05:
+            # main before middle
+            if mid_point - t > 0.04:
+                s = _copy_trim(video_path, t, mid_point, "pre_mid")
+                if s:
+                    segs.append(s)
+            segs.append(_make_seg(middle_path, "middle", middle_real_dur))
+            t = mid_point + middle_real_dur
+        end_main = main_dur - (outro_real_dur if outro_path else 0.0)
+        if end_main - t > 0.04:
+            s = _copy_trim(video_path, t, end_main, "body")
+            if s:
+                segs.append(s)
+        # outro
+        if outro_path and outro_real_dur > 0.05:
+            segs.append(_make_seg(outro_path, "outro", outro_real_dur))
+
+        if not segs:
+            raise RuntimeError("no segments for FAST")
+
+        tmp_v = os.path.join(work_dir, f"imo_fast_v_{uuid.uuid4().hex[:8]}.mp4")
+        _concat_demuxer(segs, tmp_v)
+
+        # duration check / light align
+        try:
+            actual = float(probe_duration(tmp_v))
+        except Exception:
+            actual = main_dur
+        drift = actual - main_dur
+        _log(f"[IMO] mid_copy target={main_dur:.3f} actual={actual:.3f} drift={drift:.3f}")
+        if abs(drift) > 0.15:
+            # minimal re-trim to target if slightly long
+            if drift > 0.15 and actual > 0.5:
+                trimmed = tmp_v + ".trim.mp4"
+                cmd = [
+                    ffmpeg, "-y", "-i", tmp_v, "-t", f"{main_dur:.4f}",
+                    "-c", "copy", trimmed,
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if res.returncode == 0 and os.path.isfile(trimmed):
+                    try:
+                        os.remove(tmp_v)
+                    except OSError:
+                        pass
+                    tmp_v = trimmed
+                    actual = float(probe_duration(tmp_v))
+                    drift = actual - main_dur
+                    _log(f"[IMO] mid_copy after trim actual={actual:.3f} drift={drift:.3f}")
+
+        # attach master audio only + explicit -t main_dur (no pad/silence)
+        cmd_a = [
+            ffmpeg, "-y",
+            "-i", tmp_v,
+            "-i", video_path,
+            "-map", "0:v:0", "-map", "1:a:0?",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-t", f"{main_dur:.4f}",
+            output_path,
+        ]
+        res_a = subprocess.run(cmd_a, capture_output=True, text=True, timeout=120)
+        if res_a.returncode != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) < 1000:
+            # soft fallback to existing helper
+            from .audio import replace_audio
+            try:
+                replace_audio(tmp_v, video_path, output_path, log_fn=_log)
+            except Exception as ae:
+                raise RuntimeError(f"audio attach failed: {ae}") from ae
+        if not os.path.isfile(output_path) or os.path.getsize(output_path) < 1000:
+            raise RuntimeError("FAST output missing or too small after audio attach")
+        try:
+            os.remove(tmp_v)
+        except OSError:
+            pass
+        for s in segs:
+            try:
+                os.remove(s)
+            except OSError:
+                pass
+        return output_path
+
+    def _fallback_full(reason: str) -> str:
+        _log(f"[IMO] path=FALLBACK reason={reason}")
+        inputs = [video_path]
+        input_idx = {"main": 0}
+        if intro_path:
+            inputs.append(intro_path)
+            input_idx["intro"] = len(inputs) - 1
+        if middle_path:
+            inputs.append(middle_path)
+            input_idx["middle"] = len(inputs) - 1
+        if outro_path:
+            inputs.append(outro_path)
+            input_idx["outro"] = len(inputs) - 1
+
+        filter_parts = []
+        concat_labels = []
+        vcount = 0
+
+        def add_overlay(key: str):
+            nonlocal vcount
+            i = input_idx[key]
+            lab = f"v{vcount}"
+            vcount += 1
+            filter_parts.append(f"[{i}:v]{scale_filter}[{lab}];")
+            concat_labels.append(f"[{lab}]")
+
+        def add_main_trim(t0: float, t1: float):
+            nonlocal vcount
+            if t1 - t0 <= 0.04:
+                return
+            lab = f"v{vcount}"
+            vcount += 1
+            filter_parts.append(
+                f"[0:v]trim={t0:.4f}:{t1:.4f},setpts=PTS-STARTPTS[{lab}];"
+            )
+            concat_labels.append(f"[{lab}]")
+
         t = 0.0
+        outro_d = outro_real_dur if outro_path else 0.0
+        if intro_path:
+            add_overlay("intro")
+            t = intro_real_dur
+        if middle_path:
+            add_main_trim(t, mid_point)
+            add_overlay("middle")
+            t = mid_point + middle_real_dur
+            end_main = main_dur - outro_d
+            add_main_trim(t, end_main)
+        else:
+            end_main = main_dur - outro_d
+            add_main_trim(t, end_main)
 
-    if middle_path:
-        # main before middle
-        add_main_trim(t, mid_point)
-        add_overlay("middle", "middle")
-        t = mid_point + middle_real_dur
-        # main after middle until outro zone
-        end_main = main_dur - outro_real_dur
-        add_main_trim(t, end_main)
-        t = end_main
-    else:
-        end_main = main_dur - outro_real_dur
-        add_main_trim(t, end_main)
-        t = end_main
+        if outro_path:
+            add_overlay("outro")
 
-    if outro_path:
-        add_overlay("outro", "outro")
+        if not concat_labels:
+            _log("[IMO] пустой concat — пропуск")
+            return video_path
 
-    if not concat_labels:
-        _log("[IMO] пустой concat — пропуск")
-        return video_path
+        filter_parts.append(
+            f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0[outv]"
+        )
+        filter_complex = "".join(filter_parts)
 
-    filter_parts.append(
-        f"{''.join(concat_labels)}concat=n={len(concat_labels)}:v=1:a=0[outv]"
-    )
-    filter_complex = "".join(filter_parts)
+        cmd = [
+            ffmpeg, "-y",
+            *[arg for inp in inputs for arg in ("-i", inp)],
+            "-filter_complex", filter_complex,
+            "-map", "[outv]",
+            "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
+            "-pix_fmt", target_pix if target_pix else "yuv420p",
+            "-r", f"{target_fps:.6f}",
+            output_path,
+        ]
+        run_vt_encode(cmd, inputs, output_path, log_fn=_log, stage_name="INTRO")
 
-    output_path = os.path.join(output_dir, f"with_intro_outro_{uuid.uuid4().hex[:8]}.mp4")
+        from .audio import replace_audio
+        tmp_out = output_path + ".tmp.mp4"
+        os.rename(output_path, tmp_out)
+        replace_audio(tmp_out, video_path, output_path, log_fn=_log)
+        try:
+            os.remove(tmp_out)
+        except OSError:
+            pass
+        return output_path
 
-    cmd = [
-        ffmpeg, "-y",
-        *[arg for inp in inputs for arg in ("-i", inp)],
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "0",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-        output_path,
-    ]
-    run_vt_encode(cmd, inputs, output_path, log_fn=_log, stage_name="INTRO")
-
-    # --- AUDIO: только из master, без pad/silence, длительности совпадают ---
-    from .audio import replace_audio
-    tmp_out = output_path + ".tmp.mp4"
-    os.rename(output_path, tmp_out)
-    replace_audio(tmp_out, video_path, output_path, log_fn=_log)
+    # Prefer FAST; on any error → FALLBACK with reason
     try:
-        os.remove(tmp_out)
-    except OSError:
-        pass
-
-    _log(
-        f"[IMO] done REPLACE → {os.path.basename(output_path)} | "
-        f"intro={intro_real_dur:.2f}s middle={middle_real_dur:.2f}s "
-        f"outro={outro_real_dur:.2f}s | audio=master copy"
-    )
-    return output_path
-
+        result = _try_fast()
+        wall = _time.monotonic() - _t0
+        try:
+            final_dur = float(probe_duration(result))
+        except Exception:
+            final_dur = main_dur
+        _log("[IMO] path=FAST")
+        _log(
+            f"[IMO] done | audio=master | dur={final_dur:.3f} | wall={wall:.1f}s"
+        )
+        return result
+    except Exception as e:
+        reason = str(e)[:200]
+        _log(f"[IMO] FAST failed: {reason}")
+        result = _fallback_full(reason)
+        wall = _time.monotonic() - _t0
+        try:
+            final_dur = float(probe_duration(result))
+        except Exception:
+            final_dur = main_dur
+        _log(
+            f"[IMO] done | audio=master | dur={final_dur:.3f} | wall={wall:.1f}s"
+        )
+        return result
 
 
 from .audio import probe_duration

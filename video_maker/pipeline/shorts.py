@@ -1,9 +1,9 @@
-# VideoMaker FIX | 2026.09.01-r4 | 2026-09-01
-# CHANGED: в add_intro_outro_mid передаются s_intro/mid/outro_duration.
-# PREV: cf44e6a (длительности для Shorts не передавались → дефолты 3/1/3)
+# VideoMaker FIX | 2026.09.02-r19 | 2026-09-02
+# CHANGED: shorts no re-mix BGM if long already mixed; burn only hook+CTA
+# PREV: 2026.09.02-r17
 # REPLACE: video_maker/pipeline/shorts.py
 
-"""ShortsCutter — отдельный продукт: cut из geometry → burn (hooks/CTA shorts) → BGM."""
+"""ShortsCutter — cut из vertical (copy) → burn только hook+CTA → BGM."""
 from __future__ import annotations
 
 import logging
@@ -86,8 +86,8 @@ class ShortsCutter(Stage):
         cut_path = os.path.join(short_dir, f"short_{index:03d}_cut.mp4")
 
         ctx.log(
-            f"[SHORTS] #{index} отдельный рендер: cut {start:.1f}-{end:.1f}s "
-            f"→ burn (hooks/CTA shorts) → BGM"
+            f"[SHORTS] #{index} copy from vertical: cut {start:.1f}-{end:.1f}s "
+            f"(stream copy preferred) → burn only Hook+CTA"
         )
         cut_segment(
             video_path=src,
@@ -118,20 +118,24 @@ class ShortsCutter(Stage):
                 outro_duration=float(getattr(ctx, "s_outro_duration", 3) or 3),
             )
 
-        # Свой burn: clip= передаёт тайминги/хуки/CTA именно для shorts
-        if (
-            getattr(ctx, "s_enable_hooks", True)
-            or getattr(ctx, "s_enable_subtitles", True)
-            or getattr(ctx, "s_enable_strong_words", True)
-        ):
+        # Stage C: burn ТОЛЬКО hook + CTA (субтитры — только если явно включены)
+        # enable_subtitles по умолчанию False для shorts; если True — burn_subtitles
+        # сам ограничит события по словам клипа через clip=
+        s_hooks = bool(getattr(ctx, "s_enable_hooks", True))
+        s_subs = bool(getattr(ctx, "s_enable_subtitles", False))  # default OFF for shorts
+        s_strong = bool(getattr(ctx, "s_enable_strong_words", False))
+        if s_hooks or s_subs or s_strong:
             subtitled = os.path.join(short_dir, f"short_{index:03d}_subs.mp4")
+            ctx.log(
+                f"[SHORTS] #{index} burn only: hooks={s_hooks} subs={s_subs} strong={s_strong}"
+            )
             current = burn_subtitles(
                 video_path=current,
                 analysis=ctx.analysis,
                 clip=clip,
-                enable_hooks=bool(getattr(ctx, "s_enable_hooks", True)),
-                enable_subtitles=bool(getattr(ctx, "s_enable_subtitles", True)),
-                enable_strong_words=bool(getattr(ctx, "s_enable_strong_words", True)),
+                enable_hooks=s_hooks,
+                enable_subtitles=s_subs,
+                enable_strong_words=s_strong,
                 output_path=subtitled,
                 log_fn=ctx.log,
                 caption_style=getattr(ctx, "caption_style", "auto_aisie"),
@@ -140,15 +144,19 @@ class ShortsCutter(Stage):
                 use_aisie=True,
             )
 
-        if ctx.add_bgm and ctx.bgm_folder:
+        # BGM: не мешать повторно — cut из vertical уже несёт смешанную дорожку
+        if ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
             from ..engines.audio import mix_bgm
             bgm_out = os.path.join(short_dir, f"short_{index:03d}_bgm.mp4")
             try:
                 current = mix_bgm(
                     current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True
                 )
+                ctx.log(f"[SHORTS] #{index} BGM mixed (long had no BGM)")
             except Exception as e:
                 ctx.log(f"[SHORTS] BGM skip: {e}")
+        elif getattr(ctx, "bgm_mixed", False):
+            ctx.log(f"[SHORTS] #{index} BGM reused from long (no re-mix)")
 
         if os.path.abspath(current) != os.path.abspath(final_path):
             shutil.copy2(current, final_path)

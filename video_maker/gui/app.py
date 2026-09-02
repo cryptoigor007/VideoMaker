@@ -1476,14 +1476,44 @@ class App:
                     ("TranscribeStage", TranscribeStage()),
                     ("GeminiStage", GeminiStage()),
                     ("MasterBuilder", MasterBuilder()),
-		    ("ParallelFinals", ParallelFinals()),
+                    ("ParallelFinals", ParallelFinals()),
                     ("ShortsCutter", ShortsCutter()),
                     ("FinalizeStage", FinalizeStage()),
                 ]
 
-                for name, stage in stages:
+                from ..pipeline.checkpoint import (
+                    apply_checkpoint_to_ctx,
+                    clear_checkpoint,
+                    describe_checkpoint,
+                    load_checkpoint,
+                    next_stage_index,
+                    save_checkpoint,
+                )
+
+                start_i = 0
+                ck = load_checkpoint(out_dir)
+                if ck and (ck.get("audio_path") or "") == audio_file:
+                    self._log("[CHECKPOINT] найден — продолжаем с места остановки")
+                    for line in describe_checkpoint(ck).split("\n"):
+                        self._log(f"  {line}")
+                    ctx = apply_checkpoint_to_ctx(ctx, ck, log_fn=ctx.log)
+                    start_i = next_stage_index(getattr(ctx, "_completed_stages", None) or ck.get("completed_stages") or [])
+                    if start_i >= len(stages):
+                        self._log("[CHECKPOINT] все стадии уже были выполнены")
+                    else:
+                        self._log(
+                            f"[CHECKPOINT] старт: {stages[start_i][0]} "
+                            f"(пропуск {start_i} стадий)"
+                        )
+
+                for name, stage in stages[start_i:]:
                     if self.cancel_event.is_set():
                         ctx.log("[PIPELINE] Отмена по запросу пользователя")
+                        prev = (getattr(ctx, "_completed_stages", None) or [None])[-1]
+                        save_checkpoint(
+                            ctx, prev or "cancelled",
+                            queue_index=idx, queue_total=total, log_fn=ctx.log,
+                        )
                         break
                     log.info(f"\n{'─'*48}")
                     log.info(f"  [{idx}/{total}] СТАДИЯ: {name} — {stage.name()}")
@@ -1493,16 +1523,34 @@ class App:
                     self._log(f"{'─'*48}")
                     _t_stage = __import__("time").time()
                     log.info("[PIPELINE] >>> stage %s START", stage.name())
-                    ctx = stage.run(ctx)
+                    try:
+                        ctx = stage.run(ctx)
+                    except Exception:
+                        prev = (getattr(ctx, "_completed_stages", None) or [None])[-1]
+                        save_checkpoint(
+                            ctx, prev or "before_fail",
+                            queue_index=idx, queue_total=total, log_fn=ctx.log,
+                        )
+                        raise
                     log.info(
                         "[PIPELINE] <<< stage %s done in %.1fs",
                         stage.name(),
                         __import__("time").time() - _t_stage,
                     )
+                    save_checkpoint(
+                        ctx, name, queue_index=idx, queue_total=total, log_fn=ctx.log,
+                    )
                     # Масштабируем progress стадии в общий прогресс
                     global_progress = progress_base + (ctx.progress / 100.0) * progress_span
                     self._set_progress(global_progress, stage=f"[{idx}/{total}] {stage.name()}")
                     log.info(f"[PIPELINE] {name} завершена, local={ctx.progress:.0f}% global={global_progress:.0f}%")
+
+                if not self.cancel_event.is_set():
+                    if "FinalizeStage" in (getattr(ctx, "_completed_stages", None) or []):
+                        clear_checkpoint(out_dir, log_fn=ctx.log)
+
+                if self.cancel_event.is_set():
+                    break
 
                 if self.cancel_event.is_set():
                     break

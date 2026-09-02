@@ -184,6 +184,7 @@ class GeminiStage(Stage):
             intro_gemini=ctx.intro_gemini,
             series_name=ctx.series_name,
             log_fn=ctx.log,
+            audio_path=getattr(ctx, "audio_path", "") or "",
         )
         ctx.log("[GEMINI] Пакет ANALYSIS готов")
         ctx.progress = 25.0

@@ -764,6 +764,14 @@ def _build_hook_events(
         key=_hstart,
     )
 
+    # Long video (no clip): STRICTLY 1 Hook. Shorts already force 1 packaging hook above.
+    if clip is None and len(hooks_list) > 1:
+        _log(
+            f"[ХУКИ] long: limiting {len(hooks_list)} → 1 "
+            f"(keep first «{(hooks_list[0].get('text') or '')[:40]}»)"
+        )
+        hooks_list = hooks_list[:1]
+
     # Граница CTA / конца ролика — для фильтра последнего хука
     cta_t = float(cta_start) if cta_start is not None and cta_start > 0 else None
     if cta_t is None and video_duration and video_duration > 3:
@@ -1052,6 +1060,33 @@ def burn_subtitles(
     # Karaoke: одна строка; strong — только цвет+size внутри строки (если enable_strong_words)
     if enable_subtitles:
         words = _words_from_transcription(transcription)
+        # Shorts/clip: только реально произнесённые слова внутри окна куска
+        if clip and words:
+            c0 = float(clip.get("start", 0) or 0)
+            c1 = float(clip.get("end", 0) or 0)
+            if c1 > c0:
+                before = len(words)
+                words = [
+                    w for w in words
+                    if float(w.get("end", 0)) > c0 and float(w.get("start", 0)) < c1
+                ]
+                # ужесточение: первое слово >= start, последнее <= end (с малым допуском)
+                if words:
+                    # trim leading words that mostly fall before c0
+                    while words and float(words[0].get("start", 0)) < c0 - 0.05:
+                        if float(words[0].get("end", 0)) <= c0:
+                            words.pop(0)
+                        else:
+                            break
+                    while words and float(words[-1].get("end", 0)) > c1 + 0.05:
+                        if float(words[-1].get("start", 0)) >= c1:
+                            words.pop()
+                        else:
+                            break
+                _log(
+                    f"[СУБТИТРЫ] clip speech window {c0:.2f}-{c1:.2f}s: "
+                    f"words {before} → {len(words)}"
+                )
         if words:
             strong_map = _strong_map(analysis) if enable_strong_words else {}
             _log(
