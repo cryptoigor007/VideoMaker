@@ -1,4 +1,7 @@
 """Конфигурация приложения — dataclass с валидацией."""
+# VideoMaker FIX | 2026.09.04-r27 | 2026-09-04
+# CHANGED: validate() — убрана блокировка по whisperx_path (движок = MLX Whisper)
+# REPLACE: video_maker/config/settings.py
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -160,8 +163,8 @@ class Settings:
             errors.append(f"Папка Intro/Middle/Outro не найдена: {self.intro_middle_outro_folder}")
         if self.vertical_background and not os.path.exists(self.vertical_background):
             errors.append(f"Файл вертикального фона не найден: {self.vertical_background}")
-        if self.whisperx_path and not os.path.exists(self.whisperx_path):
-            errors.append(f"WhisperX бинарник не найден: {self.whisperx_path}")
+        # WhisperX больше не используется (транскрипция = MLX Whisper).
+        # Старый whisperx_path в настройках не блокирует запуск.
 
         needs_vertical = (
             self.v_enable_intro

@@ -1,4 +1,8 @@
-"""FinalizeStage — {output}/{audio_name}/wide|vertical|shorts/..."""
+# VideoMaker FIX | 2026.09.03-r26 | 2026-09-03
+# CHANGED: series_dir without double nesting when output already ends with series_name
+# PREV: packaging layout
+# REPLACE: video_maker/pipeline/finalize.py
+"""FinalizeStage — {series_dir}/wide|vertical|shorts/... (без series/series)."""
 from __future__ import annotations
 
 import logging
@@ -19,20 +23,38 @@ def _safe_name(name: str) -> str:
     return name[:120]
 
 
+def resolve_series_dir(output_folder: str, series_name: str, audio_path: str = "") -> tuple[str, str]:
+    """Единый series_dir без двойной вложенности.
+
+    Если basename(output_folder) уже == series_name → output_folder и есть series_dir.
+    Иначе series_dir = output_folder / series_name.
+    Returns (series_dir, base_name).
+    """
+    base_name = _safe_name(series_name) if series_name else _safe_name(audio_path)
+    out = os.path.normpath(output_folder or ".")
+    if base_name and os.path.basename(out) == base_name:
+        return out, base_name
+    if base_name:
+        return os.path.join(out, base_name), base_name
+    return out, base_name or "output"
+
+
 class FinalizeStage(Stage):
     def name(self) -> str:
         return "Финализация"
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[ФИНАЛ] Копирование результатов...")
-        base_name = _safe_name(ctx.series_name) if ctx.series_name else _safe_name(ctx.audio_path)
-        root = os.path.join(ctx.output_folder, base_name)
+        root, base_name = resolve_series_dir(
+            ctx.output_folder, ctx.series_name or "", ctx.audio_path or ""
+        )
         wide_dir = os.path.join(root, "wide")
         vert_dir = os.path.join(root, "vertical")
         shorts_dir = os.path.join(root, "shorts")
         os.makedirs(wide_dir, exist_ok=True)
         os.makedirs(vert_dir, exist_ok=True)
         os.makedirs(shorts_dir, exist_ok=True)
+        ctx.log(f"[ФИНАЛ] series_dir={root} (output={ctx.output_folder}, series={base_name})")
 
         from ..engines.audio import apply_loudnorm
 
@@ -79,7 +101,11 @@ class FinalizeStage(Stage):
             sdir = os.path.join(shorts_dir, f"short_{i:03d}")
             os.makedirs(sdir, exist_ok=True)
             final_path = os.path.join(sdir, f"short_{i:03d}.mp4")
-            _place_video(short_path, final_path, shorts_norm, f"shorts/short_{i:03d}/")
+            # ShortsCutter уже пишет в series_dir/shorts — не копировать 4K лишний раз
+            if os.path.abspath(short_path) == os.path.abspath(final_path):
+                ctx.log(f"[ФИНАЛ] shorts/short_{i:03d}: already in place (no copy)")
+            else:
+                _place_video(short_path, final_path, shorts_norm, f"shorts/short_{i:03d}/")
             clip = clips[i - 1] if i - 1 < len(clips) else {}
             self._write_packaging_files(
                 dir_path=sdir,

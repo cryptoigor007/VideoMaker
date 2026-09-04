@@ -138,25 +138,27 @@ class ShortsCutter(Stage):
                 outro_duration=float(getattr(ctx, "s_outro_duration", 3) or 3),
             )
 
-        # burn: clip= тайминги/хуки/CTA для shorts
+        # burn: только Hook+CTA по умолчанию (subs/strong=False)
         if (
             getattr(ctx, "s_enable_hooks", True)
-            or getattr(ctx, "s_enable_subtitles", True)
-            or getattr(ctx, "s_enable_strong_words", True)
+            or getattr(ctx, "s_enable_subtitles", False)
+            or getattr(ctx, "s_enable_strong_words", False)
         ):
             subtitled = os.path.join(short_dir, f"short_{index:03d}_subs.mp4")
+            s_subs = bool(getattr(ctx, "s_enable_subtitles", False))
+            s_strong = bool(getattr(ctx, "s_enable_strong_words", False))
             current = burn_subtitles(
                 video_path=current,
                 analysis=ctx.analysis,
                 clip=clip,
                 enable_hooks=bool(getattr(ctx, "s_enable_hooks", True)),
-                enable_subtitles=bool(getattr(ctx, "s_enable_subtitles", True)),
-                enable_strong_words=bool(getattr(ctx, "s_enable_strong_words", True)),
+                enable_subtitles=s_subs,
+                enable_strong_words=s_strong,
                 output_path=subtitled,
                 log_fn=ctx.log,
                 caption_style=getattr(ctx, "caption_style", "auto_aisie"),
                 hook_style=getattr(ctx, "hook_style", "auto_aisie"),
-                transcription=ctx.transcription,
+                transcription=(ctx.transcription if (s_subs or s_strong) else None),
                 use_aisie=True,
             )
 

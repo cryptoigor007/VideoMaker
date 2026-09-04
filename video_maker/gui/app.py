@@ -1,9 +1,13 @@
-# VideoMaker FIX | 2026.09.01-r4 | 2026-09-01
-# CHANGED: галочки Intro/Middle/Outro:
-#   - файл нет / SSD отключён → серые (disabled), выключены
-#   - файл доступен → авто-включение + active
-#   - rescan каждые 5с (подключили SSD)
-# PREV: cf44e6a (галочки всегда кликабельны, без проверки доступа к файлу)
+# VideoMaker FIX | 2026.09.04-r27 | 2026-09-04
+# CHANGED: галочки IMO — умная логика сохранена + первопричины:
+#   1) os.access(R_OK) на macOS/сети давал False на только что выбранном
+#      файле → галочка оставалась серой. Теперь достаточно isfile.
+#   2) ttk.Checkbutton: enable через .state(['!disabled']) (configure
+#      на clam/macOS иногда не снимает disabled).
+#   3) NFC/NFD нормализация пути (macOS), expanduser.
+#   4) browse: sync до save, чтобы bool=True попал в JSON.
+#   Логика: пустой путь → DISABLED+OFF; файл есть → NORMAL+auto ON (можно OFF).
+# PREV: 2026.09.01-r4
 # REPLACE: video_maker/gui/app.py
 
 """Главное окно — Tkinter GUI с тёмной темой и подробным логированием."""
@@ -774,8 +778,10 @@ class App:
         if path:
             var.set(path.strip())
             log.info(f"[GUI] {name} = {path}")
-            self._save_settings()
+            # Сначала sync (галочка + bool=True), потом save —
+            # иначе в JSON уходил bool=False от старого disabled.
             self._sync_imo_checkboxes()
+            self._save_settings()
 
     # ─── Файловые диалоги (обратная совместимость) ────────────────────────
 
@@ -1663,19 +1669,77 @@ class App:
             log.warning("[GUI] Не удалось убить ffmpeg: %s", e)
 
     def _imo_path_accessible(self, path: str) -> bool:
-        """Файл реально существует и доступен (учтёт отключённый SSD)."""
+        """Файл существует — условие для умной галочки Intro/Middle/Outro.
+
+        Первопричина «выбрал файл — галочка серая»:
+        раньше: isfile AND access(R_OK). На macOS (сеть, внешний том, ACL,
+        cloud-placeholder) access часто False сразу после askopenfilename,
+        ok=False, checkbox оставался DISABLED. Достаточно isfile;
+        pipeline сам обработает ошибки чтения.
+        """
         path = (path or "").strip()
         if not path:
             return False
         try:
-            return os.path.isfile(path) and os.access(path, os.R_OK)
+            path = os.path.expanduser(path)
+            if os.path.isfile(path):
+                return True
+            try:
+                import unicodedata
+                for form in ("NFC", "NFD"):
+                    norm = unicodedata.normalize(form, path)
+                    if norm != path and os.path.isfile(norm):
+                        return True
+            except Exception:
+                pass
+            return False
         except OSError:
             return False
 
+    def _imo_cb_set_enabled(self, cb, enabled: bool) -> None:
+        """Включить/выключить ttk.Checkbutton надёжно (macOS + theme clam)."""
+        try:
+            if enabled:
+                try:
+                    cb.state(["!disabled"])
+                except Exception:
+                    pass
+                try:
+                    cb.configure(state=tk.NORMAL)
+                except Exception:
+                    pass
+            else:
+                try:
+                    cb.state(["disabled"])
+                except Exception:
+                    pass
+                try:
+                    cb.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+        except tk.TclError:
+            pass
+
+    def _imo_cb_is_disabled(self, cb) -> bool:
+        """disabled ли ttk.Checkbutton."""
+        try:
+            if hasattr(cb, "instate"):
+                return bool(cb.instate(["disabled"]))
+        except Exception:
+            pass
+        try:
+            return "disabled" in str(cb.cget("state")).lower()
+        except Exception:
+            return True
+
     def _sync_imo_checkboxes(self) -> None:
-        """Intro/Middle/Outro-галочки:
-        - файл есть и доступен → галочка активна, автоматически включена;
-        - файла нет / путь пустой / SSD отключён → галочка серая, выключена.
+        """Intro/Middle/Outro на основной вкладке (h / v / s).
+
+        Умная логика (исходный замысел):
+        - файл ЕСТЬ → NORMAL; при переходе disabled→enabled auto True
+          (пользователь может снять галочку вручную);
+        - пути нет / файла нет → DISABLED + False;
+        - intro/mid/outro × h/v/s независимы.
         """
         if not hasattr(self, "_imo_checkbuttons"):
             return
@@ -1687,22 +1751,29 @@ class App:
             else:
                 path_attr = f"{prefix}_outro_path"
             path_var = getattr(self, path_attr, None)
-            path = path_var.get().strip() if path_var is not None and hasattr(path_var, "get") else ""
+            path = ""
+            if path_var is not None and hasattr(path_var, "get"):
+                try:
+                    path = (path_var.get() or "").strip()
+                except Exception:
+                    path = ""
             ok = self._imo_path_accessible(path)
             bool_var = getattr(self, f"{prefix}_{key}", None)
             try:
-                try:
-                    was_disabled = str(cb.cget("state")).lower() in ("disabled", str(tk.DISABLED).lower())
-                except tk.TclError:
-                    was_disabled = True
+                was_disabled = self._imo_cb_is_disabled(cb)
                 if ok:
                     if was_disabled and bool_var is not None:
                         bool_var.set(True)
-                    cb.configure(state=tk.NORMAL)
+                    self._imo_cb_set_enabled(cb, True)
                 else:
                     if bool_var is not None:
                         bool_var.set(False)
-                    cb.configure(state=tk.DISABLED)
+                    self._imo_cb_set_enabled(cb, False)
+                    if path:
+                        log.debug(
+                            "[GUI] IMO %s_%s path set but file missing: %r",
+                            prefix, key, path,
+                        )
             except tk.TclError:
                 pass
 

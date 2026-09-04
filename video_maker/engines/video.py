@@ -1,7 +1,6 @@
-# VideoMaker FIX | 2026.09.02-r17 | 2026-09-02
-# CHANGED: FAST IMO (r15) + vstack supports ass_path → one encode geo+ASS (r17)
-#   duration ≈ main; audio=master only + explicit -t; path=FAST|FALLBACK logs
-# PREV: 2026.09.02-r15 / r14
+# VideoMaker FIX | 2026.09.03-r25 | 2026-09-03
+# CHANGED: cache prepared intro/outro segs (scale+trim+encode) across runs
+# PREV: 2026.09.02-r17
 # REPLACE: video_maker/engines/video.py
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
 from __future__ import annotations
@@ -949,13 +948,68 @@ def add_intro_outro_mid(
     if target_pix not in ("yuv420p", "yuv422p", "yuv444p", "nv12"):
         target_pix = "yuv420p"
 
+    def _imo_cache_key(src: str, label: str, dur: float) -> str:
+        """Stable key: path + mtime + size + dur + profile + codec/bitrate."""
+        import hashlib
+        try:
+            st = os.stat(src)
+            mtime_ns = st.st_mtime_ns
+            size = st.st_size
+        except OSError:
+            mtime_ns, size = 0, 0
+        raw = (
+            f"{os.path.abspath(src)}|{mtime_ns}|{size}|"
+            f"{label}|{dur:.4f}|{mw}x{mh}|fps={target_fps:.6f}|"
+            f"pix={target_pix}|codec=h264_videotoolbox|br=16M|an=1"
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
     def _make_seg(src: str, label: str, dur: float) -> str:
-        """Encode short overlay to exact master profile, video-only (-an)."""
+        """Encode short overlay to exact master profile, video-only (-an).
+
+        intro/outro: persistent cache under ~/video_maker/cache/imo/
+        middle: no cache (depends on placement in specific video).
+        """
+        use_cache = label in ("intro", "outro")
+        cache_path = ""
+        if use_cache:
+            cache_dir = os.path.join(
+                os.path.expanduser("~"), "video_maker", "cache", "imo"
+            )
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+            except OSError:
+                pass
+            cache_path = os.path.join(
+                cache_dir, f"{label}_{_imo_cache_key(src, label, dur)}.mp4"
+            )
+            if (
+                cache_path
+                and os.path.isfile(cache_path)
+                and os.path.getsize(cache_path) > 1000
+            ):
+                # Copy into work_dir so concat stays local / race-safe
+                out = os.path.join(
+                    work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4"
+                )
+                try:
+                    import shutil
+                    shutil.copy2(cache_path, out)
+                    if os.path.isfile(out) and os.path.getsize(out) > 1000:
+                        _log(
+                            f"[IMO_{label.upper()}] cache HIT → {cache_path}"
+                        )
+                        return out
+                except OSError as e:
+                    _log(f"[IMO_{label.upper()}] cache HIT copy fail: {e}")
+
         out = os.path.join(work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4")
         vf = (
             f"scale={mw}:{mh}:force_original_aspect_ratio=decrease,"
             f"pad={mw}:{mh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={target_fps:.6f}"
         )
+        if use_cache:
+            _log(f"[IMO_{label.upper()}] cache MISS → encode")
         cmd = [
             ffmpeg, "-y", "-i", src, "-t", f"{dur:.4f}",
             "-vf", vf,
@@ -966,6 +1020,18 @@ def add_intro_outro_mid(
             out,
         ]
         run_vt_encode(cmd, [src], out, log_fn=_log, stage_name=f"IMO_{label.upper()}")
+        if (
+            use_cache
+            and cache_path
+            and os.path.isfile(out)
+            and os.path.getsize(out) > 1000
+        ):
+            try:
+                import shutil
+                shutil.copy2(out, cache_path)
+                _log(f"[IMO_{label.upper()}] cache STORE → {cache_path}")
+            except OSError as e:
+                _log(f"[IMO_{label.upper()}] cache STORE fail: {e}")
         return out
 
     def _copy_trim(src: str, t0: float, t1: float, label: str) -> str:

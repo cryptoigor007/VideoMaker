@@ -1,26 +1,28 @@
-VideoMaker FULL snapshot + FIX 2026.09.02-r13
+VideoMaker r27 (2026-09-04) — итоговый
+======================================
 
-Источник: github.com/cryptoigor007/VideoMaker (latest) + патч outro.
+Сборка: r27  |  VERSION.md  |  CHANGES.md
 
-ГЛАВНОЕ ИСПРАВЛЕНИЕ r13 (wide / final_16x9):
-• Аутро ЗАМЕНЯЕТ последние N секунд основного видео
-  (N = реальная длительность файла outro, probe).
-• НЕ приклеивается в конец (старый concat убран).
-• Длительность wide = длительности master.
-• Речь (аудио master) идёт под визуалом аутро.
-• Intro по-прежнему prepend; при intro — pad silence в аудио.
-• -shortest больше не отрезает аутро.
+Что исправлено в r27
+--------------------
+1) Галочки Intro/Middle/Outro на вкладке «Основные»
+   • Умная логика: файл есть → ON+active (можно OFF); нет/пусто → OFF+disabled
+   • Первопричина «серой» галочки: os.access(R_OK) на macOS + ttk state
+   • Файл: video_maker/gui/app.py
 
-Файлы с патчем:
-  video_maker/engines/video.py
-  engines/video.py  (дубликат на корне, синхронизирован)
+2) Старт не блокируется из‑за WhisperX
+   • Транскрипция = MLX Whisper, WhisperX не используется
+   • Старый путь в настройках больше не даёт ошибку validate
+   • Файл: video_maker/config/settings.py
+   • Можно очистить whisperx_path в Настройках (необязательно)
 
-Как ставить:
-1. Распаковать поверх своей папки VideoMaker
-   ИЛИ использовать эту папку как новый корень проекта.
-2. head -5 video_maker/engines/video.py
-   → должна быть строка 2026.09.02-r13
-3. Запускать тот же Python/venv, что смотрит в эту папку.
+Установка
+---------
+  Распаковать поверх папки VideoMaker
+  head -5 video_maker/gui/app.py          → 2026.09.04-r27
+  head -8 video_maker/config/settings.py  → r27 / MLX Whisper
 
-Проверка в логе:
-  [IMO] outro REPLACE last XX.XXs of main (not append)
+Проверка
+--------
+  A) IMO: выбрать реальный Intro → галочка на Основных активна
+  B) Старт без WhisperX: не должно быть «WhisperX бинарник не найден»

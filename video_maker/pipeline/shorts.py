@@ -1,6 +1,6 @@
-# VideoMaker FIX | 2026.09.03-r24 | 2026-09-03
-# CHANGED: skip short Hook/CTA if overlap long zones; HOOK_DUR/CTA_DUR via subtitles
-# PREV: 2026.09.03-r23
+# VideoMaker FIX | 2026.09.03-r26 | 2026-09-03
+# CHANGED: shorts → series_dir/shorts (no double nest / temp+copy)
+# PREV: 2026.09.03-r24
 # REPLACE: video_maker/pipeline/shorts.py
 
 """ShortsCutter — cut из final_9x16 (stream copy) → burn только Hook+CTA → BGM reuse."""
@@ -222,8 +222,14 @@ class ShortsCutter(Stage):
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[SHORTS] cut from final_9x16 (stream copy) + burn only Hook+CTA...")
-        output_dir = os.path.join(ctx.output_folder, "shorts")
+        # Пишем сразу в финальную структуру series_dir/shorts (без лишнего copy в Finalize)
+        from .finalize import resolve_series_dir
+        series_dir, _ = resolve_series_dir(
+            ctx.output_folder, ctx.series_name or "", ctx.audio_path or ""
+        )
+        output_dir = os.path.join(series_dir, "shorts")
         os.makedirs(output_dir, exist_ok=True)
+        ctx.log(f"[SHORTS] series_dir={series_dir} → {output_dir}")
 
         clips = ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else []
         if not clips:

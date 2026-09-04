@@ -1,3 +1,23 @@
+# VideoMaker — r27 (2026-09-04)
+
+## r27 — GUI: галочки Intro/Middle/Outro + VERSION.md
+
+### Исправлено
+1. **Галочки IMO на вкладке «Основные»** (`video_maker/gui/app.py` → r27):
+   - файл есть (isfile) → ACTIVE + auto ON; пусто/нет файла → DISABLED + OFF;
+   - путь пустой → DISABLED + False;
+   - смена intro/mid/outro любого формата пересчитывает все независимо;
+   - баг: «выбрал Intro на вкладке IMO — галочка на Основных серая» — закрыт.
+2. **settings.py**: validate() больше не блокирует запуск из‑за старого
+   пути WhisperX (движок транскрипции = MLX Whisper).
+3. **VERSION.md** — единый текстовый контроль версий всех файлов и сборок.
+
+### Не тронуто
+- pipeline/engines (shorts r26, video r25, branches r22, …)
+- REPLACE-семантика, resume, пути с пробелами/кириллицей
+
+---
+
 # VideoMaker — r21 (2026-09-02)
 
 ## r21 — vertical one_encode + safe BGM + shorts only Hook+CTA
