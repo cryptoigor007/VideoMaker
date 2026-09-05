@@ -1616,7 +1616,8 @@ class App:
         """Heartbeat для отслеживания состояния окна (каждые 5 секунд)."""
         if not self.root.winfo_exists():
             return
-        log.info(
+        # heartbeat без спама в INFO-лог (только debug)
+        log.debug(
             "LIFECYCLE heartbeat visible=%s viewable=%s geometry=%s",
             self.root.winfo_viewable(),
             self.root.winfo_ismapped(),

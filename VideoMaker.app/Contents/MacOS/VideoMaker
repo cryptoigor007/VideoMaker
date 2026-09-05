@@ -1,5 +1,33 @@
 #!/bin/bash
-cd "$(dirname "$0")/../.."
-export PYTHONPATH="/Users/dreamstore/video_maker:${PYTHONPATH}"
-source .venv/bin/activate 2>/dev/null || true
-python -m video_maker.main 2>&1 | tee -a "$HOME/video_maker/videomeyker.log"
+# VideoMaker.app launcher — relative to .app bundle
+# Bundle structure: VideoMaker.app/Contents/MacOS/VideoMaker
+# Project root is two levels up from Contents, or sibling if .app is inside project
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Contents/MacOS -> Contents -> VideoMaker.app -> parent (project root)
+APP_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# If video_maker package is next to the .app, use that
+if [ -d "$APP_ROOT/video_maker" ]; then
+    PROJECT_DIR="$APP_ROOT"
+elif [ -d "$SCRIPT_DIR/../../../video_maker" ]; then
+    PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+else
+    # fallback: same folder as .app
+    PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+
+cd "$PROJECT_DIR" || exit 1
+export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH}"
+
+if [ -x "$PROJECT_DIR/.venv/bin/python" ]; then
+    PYTHON="$PROJECT_DIR/.venv/bin/python"
+elif [ -x "$PROJECT_DIR/venv/bin/python" ]; then
+    PYTHON="$PROJECT_DIR/venv/bin/python"
+else
+    PYTHON="python3"
+fi
+
+LOG_DIR="${HOME}/video_maker"
+mkdir -p "$LOG_DIR"
+"$PYTHON" -m video_maker.main 2>&1 | tee -a "$LOG_DIR/videomaker.log"

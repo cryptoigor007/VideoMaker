@@ -1,3 +1,5 @@
+# VideoMaker FIX | 2026.09.05-r31 | 2026-09-05
+# CHANGED: cache HIT без words → re-transcribe
 """Движок транскрибации — ТОЛЬКО MLX Whisper (без WhisperX).
 
 Зафиксировано:
@@ -83,8 +85,20 @@ def transcribe(
         if cpath.is_file():
             data = json.loads(cpath.read_text(encoding="utf-8"))
             if isinstance(data, dict) and data.get("segments") is not None:
-                _log(f"[WHISPER] Кэш HIT → {cpath.name} ({len(data.get('segments') or [])} сегментов)")
-                return data
+                segs = data.get("segments") or []
+                n_w = sum(len(s.get("words") or []) for s in segs if isinstance(s, dict))
+                # karaoke нужен word-level; кэш без words — пересчитать
+                if n_w == 0 and segs:
+                    _log(
+                        f"[WHISPER] Кэш HIT но words=0 ({cpath.name}, "
+                        f"{len(segs)} seg) → пересчёт с word_timestamps"
+                    )
+                else:
+                    _log(
+                        f"[WHISPER] Кэш HIT → {cpath.name} "
+                        f"({len(segs)} сегментов, words={n_w})"
+                    )
+                    return data
     except Exception as e:
         _log(f"[WHISPER] Кэш пропуск: {e}")
 

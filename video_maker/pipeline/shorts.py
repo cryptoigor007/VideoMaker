@@ -1,8 +1,8 @@
-# VideoMaker FIX | 2026.09.03-r26 | 2026-09-03
-# CHANGED: shorts → series_dir/shorts (no double nest / temp+copy)
-# PREV: 2026.09.03-r24
+# VideoMaker FIX | 2026.09.05-r33 | 2026-09-05
+# CHANGED:
+#   r33: short папка — только short_00N.mp4 (+txt); cut/burn во temp
+#   r33: 4–5 shorts Gemini снова (лимит 1 снят)
 # REPLACE: video_maker/pipeline/shorts.py
-
 """ShortsCutter — cut из final_9x16 (stream copy) → burn только Hook+CTA → BGM reuse."""
 from __future__ import annotations
 
@@ -78,11 +78,15 @@ class ShortsCutter(Stage):
         short_dir = os.path.join(output_dir, f"short_{index:03d}")
         os.makedirs(short_dir, exist_ok=True)
         final_path = os.path.join(short_dir, f"short_{index:03d}.mp4")
-        cut_path = os.path.join(short_dir, f"short_{index:03d}_cut.mp4")
+        # r33: промежуточные только во temp — в папке шорта один mp4
+        import tempfile
+        tmp_dir = tempfile.mkdtemp(prefix=f"vm_short_{index:03d}_")
+        cut_path = os.path.join(tmp_dir, "cut.mp4")
+        temps = [tmp_dir]
 
         ctx.log(
-            f"[SHORTS] #{index} copy from final_9x16: cut {start:.1f}-{end:.1f}s "
-            f"(stream copy) → burn only Hook+CTA"
+            f"[SHORTS] #{index} cut {start:.1f}-{end:.1f}s → burn Hook+CTA → "
+            f"short_{index:03d}.mp4 (без _cut/_subs на диске)"
         )
         cut_segment(
             video_path=src,
@@ -150,7 +154,7 @@ class ShortsCutter(Stage):
             )
 
         if s_hooks or s_subs or s_strong:
-            subtitled = os.path.join(short_dir, f"short_{index:03d}_subs.mp4")
+            # burn сразу в final_path — без short_00N_subs.mp4 в папке
             ctx.log(
                 f"[SHORTS] #{index} burn only: hooks={s_hooks} subs={s_subs} strong={s_strong} "
                 f"skip_hook={skip_hook} skip_cta={skip_cta}"
@@ -163,30 +167,58 @@ class ShortsCutter(Stage):
                 enable_hooks=s_hooks,
                 enable_subtitles=s_subs,
                 enable_strong_words=s_strong,
-                output_path=subtitled,
+                output_path=final_path,
                 log_fn=ctx.log,
                 caption_style=getattr(ctx, "caption_style", "auto_aisie"),
                 hook_style=getattr(ctx, "hook_style", "auto_aisie"),
                 transcription=tr,
                 use_aisie=True,
             )
+        else:
+            # нечего прожигать — cut и есть итог
+            if os.path.abspath(current) != os.path.abspath(final_path):
+                shutil.copy2(current, final_path)
+            current = final_path
 
-        # BGM: не мешать повторно — cut из vertical уже несёт смешанную дорожку
+        # BGM: только если long ещё без BGM — тоже во temp, потом в final
         if ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
             from ..engines.audio import mix_bgm
-            bgm_out = os.path.join(short_dir, f"short_{index:03d}_bgm.mp4")
+            bgm_out = os.path.join(tmp_dir, "bgm.mp4")
             try:
-                current = mix_bgm(
+                mixed = mix_bgm(
                     current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True
                 )
-                ctx.log(f"[SHORTS] #{index} BGM mixed (long had no BGM)")
+                if os.path.abspath(mixed) != os.path.abspath(final_path):
+                    shutil.copy2(mixed, final_path)
+                current = final_path
+                ctx.log(f"[SHORTS] #{index} BGM mixed (long had no BGM) → final only")
             except Exception as e:
                 ctx.log(f"[SHORTS] BGM skip: {e}")
         elif getattr(ctx, "bgm_mixed", False):
-            ctx.log(f"[SHORTS] #{index} BGM reused from long (no re-mix)")
+            ctx.log(f"[SHORTS] #{index} BGM already on long (no re-mix)")
 
-        if os.path.abspath(current) != os.path.abspath(final_path):
-            shutil.copy2(current, final_path)
+        # если burn/bgm не оставили final — добить copy из current
+        try:
+            same = os.path.abspath(current) == os.path.abspath(final_path)
+        except Exception:
+            same = False
+        if not same:
+            try:
+                final_ok = os.path.isfile(final_path) and os.path.getsize(final_path) > 0
+            except OSError:
+                final_ok = False
+            if not final_ok:
+                try:
+                    if os.path.isfile(current):
+                        shutil.copy2(current, final_path)
+                except OSError as e:
+                    ctx.log(f"[SHORTS] #{index} copy to final failed: {e}")
+
+        # чистим temp (cut/bgm)
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
         self._write_sidecar_files(clip, short_dir, index)
         self._write_metadata(
@@ -231,7 +263,7 @@ class ShortsCutter(Stage):
         os.makedirs(output_dir, exist_ok=True)
         ctx.log(f"[SHORTS] series_dir={series_dir} → {output_dir}")
 
-        clips = ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else []
+        clips = list(ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else [])
         if not clips:
             ctx.log("[SHORTS] Нет clips_for_shorts в analysis — пропуск")
             ctx.shorts = []

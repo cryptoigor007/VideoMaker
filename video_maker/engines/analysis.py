@@ -1,3 +1,5 @@
+# VideoMaker FIX | 2026.09.05-r32 | 2026-09-05
+# CHANGED r33: снова 4–5 shorts; лимит «1 short» снят
 """Движок анализа — Gemini API."""
 from __future__ import annotations
 

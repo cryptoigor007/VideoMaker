@@ -1,3 +1,7 @@
+# VideoMaker FIX | 2026.09.05-r38 | 2026-09-05
+# CHANGED: только keyword-group + punch; non-key groups не красят; hook без групп → 1–2 последних слова
+# PREV: 2026.09.05-r37
+# REPLACE: video_maker/engines/aisie_integration.py
 """AISIE интеграция — улучшение анализа через AISIE pipeline."""
 from __future__ import annotations
 
@@ -121,8 +125,71 @@ def enhance_analysis_with_aisie(
             analysis["subtitles"] = subtitles
         
         _log(f"[AISIE] Добавлено хуков: {len(plan.get('hooks', []))}, субтитров: {len(plan.get('subtitles', []))}")
+
+        # Обогатить strong_words из AISIE (karaoke neon color/scale)
+        # keyword-group → последнее слово L3/L4; остальные слова группы → L2
+        sw = list(analysis.get("strong_words") or [])
+        existing = {(str(x.get("word") or "").strip().lower()) for x in sw if isinstance(x, dict)}
+        added = 0
+
+        def _add_sw(word: str, weight: str, start: float, end, source: str):
+            nonlocal added
+            key = word.strip().lower()
+            if not key or key in existing:
+                return
+            existing.add(key)
+            sw.append({
+                "word": word.strip(),
+                "visual_weight": weight,
+                "start": float(start or 0),
+                "end": float(end) if end else None,
+                "source": source,
+            })
+            added += 1
+
+        for h in plan.get("hooks") or []:
+            hw = (h.get("visual_weight") or "L3").upper()
+            if hw not in ("L1", "L2", "L3", "L4"):
+                hw = "L3"
+            groups = h.get("semantic_groups") or []
+            if not groups:
+                # без групп — только 1–2 последних содержательных слова хука, не вся фраза
+                parts = [x for x in str(h.get("text") or "").split() if x.strip()]
+                if not parts:
+                    continue
+                if len(parts) == 1:
+                    _add_sw(parts[0], hw, h.get("start", 0), h.get("end"), "aisie_hook")
+                else:
+                    _add_sw(parts[-2], "L2", h.get("start", 0), h.get("end"), "aisie_hook")
+                    _add_sw(parts[-1], hw if hw in ("L3", "L4") else "L3",
+                            h.get("start", 0), h.get("end"), "aisie_hook")
+                continue
+            for g in groups:
+                raw = g.get("words") or g.get("text") or ""
+                parts = raw if isinstance(raw, list) else str(raw).split()
+                parts = [str(x).strip() for x in parts if str(x).strip()]
+                if not parts:
+                    continue
+                is_key = bool(g.get("is_keyword_group"))
+                g_start = float(g.get("start") or h.get("start") or 0)
+                g_end = g.get("end") or h.get("end")
+                if is_key:
+                    # словосочетание: поддержка L2, punch (последнее) — максимальный вес хука
+                    for part in parts[:-1]:
+                        _add_sw(part, "L2", g_start, g_end, "aisie_sg")
+                    punch = "L4" if hw == "L4" else "L3"
+                    _add_sw(parts[-1], punch, g_start, g_end, "aisie_keyword")
+                # non-keyword groups: НЕ красим — иначе «все слова непонятно»
+
+        if added:
+            analysis["strong_words"] = sw
+            _log(f"[AISIE] strong_words += {added} из hooks/semantic_groups (всего {len(sw)})")
+        else:
+            n_hooks = len(plan.get("hooks") or [])
+            _log(f"[AISIE] strong_words не пополнены (hooks={n_hooks}); остаются Gemini: {len(sw)}")
         
     except Exception as e:
         _log(f"[AISIE] Ошибка: {e}")
+
     
     return analysis

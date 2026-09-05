@@ -1,28 +1,30 @@
-VideoMaker r27 (2026-09-04) — итоговый
-======================================
+VideoMaker r27-clean (2026-09-04) — итоговый дистрибутив
+========================================================
 
-Сборка: r27  |  VERSION.md  |  CHANGES.md
+Сборка: r27-clean  |  VERSION.md (все файлы)  |  CHANGES.md
 
-Что исправлено в r27
---------------------
-1) Галочки Intro/Middle/Outro на вкладке «Основные»
-   • Умная логика: файл есть → ON+active (можно OFF); нет/пусто → OFF+disabled
-   • Первопричина «серой» галочки: os.access(R_OK) на macOS + ttk state
-   • Файл: video_maker/gui/app.py
-
-2) Старт не блокируется из‑за WhisperX
-   • Транскрипция = MLX Whisper, WhisperX не используется
-   • Старый путь в настройках больше не даёт ошибку validate
-   • Файл: video_maker/config/settings.py
-   • Можно очистить whisperx_path в Настройках (необязательно)
+Что в этом архиве
+-----------------
+• Только рабочий код в video_maker/
+• Корневые engines/ gui/ pipeline/ УДАЛЕНЫ (были старыми копиями)
+• Логи и cache/ не входят
+• start.command и .app — относительные пути
+• VERSION.md: версия или дата git для КАЖДОГО файла
 
 Установка
 ---------
-  Распаковать поверх папки VideoMaker
-  head -5 video_maker/gui/app.py          → 2026.09.04-r27
-  head -8 video_maker/config/settings.py  → r27 / MLX Whisper
+  1. Распаковать в любую папку
+  2. cd VideoMaker
+  3. python3 -m venv .venv && source .venv/bin/activate
+  4. pip install -r requirements.txt && pip install mlx-whisper
+  5. brew install ffmpeg   # если ещё нет
+  6. cp .env.example .env  # + GEMINI_API_KEY
+  7. ./start.command
 
-Проверка
---------
-  A) IMO: выбрать реальный Intro → галочка на Основных активна
-  B) Старт без WhisperX: не должно быть «WhisperX бинарник не найден»
+Проверка версий
+---------------
+  head -5 video_maker/gui/app.py           → 2026.09.04-r27
+  head -5 video_maker/config/settings.py   → 2026.09.04-r27
+  head -5 video_maker/engines/video.py     → 2026.09.03-r25
+  head -5 video_maker/pipeline/shorts.py   → 2026.09.03-r26
+  ls engines gui pipeline 2>/dev/null      → пусто (удалены)

@@ -1,6 +1,17 @@
-# VideoMaker FIX | 2026.09.03-r24 | 2026-09-03
-# CHANGED: Hook 4.5s / CTA 7.0s; shorts skip Hook/CTA if overlap with long zones
-# PREV: 2026.09.01-r5
+# VideoMaker FIX | 2026.09.05-r41 | 2026-09-05
+# CHANGED:
+#   r41: highlight_lexicon — полный перечень слов/идиом; «друг для друга» целиком;
+#        один цвет = одна строка (≤2, ≤3 если короткие); разный цвет = разные строки
+#   r40: phrase karaoke
+#   r36: SF Pro Display
+#   r35: full path:
+#        • до речи все слова одинаковые (dim, один размер) — без предраскраски
+#        • обычное активное слово: белый, БЕЗ scale
+#        • strong L1–L4: цвет + scale 8–28% ТОЛЬКО в момент произнесения + pop
+#   r34: CRITICAL — NameError strong_map is not defined в burn_subtitles
+#   r31: CRITICAL — karaoke на full video (было только при clip)
+#   r30: Clean Pro 2–3 слова; AISIE strong color/scale
+# PREV: 2026.09.05-r40
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -160,6 +171,20 @@ def _is_wide(playres_x: int, playres_y: int) -> bool:
     return playres_x >= playres_y
 
 
+def _caption_pos(playres_x: int, playres_y: int, wide: bool) -> str:
+    """Vertical/shorts: центр текста на 56% (≈6% ниже середины), \an5.
+    Wide: низ кадра, \an2.
+    Важно: \an2 на mid поднимает тело строки ВЫШЕ середины — не использовать.
+    """
+    cx = playres_x // 2
+    if wide:
+        cy = int(playres_y * 0.90)
+        return "{\\an2\\pos(%d,%d)}" % (cx, cy)
+    cy = int(playres_y * 0.56)
+    return "{\\an5\\pos(%d,%d)}" % (cx, cy)
+
+
+
 def _weight_style(weight: str, base_size: int) -> tuple[str, int]:
     w = VISUAL_WEIGHTS.get(weight) or VISUAL_WEIGHTS.get("L1") or {}
     color = _ass_color(w.get("text_color", "#FFFFFF"))
@@ -200,7 +225,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Hormozi,Arial Black,{sz},&H0000EBFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
 Style: HormoziGreen,Arial Black,{sz},&H004CFF00&,&H004CFF00&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
 Style: TikTokBox,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&HE0000000&,-1,0,0,0,100,100,0,0,3,0,0,{align_k},{ml},{ml},{margin_v},1
-Style: CleanPro,Arial,{sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,0,0,1,0,4,{align_k},{ml},{ml},{margin_v},1
+Style: CleanPro,SF Pro Display,{sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,0,0,1,0,4,{align_k},{ml},{ml},{margin_v},1
 Style: BoldPop,Arial Black,{sz},&H000000FF&,&H0000A5FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,2,0,1,{bord+1},0,{align_k},{ml},{ml},{margin_v},1
 Style: Cliffhanger,Arial Black,{sz},&H000000FF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord+2},1,{align_k},{ml},{ml},{margin_v},1
 Style: Karaoke,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
@@ -244,172 +269,474 @@ def _words_from_transcription(transcription: dict | None) -> list[dict]:
     return words
 
 
-def _strong_map(analysis: dict) -> dict:
-    m = {}
+def _norm_word_key(text: str) -> str:
+    """Ключ для strong_map: lower, ё→е, без пунктуации."""
+    import re
+    t = (text or "").strip().lower().replace("ё", "е")
+    t = re.sub(r"^[\s\.,!?;:«»\"\'()\[\]…—–\-]+", "", t)
+    t = re.sub(r"[\s\.,!?;:«»\"\'()\[\]…—–\-]+$", "", t)
+    return t
+
+
+def _strong_lookup(strong: dict, word_text: str) -> str:
+    """Точное совпадение ключа (без prefix — иначе красятся чужие слова)."""
+    if not strong or not word_text:
+        return ""
+    key = _norm_word_key(word_text)
+    if not key:
+        return ""
+    if key in strong:
+        return str(strong[key] or "").upper()
+    k2 = key.replace("-", "")
+    if k2 and k2 in strong:
+        return str(strong[k2] or "").upper()
+    return ""
+
+
+def _strong_map(analysis: dict, word_texts: list | None = None) -> dict:
+    """Сильные слова: лексикон + идиомы + Gemini/AISIE (только если в лексиконе или идиома).
+
+    «друг для друга» — только целиком (не одно «друг»).
+    Цвета: L2 yellow, L3 orange, L4 pink.
+    """
+    from .highlight_lexicon import (
+        build_lexicon_strong_map,
+        lexicon_level,
+        find_idioms_in_words,
+        SINGLE_BLOCKLIST,
+        IDIOM_PHRASES,
+        _norm,
+    )
+
+    m: dict = {}
+    rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
+
+    def put(key: str, weight: str):
+        if not key or len(key) < 2:
+            return
+        w = (weight or "L2").upper()
+        if w not in rank:
+            w = "L2"
+        prev = m.get(key)
+        if prev is None or rank.get(w, 0) >= rank.get(str(prev).upper(), 0):
+            m[key] = w
+
+    texts = list(word_texts or [])
+    if not texts:
+        # собрать из strong_words / hooks тексты как fallback
+        for sw in analysis.get("strong_words") or []:
+            if isinstance(sw, dict):
+                texts.extend(str(sw.get("word") or sw.get("text") or "").split())
+
+    # 1) лексикон + идиомы по реальной цепочке слов
+    if texts:
+        for k, lv in build_lexicon_strong_map(texts).items():
+            put(k, lv)
+
+    # 2) Gemini strong_words — только если слово в лексиконе или часть идиомы
     for sw in analysis.get("strong_words") or []:
-        w = (sw.get("word") or "").strip().lower()
-        if w:
-            m[w] = sw.get("weight") or sw.get("visual_weight") or "L2"
-    for h in analysis.get("aisie", {}).get("hooks") or analysis.get("hooks") or []:
+        if not isinstance(sw, dict):
+            continue
+        raw = sw.get("word") or sw.get("text") or ""
+        wt = (sw.get("weight") or sw.get("visual_weight") or "L2").upper()
+        parts = str(raw).split()
+        if len(parts) >= 2:
+            phrase = " ".join(_norm(x) for x in parts)
+            if phrase in IDIOM_PHRASES:
+                for part in parts:
+                    put(_norm(part), IDIOM_PHRASES[phrase])
+                continue
+        for part in parts:
+            k = _norm(part)
+            if not k or k in SINGLE_BLOCKLIST:
+                continue
+            lv = lexicon_level(part)
+            if lv:
+                # Gemini может поднять вес не ниже лексикона
+                put(k, wt if rank.get(wt, 0) >= rank.get(lv, 0) else lv)
+            # иначе игнор — нет в перечне
+
+    # 3) AISIE keyword groups — фильтр через лексикон; идиомы приоритетнее
+    hooks = list(analysis.get("aisie", {}).get("hooks") or []) + list(analysis.get("hooks") or [])
+    for h in hooks:
+        if not isinstance(h, dict):
+            continue
         for g in h.get("semantic_groups") or []:
+            if not isinstance(g, dict) or not bool(g.get("is_keyword_group")):
+                continue
             raw = g.get("words") or g.get("text") or ""
-            if isinstance(raw, list):
-                parts = raw
-            else:
-                parts = str(raw).split()
+            parts = raw if isinstance(raw, list) else str(raw).split()
+            parts = [str(x).strip() for x in parts if str(x).strip()]
+            if not parts:
+                continue
+            phrase = " ".join(_norm(x) for x in parts)
+            if phrase in IDIOM_PHRASES:
+                for part in parts:
+                    put(_norm(part), IDIOM_PHRASES[phrase])
+                continue
             for part in parts:
-                key = str(part).strip().lower()
-                if key:
-                    m[key] = g.get("visual_weight") or h.get("visual_weight") or "L3"
+                k = _norm(part)
+                if k in SINGLE_BLOCKLIST:
+                    continue
+                lv = lexicon_level(part)
+                if lv:
+                    put(k, lv)
+
     return m
 
 
-def _group_words_static(words: list[dict]) -> list[list[int]]:
-    """Статичные группы по 2–3 слова (до 4 если короткие). Не «бегущая строка»."""
+
+
+def _shorts_phrase_boundaries(words: list[dict], clips: list | None) -> tuple[set[int], set[int]]:
+    """Индексы слов: must_start / must_end по клипам Gemini (clips_for_shorts).
+
+    Для каждого шорта: первое слово окна = начало словосочетания на экране,
+    последнее слово окна = конец словосочетания. Так cut с vertical не режет
+    фразу посередине.
+    """
+    must_start: set[int] = set()
+    must_end: set[int] = set()
+    if not words or not clips:
+        return must_start, must_end
+    n = len(words)
+    for clip in clips:
+        if not isinstance(clip, dict):
+            continue
+        try:
+            c0 = float(clip.get("start", 0) or 0)
+            c1 = float(clip.get("end", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if c1 <= c0:
+            continue
+        # Слова, пересекающие окно шорта (не только «полностью внутри»)
+        idxs = [
+            i for i, w in enumerate(words)
+            if float(w.get("end", 0)) > c0
+            and float(w.get("start", 0)) < c1
+        ]
+        if not idxs:
+            continue
+        # Убрать слово, почти целиком ДО start (overlap < 30% длительности слова)
+        while idxs:
+            w = words[idxs[0]]
+            ws, we = float(w.get("start", 0)), float(w.get("end", 0))
+            dur = max(we - ws, 1e-3)
+            overlap = max(0.0, min(we, c1) - max(ws, c0))
+            if ws < c0 and overlap / dur < 0.30:
+                idxs.pop(0)
+                continue
+            break
+        while idxs:
+            w = words[idxs[-1]]
+            ws, we = float(w.get("start", 0)), float(w.get("end", 0))
+            dur = max(we - ws, 1e-3)
+            overlap = max(0.0, min(we, c1) - max(ws, c0))
+            if we > c1 and overlap / dur < 0.30:
+                idxs.pop()
+                continue
+            break
+        if not idxs:
+            continue
+        must_start.add(idxs[0])
+        must_end.add(idxs[-1])
+    return must_start, must_end
+
+
+def _group_words_with_boundaries(
+    words: list[dict],
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    max_words: int = 3,
+    max_chars: int = 28,
+) -> list[list[int]]:
+    """Группы 2–3 слова (макс. 4 — только если все слова короткие).
+
+    Жёсткие правила (AISIE-совместимо):
+    - по умолчанию 2–3 слова на экране;
+    - 4 слова только если каждое ≤ 4 символов И суммарно ≤ max_chars;
+    - must_start / must_end — границы шортов Gemini (не раздувают группу!).
+    """
     n = len(words)
     if n == 0:
         return []
-    particles = {"и", "а", "но", "в", "на", "по", "к", "с", "у", "о", "из", "от", "до", "не", "ни", "же", "ли", "бы", "то", "это", "как"}
+    must_start = set(must_start or ())
+    must_end = set(must_end or ())
+    sticky = {
+        "и", "а", "но", "да", "или", "либо", "ни",
+        "в", "на", "по", "к", "с", "у", "о", "об", "обо", "из", "от", "до",
+        "для", "при", "без", "над", "под", "про", "через",
+        "не", "же", "ли", "бы", "то", "это", "как", "что", "чтобы",
+        "я", "ты", "он", "она", "мы", "вы", "они",
+    }
+    # max_chars потолок на длину фразы (не зависит от 4K ширины)
+    max_chars = min(int(max_chars or 28), 28)
+
     groups: list[list[int]] = []
     i = 0
     while i < n:
-        # целевой размер группы
-        remain = n - i
-        if remain <= 4:
-            size = remain
-        else:
-            # смотрим длину следующих слов
-            chunk = words[i:i + 4]
-            avg = sum(len(w["text"]) for w in chunk) / len(chunk)
-            size = 4 if avg <= 5 else 3
-        # не начинать группу с частицы, если можно взять предыдущее (уже в группе — сдвиг)
-        end = min(i + size, n)
-        # если последнее слово группы — частица и есть ещё слова, захватить следующее
-        if end < n and words[end - 1]["text"].lower().strip(".,!?;:") in particles:
-            end = min(end + 1, n)
-        # если первое — частица и группа > 2, ок; если одно — приклеить к следующей
-        idxs = list(range(i, end))
-        if len(idxs) == 1 and end < n:
-            idxs = list(range(i, min(i + 2, n)))
-            end = idxs[-1] + 1
-        groups.append(idxs)
+        hard_end = n
+        for e in sorted(must_end):
+            if e >= i:
+                hard_end = min(hard_end, e + 1)
+                break
+        for s in sorted(must_start):
+            if s > i:
+                hard_end = min(hard_end, s)
+                break
+
+        remain = hard_end - i
+        if remain <= 0:
+            groups.append([i])
+            i += 1
+            continue
+
+        # целевой размер: 2 или 3
+        target = 2 if remain >= 2 else 1
+        if remain >= 3:
+            # 3 слова, если не слишком длинные
+            chunk3 = words[i:i + 3]
+            chars3 = sum(len((w.get("text") or "")) for w in chunk3) + 2
+            if chars3 <= max_chars:
+                target = 3
+        # 4 только если remain>=4 и ВСЕ слова короткие
+        if remain >= 4 and target == 3:
+            chunk4 = words[i:i + 4]
+            if all(len((w.get("text") or "")) <= 4 for w in chunk4):
+                chars4 = sum(len((w.get("text") or "")) for w in chunk4) + 3
+                if chars4 <= max_chars:
+                    target = 4
+
+        end = min(i + target, hard_end)
+
+        # sticky: частица в конце → захватить ещё одно (но не > 4 и не > hard_end)
+        if end < hard_end and (end - i) < 4:
+            last = _norm_word_key(words[end - 1].get("text") or "")
+            if last in sticky:
+                end = min(end + 1, hard_end, i + 4)
+
+        # не оставлять одно слово, если можно 2
+        if end - i == 1 and end < hard_end:
+            end = min(i + 2, hard_end)
+
+        # сирота: забрать только если новое число слов ≤ 3
+        # (4 — только отдельной веткой «все короткие» выше)
+        if hard_end - end == 1 and (end - i + 1) <= 3:
+            end = hard_end
+
+        groups.append(list(range(i, end)))
         i = end
     return groups
 
 
 
-def _group_words_one_line(words: list[dict], max_chars: int = 28, max_words: int = 3) -> list[list[int]]:
-    """Clean Pro: одна строка, по умолчанию 2–3 слова.
+def _group_words_static(
+    words: list[dict],
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+) -> list[list[int]]:
+    """Статичные группы 2–3 слова + границы шортов Gemini."""
+    return _group_words_with_boundaries(
+        words, must_start=must_start, must_end=must_end, max_words=3, max_chars=28,
+    )
 
-    4+ только если очень короткие ИЛИ нельзя оторвать (частица/предлог).
+
+def _group_words_one_line(
+    words: list[dict],
+    max_chars: int = 28,
+    max_words: int = 3,
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    strong: dict | None = None,
+) -> list[list[int]]:
+    """Clean Pro: фразы 2–3 слова; strong-словосочетания не рвутся.
+
+    Phrase karaoke: важное слово + соседняя частица/слово держатся в одной группе.
     """
+    groups = _group_words_with_boundaries(
+        words, must_start=must_start, must_end=must_end,
+        max_words=max_words, max_chars=max_chars,
+    )
+    if not strong or not words:
+        return groups
+
+    sticky = {"не", "ни"}  # только отрицание перед strong; «для» уже в идиоме
+    rank = {"L1": 1, "L2": 2, "L3": 3, "L4": 4}
+
+    def level_idx(i: int) -> str:
+        k = _norm_word_key(words[i].get("text") or "")
+        if not k or k not in strong:
+            return ""
+        return str(strong[k] or "").upper()
+
+    def is_strong_idx(i: int) -> bool:
+        return rank.get(level_idx(i), 0) >= 2
+
+    def is_sticky_idx(i: int) -> bool:
+        return _norm_word_key(words[i].get("text") or "") in sticky
+
     n = len(words)
-    if n == 0:
-        return []
-    # слова, которые нельзя оставлять одними / отрывать от следующего
-    sticky = {
-        "и", "а", "но", "да", "или", "либо", "ни",
-        "в", "на", "по", "к", "с", "у", "о", "об", "обо", "из", "от", "до",
-        "для", "при", "без", "над", "под", "про", "через",
-        "не", "ни", "же", "ли", "бы", "то", "это", "как", "что", "чтобы",
-        "я", "ты", "он", "она", "мы", "вы", "они", "мой", "твой", "наш",
-    }
-    groups: list[list[int]] = []
+    out: list[list[int]] = []
     i = 0
     while i < n:
-        idxs = [i]
-        chars = len(words[i]["text"])
-        j = i + 1
-        while j < n:
-            wj = words[j]["text"]
-            add = len(wj) + 1
-            last = words[idxs[-1]]["text"].lower().strip(".,!?;:«»\"")
-            # всегда цепляем sticky к следующему
-            must = last in sticky
-            # можно взять 3-е (или 4-е) только если оба коротких
-            short_ok = chars + add <= max_chars and len(wj) <= 4 and len(idxs) < 4
-            if len(idxs) >= max_words and not must and not (len(idxs) == max_words and short_ok and len(idxs) < 4):
-                if not must:
+        lv = level_idx(i)
+        # Strong: только одинаковый цвет в одной строке; max 2, или 3 если все короткие
+        if rank.get(lv, 0) >= 2 or (is_sticky_idx(i) and i + 1 < n and rank.get(level_idx(i + 1), 0) >= 2):
+            cluster = []
+            # ведущая частица только если следующий strong
+            if is_sticky_idx(i) and rank.get(lv, 0) < 2:
+                cluster.append(i)
+                i += 1
+                lv = level_idx(i) if i < n else ""
+            base_lv = lv
+            while i < n and rank.get(level_idx(i), 0) >= 2:
+                cur = level_idx(i)
+                # разный цвет → другая строка
+                if cluster and cur != base_lv and rank.get(base_lv, 0) >= 2:
                     break
-            if chars + add > max_chars and len(idxs) >= 2 and not must:
-                break
-            idxs.append(j)
-            chars += add
-            j += 1
-            if len(idxs) >= max_words and not must:
-                # ещё одно только если sticky
-                break
-        groups.append(idxs)
-        i = idxs[-1] + 1
-    return groups
+                if not base_lv:
+                    base_lv = cur
+                # один цвет: до 3 слов (идиомы вроде «друг для друга»)
+                if len(cluster) >= 3:
+                    break
+                cluster.append(i)
+                i += 1
+            if cluster:
+                out.append(cluster)
+                continue
+        # Ordinary: 2–3, не забирать strong
+        take = 2 if i + 1 < n else 1
+        if i + 2 < n:
+            take = 3
+        end = min(i + take, n)
+        while end > i + 1 and is_sticky_idx(end - 1) and end < n and is_strong_idx(end):
+            end -= 1
+        while end > i and is_strong_idx(end - 1):
+            end -= 1
+        if end <= i:
+            end = i + 1
+        out.append(list(range(i, end)))
+        i = end
+    return out if out else groups
+
 
 
 def _build_clean_pro_window(
     words, analysis, playres_x, playres_y, base_size, wide: bool = False,
+    must_start: set | None = None, must_end: set | None = None,
 ):
-    """Clean Pro: одна строка, без контура, чёрная рассеянная тень, без scale.
+    """Phrase karaoke (как ShortsMaker chunks).
 
-    Активное слово только меняет цвет (белый).
-    Увеличение/другой цвет — только если AISIE пометил strong word.
-    Отступы 6% от краёв.
+    • Группа 2–3 слова на экране вместе (strong-словосочетание не рвётся).
+    • Strong-фраза: все слова уже чуть крупнее, цвет БЕЛЫЙ до речи.
+    • В момент речи: вся фраза ещё крупнее; neon только на текущем слове.
+    • Ordinary: dim → white, без scale.
     """
     if not words:
         return []
 
-    margin_pct = 0.06  # 6% ≈ середина 5–7%
-    ml = int(playres_x * margin_pct)
-    usable = playres_x - 2 * ml
-    # Оценка max символов на строку (Arial ~0.55*fs width)
-    fs = max(48, int(base_size * 1.02))
-    max_chars = max(22, int(usable / (fs * 0.55)))
+    fs = max(52, int(base_size * 1.05))
+    max_chars = 28
     max_words = 3
+    pos = _caption_pos(playres_x, playres_y, wide)
 
-    cx = playres_x // 2
-    if wide:
-        cy = int(playres_y * 0.88)
-        pos = f"{{\\an2\\pos({cx},{cy})}}"
-    else:
-        cy = int(playres_y * 0.56)  # ниже середины (~6%)
-        pos = f"{{\\an2\\pos({cx},{cy})}}"
-
+    # Phrase karaoke (ShortsMaker-style chunks):
+    # • группа 2–3 слова на экране вместе
+    # • strong-фраза: вся группа уже чуть крупнее, цвет БЕЛЫЙ до речи
+    # • при речи: вся группа ещё крупнее; neon только на текущем слове
+    # • ordinary: dim → white, без scale
     WHITE = "&H00FFFFFF&"
-    DIM = "&H00B4B4B4&"
-    RED = "&H000000FF&"
-    ORANGE = "&H0000A5FF&"
-    YELLOW = "&H0000EBFF&"
-    GREEN = "&H004CFF00&"
+    DIM = "&H00C8C8C8&"
+    NEON_YELLOW = "&H0000FFFF&"       # L2 #FFFF00
+    NEON_ORANGE = "&H00005EFF&"       # L3 #FF5E00
+    NEON_PINK = "&H00FF00FF&"         # L4 #FF00FF
+    NEON_ORANGE_SOFT = "&H0000A5FF&"  # L1 #FFA500
 
-    strong = _strong_map(analysis)
+    PHRASE_BASE = 1.08    # strong-фраза до речи (чуть больше, цвет стандартный)
+    PHRASE_ACTIVE = 1.22  # вся фраза в момент речи
+    WORD_POP = {"L4": 1.32, "L3": 1.26, "L2": 1.18, "L1": 1.12}  # текущее strong-слово
+    STRONG_COLOR = {
+        "L4": NEON_PINK,
+        "L3": NEON_ORANGE,
+        "L2": NEON_YELLOW,
+        "L1": NEON_ORANGE_SOFT,
+    }
 
-    def active_color_and_size(word_text: str) -> tuple[str, int]:
-        key = word_text.lower().strip(".,!?;:«»\"'")
-        w = (strong.get(key) or "").upper()
-        # По умолчанию: тот же размер, белый цвет
-        size = fs
-        color = WHITE
-        if w == "L4":
-            color, size = RED, int(fs * 1.12)
-        elif w == "L3":
-            color, size = ORANGE, int(fs * 1.08)
-        elif w == "L2":
-            color, size = YELLOW, fs
-        elif w == "L1":
-            color, size = GREEN, fs
-        return color, size
+    strong = _strong_map(analysis, [str(w.get("text") or "") for w in words])
+    rank = {"L1": 1, "L2": 2, "L3": 3, "L4": 4}
 
-    # bord0 + soft black shadow via \\shad + \\4c
-    # \\bord0 \\shad3 \\4c&H000000& \\4a&H60&
-    shadow = r"\bord0\shad3\4c&H000000&\4a&H60&"
+    def word_level(t: str) -> str:
+        w = _strong_lookup(strong, t)
+        return w if w in STRONG_COLOR else ""
 
-    def tag_active(text: str) -> str:
-        color, size = active_color_and_size(text)
-        return f"{{\\c{color}\\fs{size}\\b0{shadow}}}{text}{{\\r}}"
+    def group_is_phrase(g: list[int]) -> bool:
+        return any(word_level(words[i]["text"]) for i in g)
 
-    def tag_dim(text: str) -> str:
-        return f"{{\\c{DIM}\\fs{fs}\\b0{shadow}}}{text}{{\\r}}"
+    def tag_word(text: str, is_active: bool, phrase: bool, any_active: bool) -> str:
+        """phrase=True → группа strong: base/active scale на всех; color только active strong."""
+        bs = chr(92)
+        lvl = word_level(text)
+
+        if phrase:
+            # вся фраза одного «веса» по размеру
+            if any_active:
+                size = int(fs * PHRASE_ACTIVE)
+            else:
+                size = int(fs * PHRASE_BASE)
+            # цвет: только проговариваемое strong-слово → neon; иначе белый
+            if is_active and lvl:
+                color = STRONG_COLOR[lvl]
+                # доп. pop на текущем слове
+                size = int(fs * WORD_POP.get(lvl, PHRASE_ACTIVE))
+                open_t = (
+                    "{" + bs + "c" + color
+                    + bs + "fs" + str(size)
+                    + bs + "b1"
+                    + bs + "bord0" + bs + "shad3" + bs + "4c&H000000&" + bs + "4a&H70&"
+                    + bs + "t(0,100," + bs + "fscx115" + bs + "fscy115)"
+                    + bs + "t(100,220," + bs + "fscx100" + bs + "fscy100)"
+                    + "}"
+                )
+            elif is_active:
+                color = WHITE
+                open_t = (
+                    "{" + bs + "c" + color
+                    + bs + "fs" + str(size)
+                    + bs + "b1"
+                    + bs + "bord0" + bs + "shad3" + bs + "4c&H000000&" + bs + "4a&H70&"
+                    + "}"
+                )
+            else:
+                # до речи и соседние в фразе — стандартный белый, чуть крупнее
+                color = WHITE
+                open_t = (
+                    "{" + bs + "c" + color
+                    + bs + "fs" + str(size)
+                    + bs + "b1"
+                    + bs + "bord0" + bs + "shad3" + bs + "4c&H000000&" + bs + "4a&H70&"
+                    + "}"
+                )
+            return open_t + text + "{" + bs + "r}"
+
+        # ordinary group
+        if is_active:
+            color, size, bold = WHITE, fs, "1"
+        else:
+            color, size, bold = DIM, fs, "0"
+        open_t = (
+            "{" + bs + "c" + color
+            + bs + "fs" + str(size)
+            + bs + "b" + bold
+            + bs + "bord0" + bs + "shad3" + bs + "4c&H000000&" + bs + "4a&H70&"
+            + "}"
+        )
+        return open_t + text + "{" + bs + "r}"
 
     events: list[dict] = []
-    for group in _group_words_one_line(words, max_chars=max_chars, max_words=max_words):
+    for group in _group_words_one_line(
+        words, max_chars=max_chars, max_words=max_words,
+        must_start=must_start, must_end=must_end, strong=strong,
+    ):
         edges = [float(words[i]["start"]) for i in group]
         edges.append(float(words[group[-1]]["end"]))
         for i in range(1, len(edges)):
@@ -418,12 +745,19 @@ def _build_clean_pro_window(
         if edges[-1] - edges[-2] < 0.12:
             edges[-1] = edges[-2] + 0.18
 
+        phrase = group_is_phrase(group)
         for gi, active in enumerate(group):
             t0, t1 = edges[gi], edges[gi + 1]
             parts = []
             for j in group:
                 wt = words[j]["text"]
-                parts.append(tag_active(wt) if j == active else tag_dim(wt))
+                parts.append(tag_word(wt, j == active, phrase, any_active=True if j == active else False))
+            # any_active for size: when building event for active word, whole phrase is "in speech"
+            # re-tag with consistent any_active for this event
+            parts = []
+            for j in group:
+                wt = words[j]["text"]
+                parts.append(tag_word(wt, j == active, phrase, any_active=True))
             events.append({
                 "start": t0,
                 "end": t1,
@@ -431,13 +765,18 @@ def _build_clean_pro_window(
                 "text": pos + " ".join(parts),
                 "layer": 1,
             })
+        # events before first word of group: show phrase white larger without neon
+        # (optional lead-in) — group appears at first word start already handled
+
     return events
+
 
 
 def _build_karaoke_window(
     words, analysis, playres_x, playres_y, base_size,
     wide: bool = False, caption_style: str = "auto_aisie",
     honor_strong: bool = True,
+    must_start: set | None = None, must_end: set | None = None,
 ):
     """Karaoke-группы с РЕАЛЬНО разными пресетами.
 
@@ -455,17 +794,11 @@ def _build_karaoke_window(
     if key == "clean_pro":
         return _build_clean_pro_window(
             words, analysis, playres_x, playres_y, base_size, wide=wide,
+            must_start=must_start, must_end=must_end,
         )
 
-    cx = playres_x // 2
-    if wide:
-        cy = int(playres_y * 0.90)
-        pos = f"{{\\an2\\pos({cx},{cy})}}"
-        default_key = "clean_pro"
-    else:
-        cy = int(playres_y * 0.54)
-        pos = f"{{\\an5\\pos({cx},{cy})}}"
-        default_key = "hormozi"
+    pos = _caption_pos(playres_x, playres_y, wide)
+    default_key = "clean_pro" if wide else "hormozi"
 
     key = (caption_style or "auto_aisie").strip().lower()
     if key in ("", "auto_aisie", "auto"):
@@ -545,68 +878,87 @@ def _build_karaoke_window(
     strong_scale = float(preset.get("strong_scale") or (active_scale + 0.12))
     is_box = bool(preset["box"])
 
-    strong = _strong_map(analysis) if honor_strong else {}
+    strong = (_strong_map(analysis, [str(w.get("text") or "") for w in words]) if honor_strong else {})
 
-    RED = "&H000000FF&"
-    ORANGE = "&H0000A5FF&"
-    YELLOW = "&H0000EBFF&"
-    GREEN = "&H004CFF00&"
+    # Neon yellow / orange / pink (без cyan)
+    NEON_YELLOW = "&H0000FFFF&"
+    NEON_ORANGE = "&H00005EFF&"
+    NEON_PINK = "&H00FF00FF&"
+    NEON_ORANGE_SOFT = "&H0000A5FF&"
 
     def strong_weight(word_text: str) -> str:
         if not honor_strong or not strong:
             return ""
-        return (strong.get(word_text.lower().strip(".,!?;:«»\"'"), "") or "").upper()
+        return _strong_lookup(strong, word_text)
 
-    def color_for_word(word_text: str, is_active: bool) -> str:
-        w = strong_weight(word_text)
-        if w == "L4":
-            return RED
-        if w == "L3":
-            return ORANGE
-        if w == "L1":
-            return GREEN
-        if w == "L2":
-            return YELLOW
-        return col_active if is_active else col_dim
+    BASE_SCALE_K = {"L4": 1.12, "L3": 1.10, "L2": 1.06, "L1": 1.04}
+    ACTIVE_SCALE_K = {"L4": 1.32, "L3": 1.24, "L2": 1.16, "L1": 1.10}
+    STRONG_COLOR_K = {
+        "L4": NEON_PINK,
+        "L3": NEON_ORANGE,
+        "L2": NEON_YELLOW,
+        "L1": NEON_ORANGE_SOFT,
+    }
 
     normal_size = max(40, int(base_size * 0.90))
-    karaoke_active_size = max(int(base_size * active_scale), normal_size + 2)
-    karaoke_active_size = min(karaoke_active_size, int(base_size * 1.15))
-    strong_size = max(int(base_size * strong_scale), karaoke_active_size + 4)
-    strong_size = min(strong_size, int(base_size * 1.40))
     bord_a = max(5, int(base_size * (0.14 if key == "cliffhanger" else 0.11)))
     bord_d = max(3, int(base_size * 0.07))
 
     def tags_word(text: str, is_active: bool) -> str:
         w = strong_weight(text)
-        is_strong = w in ("L2", "L3", "L4", "L1")
-        color = color_for_word(text, is_active)
-        if is_strong:
-            size = strong_size
-            do_pop = use_pop and pop_pct > 100
-        elif is_active:
-            size = karaoke_active_size
-            do_pop = False  # лёгкая подсветка без scale — не путать со strong
-        else:
-            size = normal_size
-            do_pop = False
+        is_strong = w in STRONG_COLOR_K
+        bs = chr(92)
 
-        if is_box:
-            bold = "1" if (is_active or is_strong) else "0"
-            return f"{{\\c{color}\\fs{size}\\b{bold}}}{text}{{\\r}}"
-        if do_pop:
+        if is_strong:
+            color = STRONG_COLOR_K[w]
+            if is_active:
+                size = max(int(base_size * ACTIVE_SCALE_K[w]), normal_size + 4)
+                size = min(size, int(base_size * 1.40))
+                if is_box:
+                    return (
+                        "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1}"
+                        + text + "{" + bs + "r}"
+                    )
+                return (
+                    "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1"
+                    + bs + "bord" + str(bord_a) + bs + "shad0" + bs + "be1"
+                    + bs + "t(0,100," + bs + "fscx118" + bs + "fscy118)"
+                    + bs + "t(100,220," + bs + "fscx100" + bs + "fscy100)}"
+                    + text + "{" + bs + "r}"
+                )
+            size = max(int(base_size * BASE_SCALE_K[w]), normal_size + 2)
+            if is_box:
+                return (
+                    "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1}"
+                    + text + "{" + bs + "r}"
+                )
             return (
-                f"{{\\c{color}\\fs{size}\\b1\\bord{bord_a}\\shad0\\be1"
-                f"\\t(0,100,\\fscx{pop_pct}\\fscy{pop_pct})"
-                f"\\t(100,220,\\fscx100\\fscy100)}}"
-                f"{text}{{\\r}}"
+                "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1"
+                + bs + "bord" + str(bord_d) + "}"
+                + text + "{" + bs + "r}"
             )
-        bold = "1" if (is_active or is_strong) else "0"
-        bord = bord_a if (is_active or is_strong) else bord_d
-        return f"{{\\c{color}\\fs{size}\\b{bold}\\bord{bord}}}{text}{{\\r}}"
+
+        # ordinary: active white, no scale (ShortsMaker: color-only karaoke;
+        # у нас без rainbow на каждое слово — только white/dim)
+        if is_active:
+            color, size, bold, bord = col_active, normal_size, "1", bord_a
+        else:
+            color, size, bold, bord = col_dim, normal_size, "0", bord_d
+        if is_box:
+            return (
+                "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b" + bold + "}"
+                + text + "{" + bs + "r}"
+            )
+        return (
+            "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b" + bold
+            + bs + "bord" + str(bord) + "}"
+            + text + "{" + bs + "r}"
+        )
+
+
 
     events: list[dict] = []
-    groups = _group_words_static(words)
+    groups = _group_words_static(words, must_start=must_start, must_end=must_end)
     strong_hit_count = 0
 
     for group in groups:
@@ -1062,65 +1414,83 @@ def burn_subtitles(
     n_hook_events = 0
     n_cta_events = 0
 
-    # Karaoke: одна строка; strong — только цвет+size внутри строки (если enable_strong_words)
+    # Karaoke: всегда при наличии words (full + clip). Fallback — только если words пусто.
     if enable_subtitles:
         words = _words_from_transcription(transcription)
-        # Shorts/clip: только реально произнесённые слова внутри окна куска
-        if clip and words:
-            c0 = float(clip.get("start", 0) or 0)
-            c1 = float(clip.get("end", 0) or 0)
-            if c1 > c0:
-                before = len(words)
-                words = [
-                    w for w in words
-                    if float(w.get("end", 0)) > c0 and float(w.get("start", 0)) < c1
-                ]
-                # ужесточение: первое слово >= start, последнее <= end (с малым допуском)
-                if words:
-                    # trim leading words that mostly fall before c0
-                    while words and float(words[0].get("start", 0)) < c0 - 0.05:
-                        if float(words[0].get("end", 0)) <= c0:
-                            words.pop(0)
-                        else:
-                            break
-                    while words and float(words[-1].get("end", 0)) > c1 + 0.05:
-                        if float(words[-1].get("start", 0)) >= c1:
-                            words.pop()
-                        else:
-                            break
-                _log(
-                    f"[СУБТИТРЫ] clip speech window {c0:.2f}-{c1:.2f}s: "
-                    f"words {before} → {len(words)}"
-                )
+        _wt = [str(w.get("text") or "") for w in (_words_from_transcription(transcription) or [])]
+        strong_map = _strong_map(analysis, _wt) if enable_strong_words else {}
         if words:
-            strong_map = _strong_map(analysis) if enable_strong_words else {}
-            _log(
-                f"[СУБТИТРЫ] words={len(words)} strong_map={len(strong_map)} "
-                f"pos={'bottom' if wide else 'mid(~54%)'}"
-            )
+            # Shorts/clip: окно только реально произнесённых слов
+            if clip:
+                c0 = float(clip.get("start", 0) or 0)
+                c1 = float(clip.get("end", 0) or 0)
+                if c1 > c0:
+                    before = len(words)
+                    eps = 0.02
+                    inside = [
+                        w for w in words
+                        if float(w.get("end", 0)) > c0 + eps * 0.5
+                        and float(w.get("start", 0)) < c1 - eps * 0.5
+                    ]
+                    while inside and float(inside[0].get("end", 0)) <= c0 + 0.08 and float(inside[0].get("start", 0)) < c0:
+                        inside.pop(0)
+                    while inside and float(inside[-1].get("start", 0)) >= c1 - 0.08 and float(inside[-1].get("end", 0)) > c1:
+                        inside.pop()
+                    while inside and float(inside[0].get("start", 0)) < c0 - 0.12:
+                        inside.pop(0)
+                    while inside and float(inside[-1].get("end", 0)) > c1 + 0.12:
+                        inside.pop()
+                    words = inside
+                    _log(
+                        f"[СУБТИТРЫ] clip speech window {c0:.2f}-{c1:.2f}s: "
+                        f"words {before} → {len(words)}"
+                        + (f" first=«{words[0]['text']}» last=«{words[-1]['text']}»" if words else "")
+                    )
             if strong_map:
                 sample = list(strong_map.items())[:8]
                 _log(f"[СУБТИТРЫ] strong sample: {sample}")
+            _log(
+                f"[СУБТИТРЫ] words={len(words)} strong_map={len(strong_map)} "
+                f"pos={'bottom' if wide else 'mid+6%(an5@56%)'}"
+            )
+            # Границы словосочетаний: clip → first/last; full → shorts Gemini
+            must_start: set = set()
+            must_end: set = set()
+            if clip and words:
+                must_start.add(0)
+                must_end.add(len(words) - 1)
+                _log(
+                    f"[СУБТИТРЫ] phrase bounds (clip): first=«{words[0].get('text')}» "
+                    f"last=«{words[-1].get('text')}»"
+                )
+            else:
+                clips = (analysis or {}).get("clips_for_shorts") or []
+                must_start, must_end = _shorts_phrase_boundaries(words, clips)
+                if must_start or must_end:
+                    _log(
+                        f"[СУБТИТРЫ] phrase bounds (shorts×{len(clips)}): "
+                        f"starts={sorted(must_start)[:12]} ends={sorted(must_end)[:12]}"
+                    )
             sub_ev = _build_karaoke_window(
                 words, analysis, playres_x, playres_y, base_size, wide=wide,
                 caption_style=caption_style or "auto_aisie",
                 honor_strong=bool(enable_strong_words),
+                must_start=must_start, must_end=must_end,
             )
             events.extend(sub_ev)
             n_sub_events = len(sub_ev)
         else:
+            # Нет words совсем — сегменты analysis (редкий fallback)
             for sub in analysis.get("subtitles") or []:
                 t = (sub.get("text") or "").strip()
                 if not t:
                     continue
-                cx = playres_x // 2
-                cy = int(playres_y * (0.88 if wide else 0.56))
-                an = "2" if wide else "5"
+                pos = _caption_pos(playres_x, playres_y, wide)
                 events.append({
                     "start": float(sub.get("start", 0)),
                     "end": float(sub.get("end", 0) or 1),
                     "style": "Default",
-                    "text": f"{{\\an{an}\\pos({cx},{cy})}}{t}",
+                    "text": f"{pos}{t}",
                     "layer": 0,
                 })
                 n_sub_events += 1
@@ -1170,9 +1540,7 @@ def burn_subtitles(
     # Strong только in-line через honor_strong в karaoke / clean_pro.
     if enable_strong_words and not _words_from_transcription(transcription):
         # fallback только если нет word-timings — и тогда ставим В ТУ ЖЕ зону субтитров, не наверх
-        cx = playres_x // 2
-        cy = int(playres_y * (0.88 if wide else 0.54))
-        an = "2" if wide else "5"
+        pos = _caption_pos(playres_x, playres_y, wide)
         n_fb = 0
         for sw in analysis.get("strong_words") or []:
             word = (sw.get("word") or "").strip()
@@ -1185,7 +1553,7 @@ def burn_subtitles(
                 "start": float(sw.get("start", timing)),
                 "end": float(sw.get("end", timing + 1.2)),
                 "style": "Strong",
-                "text": f"{{\\an{an}\\pos({cx},{cy})\\c{color}\\fs{size}}}{word}",
+                "text": ("{0}{{\\c{1}\\fs{2}}}{3}").format(pos, color, size, word),
                 "layer": 1,
             })
             n_fb += 1

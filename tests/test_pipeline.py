@@ -134,9 +134,10 @@ class TestShortsCutter(unittest.TestCase):
     """Тесты нарезки Shorts."""
 
     def test_shorts_from_intermediate_vertical(self):
-        """Shorts берутся из промежуточного вертикального (master_9x16)."""
+        """Shorts режутся из final_9x16 (fallback master_vertical)."""
         ctx = PipelineContext(
             output_folder="/tmp/out",
+            final_vertical="/tmp/final_9x16.mp4",
             master_vertical="/tmp/master_9x16.mp4",
             analysis={
                 "clips_for_shorts": [
@@ -153,7 +154,10 @@ class TestShortsCutter(unittest.TestCase):
              patch("video_maker.engines.audio.probe_duration", return_value=60.0), \
              patch("os.makedirs"), \
              patch("os.path.exists", return_value=True), \
-             patch.object(cutter, "_write_metadata"):
+             patch("os.path.isfile", return_value=True), \
+             patch("shutil.copy2"), \
+             patch.object(cutter, "_write_metadata"), \
+             patch.object(cutter, "_write_sidecar_files"):
             mock_cut.return_value = "/tmp/short.mp4"
             mock_sub.return_value = "/tmp/short_final.mp4"
             ctx = cutter.run(ctx)
@@ -161,7 +165,8 @@ class TestShortsCutter(unittest.TestCase):
         assert len(ctx.shorts) == 2
         mock_cut.assert_called()
         call_args = mock_cut.call_args_list[0]
-        assert call_args[1]["video_path"] == "/tmp/master_9x16.mp4"
+        vp = (call_args.kwargs or {}).get("video_path") or (call_args[1] or {}).get("video_path")
+        assert vp == "/tmp/final_9x16.mp4"
 
 
 class TestFinalHorizontal(unittest.TestCase):
@@ -224,9 +229,9 @@ class TestPipelineFlow(unittest.TestCase):
             mock_vstack.return_value = "/tmp/master_9x16.mp4"
             ctx = master.run(ctx)
 
-        # Master horizontal — промежуточное, путь формируется из output_folder
+        # Master: только 16x9 (вертикаль собирается в Final, one encode)
         assert "master_16x9.mp4" in ctx.master_horizontal
-        assert "master_9x16.mp4" in ctx.master_vertical
+        # master_vertical может быть пустым до FinalVertical — это by design (r21+)
 
     def test_three_products_from_master(self):
         """Из master_9x16 создаются: final_9x16 + shorts."""
@@ -255,7 +260,10 @@ class TestPipelineFlow(unittest.TestCase):
              patch("video_maker.engines.audio.probe_duration", return_value=60.0), \
              patch("os.makedirs"), \
              patch("os.path.exists", return_value=True), \
-             patch.object(sc, "_write_metadata"):
+             patch("os.path.isfile", return_value=True), \
+             patch("shutil.copy2"), \
+             patch.object(sc, "_write_metadata"), \
+             patch.object(sc, "_write_sidecar_files"):
             mock_cut.return_value = "/tmp/short.mp4"
             mock_sub.return_value = "/tmp/short_final.mp4"
             ctx = sc.run(ctx)

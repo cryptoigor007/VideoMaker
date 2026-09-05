@@ -2,60 +2,72 @@
 
 Автоматическое создание видео-контента (YouTube, Shorts, Reels) из аудио + B-roll.
 
-## Быстрый старт
+**Сборка: r27-clean** (2026-09-04) — см. [VERSION.md](VERSION.md) и [CHANGES.md](CHANGES.md).
 
-### Запуск через .app (двойной клик в Finder)
-```
-VideoMaker.app
-```
+## Быстрый старт (macOS)
 
-### Запуск через терминал
+### 1. Зависимости системы
 ```bash
-./run.sh
+brew install ffmpeg
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install mlx-whisper
+```
+
+### 2. API-ключ
+```bash
+cp .env.example .env
+# Добавьте GEMINI_API_KEY (или используйте Keychain — см. GUI «Настройки»)
+```
+
+### 3. Запуск
+```bash
+# Двойной клик:
+./start.command
 # или
-./VideoMaker.command
+open VideoMaker.app
+
+# Из терминала:
+source .venv/bin/activate
+python -m video_maker.main
 ```
 
 ## Требования
-- macOS 10.13+
+- macOS 10.13+ (Apple Silicon рекомендуется — MLX Whisper + VideoToolbox)
 - Python 3.10+
-- ffmpeg (brew install ffmpeg)
-- WhisperX (pip install whisperx)
-
-## Установка зависимостей
-```bash
-pip install -r requirements.txt
-brew install ffmpeg
-pip install whisperx
-```
+- ffmpeg (`brew install ffmpeg`)
+- mlx-whisper (`pip install mlx-whisper`)
 
 ## Структура проекта
 ```
 VideoMaker/
-├── VideoMaker.app/          # macOS приложение (двойной клик)
-├── VideoMaker.command       # Запуск через двойной клик в Finder
-├── run.sh                   # Запуск через терминал
-├── video_maker/             # Исходный код
-├── tests/                   # Тесты
-├── run.sh                   # Запуск через терминал
-├── start.sh                 # Запуск (алиас)
-├── requirements.txt         # Python зависимости
-├── .env                     # Переменные окружения (API ключи)
-├── .env.example             # Пример .env
-└── requirements.txt
+├── VideoMaker.app/          # macOS-приложение (двойной клик)
+├── start.command            # Запуск (относительные пути)
+├── video_maker/             # Исходный код (единственный рабочий пакет)
+│   ├── main.py
+│   ├── config/settings.py
+│   ├── gui/app.py
+│   ├── pipeline/            # stages, master, branches, shorts, finalize…
+│   ├── engines/             # video, audio, subtitles, transcription…
+│   └── external/aisie/      # AISIE helpers
+├── tests/
+├── docs/
+├── requirements.txt
+├── VERSION.md               # Контроль версий КАЖДОГО файла
+├── CHANGES.md
+└── .env.example
 ```
 
-## Настройка API ключей
-Скопируйте `.env.example` в `.env` и добавьте ваши API ключи:
-```bash
-cp .env.example .env
-# Отредактируйте .env и добавьте GEMINI_API_KEY
-```
+> Корневые папки `engines/`, `gui/`, `pipeline/` **удалены** — это были устаревшие дубликаты. Весь код только в `video_maker/`.
 
 ## Логи
-Логи сохраняются в `~/video_maker/videomaker.log`
+`~/video_maker/videomaker.log`
 
 ## Тесты
 ```bash
 python -m pytest tests/ -v
 ```
+
+## Контроль версий
+Полная таблица всех файлов с ревизиями и датами git: **[VERSION.md](VERSION.md)**.

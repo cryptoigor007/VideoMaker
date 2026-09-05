@@ -1,3 +1,258 @@
+# VideoMaker — r40 (2026-09-05)
+
+## r40 — Phrase karaoke (язык эффекта)
+
+**Название эффекта:** *phrase karaoke* / *chunked captions with progressive word paint*
+(в TikTok/Remotion — page of 2–3 words + active word highlight; у нас + scale фразы)
+
+### Правила
+1. Важные слова держатся **словосочетанием** (частица «не» + strong вместе).
+2. До речи: фраза **белая**, чуть крупнее — **без** neon.
+3. При речи: **вся фраза** растёт вместе; **neon только на текущем** слове.
+4. Обычные слова: dim→white, без scale.
+5. Neon: yellow / orange / pink (без cyan).
+
+---
+
+# VideoMaker — r39 (2026-09-05)
+
+## r39 — ShortsMaker-style emphasis (pre-size + pop)
+
+### Эффект (как в TikTok captions / ShortsMaker)
+- **Strong** на экране уже чуть крупнее + neon **до** озвучки
+- В момент речи — **ещё крупнее** + короткий pop (`fscx118`)
+- Обычные слова: dim → white, **без** scale (не «прыгает каждая буква»)
+
+### Neon (без cyan)
+| L | Hex | Цвет | base→active scale |
+|---|-----|------|-------------------|
+| L1 | #FFA500 | soft orange | 1.04 → 1.10 |
+| L2 | #FFFF00 | yellow | 1.06 → 1.16 |
+| L3 | #FF5E00 | orange | 1.10 → 1.24 |
+| L4 | #FF00FF | pink | 1.12 → 1.32 |
+
+### Анти-баги
+- слова < 2 букв не красятся (фикс «буква в»)
+- только exact match
+- AISIE только keyword-group
+
+---
+
+# VideoMaker — r38 (2026-09-05)
+
+## r38 — чистый neon + точные слова
+
+### Цвета (только neon)
+| Level | Hex | Цвет | Scale |
+|-------|-----|------|-------|
+| L1 | #FFA500 | soft neon orange | 1.08 |
+| L2 | #FFFF00 | neon yellow | 1.14 |
+| L3 | #FF5E00 | neon orange | 1.22 |
+| L4 | #FF00FF | neon pink | 1.32 |
+
+Убраны: cyan, coral #FF3B30, pure red.
+
+### Какие слова красятся
+- Gemini `strong_words` — как есть
+- AISIE **только** `is_keyword_group`: поддержка L2 + последнее слово punch L3/L4
+- Non-keyword groups — **не** красятся (раньше красили почти всё)
+- Lookup — **только exact match** (prefix давал ложные срабатывания)
+
+### Размер
+Чем выше L — тем крупнее слово в момент произнесения (до ×1.32).
+
+---
+
+# VideoMaker — r37 (2026-09-05)
+
+## r37 — neon AISIE colors + keyword punch
+
+### Цвета (ASS BGR = AISIE styles.py)
+| Level | Hex | ASS | Смысл |
+|-------|-----|-----|--------|
+| L1 | #00FFFF | cyan | лёгкий акцент |
+| L2 | #FFFF00 | neon yellow | keyword |
+| L3 | #FF3B30 | coral/red | hook |
+| L4 | #FF0000 | pure red | climax |
+
+### strong_map
+- AISIE `is_keyword_group`: последнее слово → L3/L4, остальные в группе → L2
+- Gemini strong_words без изменений
+- Лог если hooks=0 и strong не пополнились
+
+### Было не так
+- Цвета не neon (тусклый orange/green)
+- Все слова semantic_group красились одинаково
+- При hooks=0 AISIE не давал strong → «логика не работает»
+
+---
+
+# VideoMaker — r36 (2026-09-05)
+
+## r36 — Clean Pro: SF Pro Display
+
+- ASS Style CleanPro: Fontname **SF Pro Display** (системный Apple на macOS).
+- Bold уже включён в стиле (−1).
+- Логика highlight r35 без изменений.
+
+---
+
+# VideoMaker — r35 (2026-09-05)
+
+## r35 — AISIE-style karaoke / Clean Pro highlight
+
+### Проблема (лог пользователя)
+- Каждое слово «прыгало» (увеличивалось) при произнесении.
+- Strong-слова уже были цветными/крупными **до** озвучки (предраскраска строки).
+
+### Как должно быть (ShortsMaker / AISIE)
+1. До речи: все слова одинаковые (dim, один размер).
+2. Обычное активное: белый, **без** scale.
+3. Strong L1–L4: цвет + scale 8–28% **только** в момент произнесения (+ короткий pop).
+
+### Исправление
+- `subtitles.py` → r35: `_build_clean_pro_window` + общий karaoke `tags_word`.
+- Шрифт Clean Pro: Arial, мягкая тень (как раньше).
+
+---
+
+# VideoMaker — r34 (2026-09-05)
+
+## r34 — CRITICAL: NameError strong_map
+
+### Баг из лога
+```
+ОШИБКА: name 'strong_map' is not defined
+```
+В `burn_subtitles` после AISIE логирование и karaoke path использовали `strong_map`,
+но переменная не создавалась (определялась только внутри `_build_karaoke_window` / Clean Pro).
+
+### Исправление
+- `video_maker/engines/subtitles.py` → r34:
+  `strong_map = _strong_map(analysis) if enable_strong_words else {}`
+  сразу после `words = _words_from_transcription(...)`.
+
+### Сохранено
+- r33: 1 mp4 на short (temp), снова 4–5 clips
+- r31: karaoke на full video
+- r30: Clean Pro 2–3 + AISIE strong
+
+---
+
+# VideoMaker — r33 (2026-09-05)
+
+## r33 — один mp4 на short + снова 4–5 клипов
+
+### Shorts
+- В `shorts/short_00N/` **только** `short_00N.mp4` + txt (title/hook/…).
+- `*_cut.mp4` / `*_subs.mp4` **не пишутся** в папку (только temp → удаляются).
+- Gemini снова **4–5** клипов (лимит «1 short» снят).
+
+### Сохранено
+- r31: karaoke на full video
+- r30: Clean Pro 2–3 слова + AISIE strong
+- heartbeat → debug
+
+---
+
+# VideoMaker — r32 (2026-09-05)
+
+## r32 — один Short + тихий heartbeat
+
+### Shorts
+Раньше Gemini просил 4–5 клипов → 4 encode (в т.ч. почти весь ролик).
+Сейчас: промпт + hard limit → **1** лучший short. Остальные не создаются.
+
+### Лог
+`LIFECYCLE heartbeat` переведён на **debug** — не засоряет INFO.
+
+---
+
+# VideoMaker — r31 (2026-09-05)
+
+## r31 — CRITICAL: karaoke на full video
+
+### Причина бага (лог пользователя)
+```
+[СУБТИТРЫ] fallback segment subs=10 (нет word-timings)
+```
+Код ошибочно входил в fallback, когда **clip=None** (полный ролик), даже если words были.
+Karaoke/Clean Pro/AISIE strong работали **только** для clip (шорт re-burn).
+
+### Исправлено
+1. Karaoke строится при **любых** words (full + clip).
+2. Fallback segment — только если words реально пусты.
+3. Whisper cache HIT с words=0 → пересчёт с word_timestamps.
+
+Файлы: `subtitles.py`, `transcription.py` → **r31**
+
+---
+
+# VideoMaker — r30 (2026-09-05)
+
+## r30 — Clean Pro 2–3 слова + заметный AISIE strong
+
+### Исправлено (по логу продакшена)
+1. **Группы субтитров**: жёстко 2–3 слова (4 только если все слова ≤4 символов).
+   Раньше `max_chars` от ширины 4K раздувал «простыни».
+2. **Clean Pro**: белый + мягкая тень (bord0/shad3) сохранён; active белый, dim серый.
+3. **AISIE/Gemini strong**: L2 жёлтый +12%, L3 оранжевый +20%, L4 красный +28% + pop.
+4. **Match strong**: ё→е, prefix-match ключей.
+
+Файл: `video_maker/engines/subtitles.py` → **r30**
+
+---
+
+# VideoMaker — r29 (2026-09-04)
+
+## r29 — словосочетания на vertical = границы шортов Gemini
+
+### Сделано
+После `clips_for_shorts` от Gemini при burn субтитров на vertical:
+- для каждого шорта находятся **первое и последнее слово** (по word timings);
+- группы на экране (karaoke / Clean Pro / AISIE-стили) **начинаются** на первом слове шорта и **заканчиваются** на последнем;
+- между шортами текст идёт своим чередом;
+- cut с vertical больше не показывает середину словосочетания на in/out.
+
+Файлы: `video_maker/engines/subtitles.py` → **r29**
+
+---
+
+# VideoMaker — r28 (2026-09-04)
+
+## r28 — субтитры: позиция + AISIE strong + окно речи шорцов
+
+### Исправлено
+1. **Позиция vertical/shorts**: центр текста на **56%** высоты (`\an5`), т.е. 4–6% ниже середины.
+   Причина «выше половины»: часть путей ставила `\an2` (низ бокса) на mid → тело строки уезжало вверх.
+2. **Окно речи клипа**: в шорце только слова внутри [start, end]; ничего до первого и после последнего слова.
+3. **strong_map / AISIE**: нормализация ключей; Gemini `strong_words` + AISIE `semantic_groups` → цвет/scale в karaoke.
+4. **aisie_integration**: дописывает strong_words из semantic_groups даже если hooks уже от Gemini.
+5. **Группировка**: не оставлять одно слово-сироту после группы.
+
+### Файлы
+- `video_maker/engines/subtitles.py` → r28
+- `video_maker/engines/aisie_integration.py` → r28
+
+---
+
+# VideoMaker — r27-clean (2026-09-04)
+
+## r27-clean — дистрибутив без дубликатов + полный VERSION.md
+
+### Сделано
+1. **Удалены** корневые `engines/`, `gui/`, `pipeline/` (устаревшие дубликаты r12–r13).
+2. **Удалены** из дистрибутива логи (`*.log`) и `cache/`.
+3. **start.command** и **VideoMaker.app** launcher — относительные пути (без `/Users/dreamstore/...`).
+4. **requirements.txt** / **README.md** — MLX Whisper (не WhisperX).
+5. **VERSION.md** — версия или дата git **для каждого файла** проекта.
+6. **.gitignore** — `cache/`, `*.log`.
+
+### Не тронуто
+- Логика пайплайна (r21–r27): one_encode vertical, shorts Hook+CTA, BGM reuse, IMO-галочки и т.д.
+
+---
+
 # VideoMaker — r27 (2026-09-04)
 
 ## r27 — GUI: галочки Intro/Middle/Outro + VERSION.md
