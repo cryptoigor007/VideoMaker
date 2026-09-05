@@ -1,17 +1,12 @@
-# VideoMaker FIX | 2026.09.05-r41 | 2026-09-05
+# VideoMaker FIX | 2026.09.05-r43 | 2026-09-05
 # CHANGED:
-#   r41: highlight_lexicon — полный перечень слов/идиом; «друг для друга» целиком;
-#        один цвет = одна строка (≤2, ≤3 если короткие); разный цвет = разные строки
-#   r40: phrase karaoke
-#   r36: SF Pro Display
-#   r35: full path:
-#        • до речи все слова одинаковые (dim, один размер) — без предраскраски
-#        • обычное активное слово: белый, БЕЗ scale
-#        • strong L1–L4: цвет + scale 8–28% ТОЛЬКО в момент произнесения + pop
-#   r34: CRITICAL — NameError strong_map is not defined в burn_subtitles
-#   r31: CRITICAL — karaoke на full video (было только при clip)
-#   r30: Clean Pro 2–3 слова; AISIE strong color/scale
-# PREV: 2026.09.05-r40
+#   r43: Clean Pro visual поверх r42 parity.
+#        • optional strong из Gemini strong_words (L2/L3/L4)
+#        • color + scale ТОЛЬКО на active strong; до речи — base white
+#        • non-strong active = mild yellow; non-active = base white
+#        • zero lexicon / zero idiom / zero «один цвет = одна строка»
+#   r42: shorts_parity каркас (grouping 2–3, zero pre-color)
+# PREV: 2026.09.05-r42
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -82,9 +77,10 @@ CAPTION_STYLES = {
     "hormozi": "Hormozi Yellow",
     "hormozi_green": "Hormozi Green",
     "tiktok_box": "TikTok Box",
-    "clean_pro": "Clean Pro (YouTube)",
-    "bold_pop": "Bold Pop",
-    "cliffhanger": "Cliffhanger (Tension)",
+    "clean_pro": "Clean Pro",                    # → shorts_parity (r42)
+    "shorts_parity": "Clean Pro (Shorts)",       # явный alias
+    "bold_pop": "Bold Pop",                      # legacy
+    "cliffhanger": "Cliffhanger (Tension)",      # legacy
 }
 HOOK_STYLES = {
     # Один режим: неоновый маркер (ротация 4 цветов)
@@ -621,16 +617,156 @@ def _group_words_one_line(
 
 
 
+def _parity_strong_lookup(analysis: dict | None, honor_strong: bool) -> dict[str, str]:
+    """Простой exact-lookup strong из Gemini analysis['strong_words'].
+
+    r43: только Gemini, без highlight_lexicon, без AISIE hooks, без prefix.
+    Возвращает {norm_key: "L2"|"L3"|"L4"}.
+    """
+    if not honor_strong or not analysis:
+        return {}
+    out: dict[str, str] = {}
+    rank = {"L2": 2, "L3": 3, "L4": 4, "L1": 1}
+    for sw in analysis.get("strong_words") or []:
+        if not isinstance(sw, dict):
+            continue
+        text = str(sw.get("word") or sw.get("text") or "").strip()
+        if len(text) < 2:
+            continue
+        weight = str(sw.get("visual_weight") or sw.get("weight") or "L2").upper()
+        if weight not in ("L2", "L3", "L4"):
+            weight = "L2"
+        key = _norm_word_key(text)
+        if not key:
+            continue
+        prev = out.get(key)
+        if prev is None or rank.get(weight, 0) > rank.get(prev, 0):
+            out[key] = weight
+    return out
+
+
+def _build_shorts_parity_window(
+    words,
+    playres_x: int,
+    playres_y: int,
+    base_size: int,
+    wide: bool = False,
+    must_start: set | None = None,
+    must_end: set | None = None,
+    analysis: dict | None = None,
+    honor_strong: bool = True,
+):
+    """Clean Pro / shorts_parity (r42 каркас + r43 optional strong).
+
+    Стабильность r42:
+    1. Группы 2–3 слова (_group_words_with_boundaries).
+    2. non-active = base white. Без pre-color neon.
+    3. Active non-strong = mild yellow.
+    4. hooks=0 не мешает events.
+
+    r43 optional strong (Gemini strong_words only):
+    - strong color + scale ТОЛЬКО когда is_active
+    - до речи strong в группе = base white (тот же размер)
+    - zero lexicon / zero idiom / zero «один цвет = одна строка»
+    """
+    if not words:
+        return []
+
+    try:
+        from .colors import (
+            PARITY_ASS,
+            get_strong_ass_color,
+            get_strong_scale,
+        )
+        COL_BASE = PARITY_ASS["base"]
+        COL_ACTIVE = PARITY_ASS["active"]
+    except Exception:
+        COL_BASE = "&H00FFFFFF&"
+        COL_ACTIVE = "&H0000FFFF&"
+
+        def get_strong_ass_color(level: str) -> str:
+            return {
+                "L2": "&H0000FFFF&",
+                "L3": "&H00005EFF&",
+                "L4": "&H00FF00FF&",
+            }.get(level, "&H0000FFFF&")
+
+        def get_strong_scale(level: str) -> float:
+            return {"L2": 1.14, "L3": 1.22, "L4": 1.28}.get(level, 1.14)
+
+    fs = max(52, int(base_size * 1.05))
+    pos = _caption_pos(playres_x, playres_y, wide)
+    strong = _parity_strong_lookup(analysis, honor_strong)
+
+    groups = _group_words_with_boundaries(
+        words,
+        must_start=must_start,
+        must_end=must_end,
+        max_words=3,
+        max_chars=28,
+    )
+
+    events: list[dict] = []
+    bs = chr(92)
+
+    for group in groups:
+        if not group:
+            continue
+        edges = [float(words[i]["start"]) for i in group]
+        edges.append(float(words[group[-1]]["end"]))
+        for i in range(1, len(edges)):
+            if edges[i] <= edges[i - 1]:
+                edges[i] = edges[i - 1] + 0.05
+        if edges[-1] - edges[-2] < 0.12:
+            edges[-1] = edges[-2] + 0.18
+
+        for gi, active_idx in enumerate(group):
+            t0 = edges[gi]
+            t1 = edges[gi + 1]
+            parts = []
+            for j in group:
+                wt = str(words[j].get("text") or "").strip()
+                if not wt:
+                    continue
+                is_active = (j == active_idx)
+                key = _norm_word_key(wt)
+                level = strong.get(key, "") if key else ""
+
+                if is_active and level:
+                    # strong active: neon color + scale
+                    color = get_strong_ass_color(level)
+                    scale = get_strong_scale(level)
+                    size = max(36, int(fs * scale))
+                    parts.append(f"{{{bs}c{color}{bs}fs{size}}}{wt}")
+                elif is_active:
+                    # non-strong active: mild yellow, scale 1.0
+                    parts.append(f"{{{bs}c{COL_ACTIVE}{bs}fs{fs}}}{wt}")
+                else:
+                    # non-active (strong или нет): base white, scale 1.0
+                    # → нет pre-color neon
+                    parts.append(f"{{{bs}c{COL_BASE}{bs}fs{fs}}}{wt}")
+            if not parts:
+                continue
+            text = pos + " ".join(parts)
+            events.append({
+                "start": t0,
+                "end": t1,
+                "style": "CleanPro",
+                "text": text,
+                "layer": 1,
+            })
+
+    return events
+
+
 def _build_clean_pro_window(
     words, analysis, playres_x, playres_y, base_size, wide: bool = False,
     must_start: set | None = None, must_end: set | None = None,
 ):
-    """Phrase karaoke (как ShortsMaker chunks).
+    """LEGACY phrase karaoke (r40/r41). Оставлен для совместимости.
 
-    • Группа 2–3 слова на экране вместе (strong-словосочетание не рвётся).
-    • Strong-фраза: все слова уже чуть крупнее, цвет БЕЛЫЙ до речи.
-    • В момент речи: вся фраза ещё крупнее; neon только на текущем слове.
-    • Ordinary: dim → white, без scale.
+    В r42 clean_pro / shorts_parity идут в _build_shorts_parity_window.
+    Этот путь больше не вызывается из dispatch.
     """
     if not words:
         return []
@@ -790,11 +926,12 @@ def _build_karaoke_window(
         return []
 
     key = (caption_style or "auto_aisie").strip().lower()
-    # Clean Pro — отдельный путь (остальные стили не трогаем)
-    if key == "clean_pro":
-        return _build_clean_pro_window(
-            words, analysis, playres_x, playres_y, base_size, wide=wide,
+    # r42/r43: clean_pro / shorts_parity → parity + optional Gemini strong
+    if key in ("clean_pro", "shorts_parity"):
+        return _build_shorts_parity_window(
+            words, playres_x, playres_y, base_size, wide=wide,
             must_start=must_start, must_end=must_end,
+            analysis=analysis, honor_strong=honor_strong,
         )
 
     pos = _caption_pos(playres_x, playres_y, wide)
@@ -803,6 +940,13 @@ def _build_karaoke_window(
     key = (caption_style or "auto_aisie").strip().lower()
     if key in ("", "auto_aisie", "auto"):
         key = default_key
+    # auto на wide тоже уходит в parity
+    if key in ("clean_pro", "shorts_parity"):
+        return _build_shorts_parity_window(
+            words, playres_x, playres_y, base_size, wide=wide,
+            must_start=must_start, must_end=must_end,
+            analysis=analysis, honor_strong=honor_strong,
+        )
 
     # ASS BGR. Пресеты: active/dim цвет, box, лёгкий pop только для strong.
     # use_glow ВЫКЛЮЧЕН — отдельный glow-слой создавал «вторую» увеличенную копию слова.
@@ -1479,6 +1623,25 @@ def burn_subtitles(
             )
             events.extend(sub_ev)
             n_sub_events = len(sub_ev)
+            # r43: явный лог parity vs legacy + strong count/source
+            _cs = (caption_style or "auto_aisie").strip().lower()
+            if _cs in ("clean_pro", "shorts_parity") or (
+                _cs in ("", "auto", "auto_aisie") and wide
+            ):
+                _sm = _parity_strong_lookup(
+                    analysis, bool(enable_strong_words)
+                )
+                _src = "gemini" if _sm else "none"
+                _log(
+                    f"[СУБТИТРЫ] style=shorts_parity words={len(words)} "
+                    f"events={n_sub_events} strong={len(_sm)} "
+                    f"strong_source={_src}"
+                )
+            else:
+                _log(
+                    f"[СУБТИТРЫ] style=legacy({_cs}) words={len(words)} "
+                    f"events={n_sub_events}"
+                )
         else:
             # Нет words совсем — сегменты analysis (редкий fallback)
             for sub in analysis.get("subtitles") or []:
