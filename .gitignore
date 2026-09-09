@@ -1,0 +1,12 @@
+.env
+.venv
+venv
+*.log
+*.pyc
+__pycache__
+.DS_Store
+*.app
+*.command
+.pytest_cache
+.ruff_cache
+.cache
