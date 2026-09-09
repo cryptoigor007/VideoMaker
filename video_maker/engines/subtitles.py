@@ -1,12 +1,10 @@
-# VideoMaker FIX | 2026.09.09-r43-clean | 2026-09-09
+# VideoMaker FIX | 2026.09.10-r43-long | 2026-09-10
 # CHANGED:
-#   r43: Clean Pro visual поверх r42 parity.
-#        • optional strong из Gemini strong_words (L2/L3/L4)
-#        • color + scale ТОЛЬКО на active strong; до речи — base white
-#        • non-strong active = mild yellow; non-active = base white
-#        • zero lexicon / zero idiom / zero «один цвет = одна строка»
-#   r42: shorts_parity каркас (grouping 2–3, zero pre-color)
-# PREV: 2026.09.05-r42
+#   r43-long: grouping — слово ≥8 букв (norm) не втягивается в 2–3;
+#             long solo; sticky+long → [short, long]; sticky/solo-force/orphan
+#             не ломают solo-long.
+#   r43-clean: Clean Pro default, sentence break, prev_end deconflict
+# PREV: 2026.09.09-r43-clean
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -449,7 +447,10 @@ def _group_words_with_boundaries(
     Жёсткие правила (AISIE-совместимо):
     - по умолчанию 2–3 слова на экране;
     - 4 слова только если каждое ≤ 4 символов И суммарно ≤ max_chars;
-    - must_start / must_end — границы шортов Gemini (не раздувают группу!).
+    - must_start / must_end — границы шортов Gemini (не раздувают группу!);
+    - sentence-break после .!?…;
+    - LONG (≥8 букв по _norm_word_key): не втягивать в чужую 2–3;
+      solo; исключение [sticky_short, LONG].
     """
     n = len(words)
     if n == 0:
@@ -463,8 +464,18 @@ def _group_words_with_boundaries(
         "не", "же", "ли", "бы", "то", "это", "как", "что", "чтобы",
         "я", "ты", "он", "она", "мы", "вы", "они",
     }
-    # max_chars потолок на длину фразы (не зависит от 4K ширины)
+    LONG_MIN = 8  # букв после нормализации
     max_chars = min(int(max_chars or 28), 28)
+
+    def _key(idx: int) -> str:
+        return _norm_word_key(str(words[idx].get("text") or ""))
+
+    def _is_long(idx: int) -> bool:
+        k = _key(idx)
+        return len(k) >= LONG_MIN
+
+    def _is_sticky(idx: int) -> bool:
+        return _key(idx) in sticky
 
     groups: list[list[int]] = []
     i = 0
@@ -490,38 +501,71 @@ def _group_words_with_boundaries(
             i += 1
             continue
 
+        # --- LONG: solo или [sticky, LONG] ---
+        if _is_long(i):
+            end = i + 1
+            # trailing sticky short после long — обычно не нужно; не расширяем
+            groups.append(list(range(i, end)))
+            i = end
+            continue
+
+        # sticky + LONG → одна группа из двух
+        if (
+            remain >= 2
+            and _is_sticky(i)
+            and (i + 1) < hard_end
+            and _is_long(i + 1)
+        ):
+            end = i + 2
+            groups.append(list(range(i, end)))
+            i = end
+            continue
+
+        # не втягивать следующее LONG в обычную 2–3/4 группу
+        for j in range(i + 1, hard_end):
+            if _is_long(j):
+                hard_end = j
+                break
+
+        remain = hard_end - i
+        if remain <= 0:
+            groups.append([i])
+            i += 1
+            continue
+
         # целевой размер: 2 или 3
         target = 2 if remain >= 2 else 1
         if remain >= 3:
-            # 3 слова, если не слишком длинные
             chunk3 = words[i:i + 3]
             chars3 = sum(len((w.get("text") or "")) for w in chunk3) + 2
             if chars3 <= max_chars:
                 target = 3
-        # 4 только если remain>=4 и ВСЕ слова короткие
+        # 4 только если remain>=4 и ВСЕ слова короткие (не long)
         if remain >= 4 and target == 3:
             chunk4 = words[i:i + 4]
-            if all(len((w.get("text") or "")) <= 4 for w in chunk4):
+            keys4 = [_norm_word_key(str(w.get("text") or "")) for w in chunk4]
+            if all(len(k) <= 4 for k in keys4):
                 chars4 = sum(len((w.get("text") or "")) for w in chunk4) + 3
                 if chars4 <= max_chars:
                     target = 4
 
         end = min(i + target, hard_end)
 
-        # sticky: частица в конце → захватить ещё одно (но не > 4 и не > hard_end)
+        # sticky: частица в конце → +1, но НЕ если следующее LONG
         if end < hard_end and (end - i) < 4:
-            last = _norm_word_key(words[end - 1].get("text") or "")
-            if last in sticky:
+            if _is_sticky(end - 1) and not _is_long(end):
                 end = min(end + 1, hard_end, i + 4)
 
-        # не оставлять одно слово, если можно 2
-        if end - i == 1 and end < hard_end:
-            end = min(i + 2, hard_end)
+        # не оставлять одно слово, если можно 2 — но не если это LONG (уже обработан)
+        # и не дотягивать до LONG
+        if end - i == 1 and end < hard_end and not _is_long(i):
+            if not _is_long(end):
+                end = min(i + 2, hard_end)
 
-        # сирота: забрать только если новое число слов ≤ 3
-        # (4 — только отдельной веткой «все короткие» выше)
+        # сирота: забрать только если ≤3 слов и сирота НЕ long
         if hard_end - end == 1 and (end - i + 1) <= 3:
-            end = hard_end
+            if not _is_long(end):
+                end = hard_end
 
         groups.append(list(range(i, end)))
         i = end
