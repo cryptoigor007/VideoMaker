@@ -1,6 +1,8 @@
-# VideoMaker FIX | 2026.09.03-r26 | 2026-09-03
-# CHANGED: series_dir without double nesting when output already ends with series_name
-# PREV: packaging layout
+# VideoMaker FIX | 2026.09.10-r43.1-place | 2026-09-10
+# CHANGED:
+#   r43-place: same filesystem → os.replace/move (мгновенно);
+#              разные диски → shutil.copy2; лог move|copy.
+# PREV: 2026.09.03-r26
 # REPLACE: video_maker/pipeline/finalize.py
 """FinalizeStage — {series_dir}/wide|vertical|shorts/... (без series/series)."""
 from __future__ import annotations
@@ -39,6 +41,32 @@ def resolve_series_dir(output_folder: str, series_name: str, audio_path: str = "
     return out, base_name or "output"
 
 
+def _place_file(src: str, dst: str, log_fn=None, prefer_copy: bool = False) -> str:
+    """Переложить src → dst.
+
+    По умолчанию: os.replace (один раздел — мгновенно);
+    EXDEV / ошибка replace → copy2.
+    prefer_copy=True (keep_temp_files): всегда copy — src в _tmp остаётся.
+    Returns: 'skip' | 'move' | 'copy'
+    """
+    if not src or not os.path.isfile(src):
+        return "skip"
+    src_a = os.path.abspath(src)
+    dst_a = os.path.abspath(dst)
+    if src_a == dst_a:
+        return "skip"
+    os.makedirs(os.path.dirname(dst_a) or ".", exist_ok=True)
+    if prefer_copy:
+        shutil.copy2(src_a, dst_a)
+        return "copy"
+    try:
+        os.replace(src_a, dst_a)
+        return "move"
+    except OSError:
+        shutil.copy2(src_a, dst_a)
+        return "copy"
+
+
 class FinalizeStage(Stage):
     def name(self) -> str:
         return "Финализация"
@@ -58,19 +86,32 @@ class FinalizeStage(Stage):
 
         from ..engines.audio import apply_loudnorm
 
+        # keep_temp → не вырезаем из _tmp; иначе move на одном диске
+        prefer_copy = bool(getattr(ctx, "keep_temp_files", False))
+
         def _place_video(src: str, dst: str, already_norm: bool, label: str) -> None:
-            """Copy if audio already loudnormed in BGM; else two-pass loudnorm."""
+            """Уже loudnorm → place (move|copy); иначе two-pass loudnorm → place в dst."""
             if not src or not os.path.exists(src):
                 return
             if already_norm:
-                ctx.log(f"[ФИНАЛ] {label}: аудио уже ≈ target → copy (без LUFS-measure)")
-                if os.path.abspath(src) != os.path.abspath(dst):
-                    shutil.copy2(src, dst)
+                mode = _place_file(src, dst, log_fn=ctx.log, prefer_copy=prefer_copy)
+                if mode == "skip":
+                    ctx.log(f"[ФИНАЛ] {label}: уже на месте (без LUFS-measure)")
+                else:
+                    ctx.log(
+                        f"[ФИНАЛ] {label}: аудио уже ≈ target → {mode} "
+                        f"(без LUFS-measure)"
+                    )
                 return
             ln = dst + ".loudnorm.mp4"
             ctx.log(f"[ФИНАЛ] loudnorm → {label}")
             apply_loudnorm(src, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
-            shutil.move(ln, dst)
+            mode = _place_file(ln, dst, log_fn=ctx.log, prefer_copy=False)
+            if mode == "copy" and os.path.isfile(ln):
+                try:
+                    os.remove(ln)
+                except OSError:
+                    pass
             self._measure(dst, ctx)
 
         if ctx.final_horizontal and os.path.exists(ctx.final_horizontal):
@@ -81,7 +122,14 @@ class FinalizeStage(Stage):
                 "wide/final_16x9.mp4",
             )
         if ctx.master_horizontal and os.path.exists(ctx.master_horizontal):
-            shutil.copy2(ctx.master_horizontal, os.path.join(wide_dir, "master_16x9.mp4"))
+            mode = _place_file(
+                ctx.master_horizontal,
+                os.path.join(wide_dir, "master_16x9.mp4"),
+                log_fn=ctx.log,
+                prefer_copy=prefer_copy,
+            )
+            if mode != "skip":
+                ctx.log(f"[ФИНАЛ] wide/master_16x9.mp4 → {mode}")
 
         if ctx.final_vertical and os.path.exists(ctx.final_vertical):
             _place_video(
@@ -91,7 +139,14 @@ class FinalizeStage(Stage):
                 "vertical/final_9x16.mp4",
             )
         if ctx.master_vertical and os.path.exists(ctx.master_vertical):
-            shutil.copy2(ctx.master_vertical, os.path.join(vert_dir, "master_9x16.mp4"))
+            mode = _place_file(
+                ctx.master_vertical,
+                os.path.join(vert_dir, "master_9x16.mp4"),
+                log_fn=ctx.log,
+                prefer_copy=prefer_copy,
+            )
+            if mode != "skip":
+                ctx.log(f"[ФИНАЛ] vertical/master_9x16.mp4 → {mode}")
 
         clips = ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else []
         shorts_norm = bool(getattr(ctx, "shorts_audio_normalized", False))

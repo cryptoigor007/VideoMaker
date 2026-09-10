@@ -1,13 +1,12 @@
-# VideoMaker FIX | 2026.09.09-r43-clean | 2026-09-09
-# CHANGED: галочки IMO — умная логика сохранена + первопричины:
-#   1) os.access(R_OK) на macOS/сети давал False на только что выбранном
-#      файле → галочка оставалась серой. Теперь достаточно isfile.
-#   2) ttk.Checkbutton: enable через .state(['!disabled']) (configure
-#      на clam/macOS иногда не снимает disabled).
-#   3) NFC/NFD нормализация пути (macOS), expanduser.
-#   4) browse: sync до save, чтобы bool=True попал в JSON.
-#   Логика: пустой путь → DISABLED+OFF; файл есть → NORMAL+auto ON (можно OFF).
-# PREV: 2026.09.01-r4
+# VideoMaker FIX | 2026.09.10-r43-idlefix | 2026-09-10
+# CHANGED (idle + close reliability):
+#   1) IMO rescan: 60s вместо 5s + _closing guard + лёгкий cache isfile (30s).
+#   2) Heartbeat: 30s + _closing guard + after_id для отмены.
+#   3) _on_close: всегда prevent_sleep_stop, kill children, after_cancel,
+#      _closing=True, os._exit(0) в конце — процесс гарантированно умирает.
+#   4) log_text: ограничение ~3000 строк (нет утечки RAM).
+#   5) _kill_ffmpeg: ffmpeg + ffprobe.
+# PREV: 2026.09.09-r43-clean
 # REPLACE: video_maker/gui/app.py
 
 """Главное окно — Tkinter GUI с тёмной темой и подробным логированием."""
@@ -170,6 +169,11 @@ class App:
         self.cancel_event = threading.Event()
         self.whisperx_path_var = tk.StringVar(value=self.settings.whisperx_path)
         self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
+        # Idle / close control
+        self._closing = False
+        self._heartbeat_after_id = None
+        self._imo_rescan_after_id = None
+        self._imo_access_cache: dict[str, tuple[float, bool]] = {}  # path -> (ts, ok)
         log.info("[GUI] self.running = False")
 
         # Привязываем закрытие окна
@@ -187,7 +191,7 @@ class App:
         self._build_ui()
         log.info("[GUI] _build_ui() завершён")
 
-        # Запуск heartbeat для мониторинга состояния окна
+        # Запуск heartbeat (редко, только для диагностики)
         self._heartbeat()
 
         log.info("[GUI] Вызов _load_settings()...")
@@ -205,7 +209,11 @@ class App:
         log.info("[GUI] ═══════════════════════════════════════════════")
 
     def _on_close(self) -> None:
-        """Обработчик закрытия окна."""
+        """Обработчик закрытия окна — надёжный выход без хвостов."""
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
+
         log.info("[GUI] WM_DELETE_WINDOW running=%s", self.running)
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
         log.info("[GUI] ║ WM_DELETE_WINDOW — пользователь закрывает окно ║")
@@ -219,28 +227,54 @@ class App:
             )
             log.info(f"[GUI] Ответ пользователя: {answer}")
             if not answer:
+                self._closing = False
                 log.info("[GUI] Отмена закрытия — окно остаётся открытым")
                 return
             self.cancel_event.set()
             self._kill_ffmpeg_processes()
-            try:
-                from ..engines.power import prevent_sleep_stop
-                prevent_sleep_stop()
-            except Exception:
-                pass
 
-        # Всегда: и при running=False
-        self._save_settings()
+        # Всегда: остановить prevent_sleep, таймеры, дочерние процессы
+        try:
+            from ..engines.power import prevent_sleep_stop
+            prevent_sleep_stop()
+        except Exception:
+            pass
+
+        # Отменить pending after-callbacks
+        for attr in ("_heartbeat_after_id", "_imo_rescan_after_id"):
+            aid = getattr(self, attr, None)
+            if aid is not None:
+                try:
+                    self.root.after_cancel(aid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+        try:
+            self._save_settings()
+        except Exception as e:
+            log.warning("[GUI] save on close failed: %s", e)
+
         log.info("[GUI] Уничтожение корневого окна...")
         try:
             self.root.quit()
         except Exception:
             pass
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
         log.info("[GUI] root.destroy() выполнен")
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
         log.info("[GUI] ║             ПРИЛОЖЕНИЕ ЗАКРЫТО               ║")
         log.info("[GUI] ╚══════════════════════════════════════════════╝")
+
+        # Гарантированный выход процесса (нет orphan-потоков / caffeinate)
+        try:
+            import os as _os
+            _os._exit(0)
+        except Exception:
+            sys.exit(0)
 
     # ─── Тема ─────────────────────────────────────────────────────────────
 
@@ -1044,16 +1078,28 @@ class App:
     # ─── Логирование ─────────────────────────────────────────────────────
 
     def _log(self, msg: str) -> None:
-        """Потокобезопасная запись в лог."""
+        """Потокобезопасная запись в лог. Ограничение ~3000 строк — нет утечки RAM."""
         timestamp = time.strftime("%H:%M:%S")
         full_msg = f"[{timestamp}] {msg}"
         log.info(msg)
 
         def _write():
-            self.log_text.configure(state=tk.NORMAL)
-            self.log_text.insert(tk.END, full_msg + "\n")
-            self.log_text.see(tk.END)
-            self.log_text.configure(state=tk.DISABLED)
+            try:
+                if getattr(self, "_closing", False):
+                    return
+                self.log_text.configure(state=tk.NORMAL)
+                self.log_text.insert(tk.END, full_msg + "\n")
+                # Ограничиваем рост виджета
+                try:
+                    line_count = int(self.log_text.index("end-1c").split(".")[0])
+                    if line_count > 3000:
+                        self.log_text.delete("1.0", f"{line_count - 2500}.0")
+                except Exception:
+                    pass
+                self.log_text.see(tk.END)
+                self.log_text.configure(state=tk.DISABLED)
+            except Exception:
+                pass
         try:
             self.root.after(0, _write)
         except RuntimeError:
@@ -1584,17 +1630,24 @@ class App:
             pass
 
     def _heartbeat(self) -> None:
-        """Heartbeat для отслеживания состояния окна (каждые 5 секунд)."""
-        if not self.root.winfo_exists():
+        """Heartbeat (редко). Не грузит idle."""
+        if getattr(self, "_closing", False):
             return
-        # heartbeat без спама в INFO-лог (только debug)
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
+            return
         log.debug(
             "LIFECYCLE heartbeat visible=%s viewable=%s geometry=%s",
             self.root.winfo_viewable(),
             self.root.winfo_ismapped(),
             self.root.geometry(),
         )
-        self.root.after(5000, self._heartbeat)
+        try:
+            self._heartbeat_after_id = self.root.after(30000, self._heartbeat)  # 30 с
+        except Exception:
+            self._heartbeat_after_id = None
 
     def _find_whisperx(self) -> None:
         """Найти whisperx и обновить статус."""
@@ -1622,20 +1675,19 @@ class App:
             log.info(f"[WHISPER] Manual path set: {path}")
 
     def _kill_ffmpeg_processes(self) -> None:
-        """Убить только дочерние ffmpeg-процессы текущего процесса (не все ffmpeg в системе)."""
+        """Убить дочерние ffmpeg/ffprobe текущего процесса (не чужие в системе)."""
         try:
             import psutil
             current = psutil.Process(os.getpid())
             for child in current.children(recursive=True):
                 try:
                     name = (child.name() or "").lower()
-                    if "ffmpeg" in name:
+                    if "ffmpeg" in name or "ffprobe" in name:
                         child.kill()
-                        log.info("[GUI] Убит дочерний ffmpeg pid=%s", child.pid)
+                        log.info("[GUI] Убит дочерний %s pid=%s", name, child.pid)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
         except ImportError:
-            # Без psutil — не трогаем чужие ffmpeg (pkill слишком агрессивен)
             log.warning("[GUI] psutil не установлен — пропуск убийства ffmpeg")
         except Exception as e:
             log.warning("[GUI] Не удалось убить ffmpeg: %s", e)
@@ -1643,30 +1695,50 @@ class App:
     def _imo_path_accessible(self, path: str) -> bool:
         """Файл существует — условие для умной галочки Intro/Middle/Outro.
 
-        Первопричина «выбрал файл — галочка серая»:
-        раньше: isfile AND access(R_OK). На macOS (сеть, внешний том, ACL,
-        cloud-placeholder) access часто False сразу после askopenfilename,
-        ok=False, checkbox оставался DISABLED. Достаточно isfile;
-        pipeline сам обработает ошибки чтения.
+        Cache 30s: на сетевых томах isfile дорогой; не дёргаем диск каждые 5с.
         """
         path = (path or "").strip()
         if not path:
             return False
         try:
             path = os.path.expanduser(path)
+        except Exception:
+            return False
+
+        # Cache
+        cache = getattr(self, "_imo_access_cache", None)
+        if cache is not None:
+            entry = cache.get(path)
+            if entry is not None:
+                ts, ok = entry
+                if time.time() - ts < 30.0:
+                    return ok
+
+        ok = False
+        try:
             if os.path.isfile(path):
-                return True
-            try:
-                import unicodedata
-                for form in ("NFC", "NFD"):
-                    norm = unicodedata.normalize(form, path)
-                    if norm != path and os.path.isfile(norm):
-                        return True
-            except Exception:
-                pass
-            return False
+                ok = True
+            else:
+                try:
+                    import unicodedata
+                    for form in ("NFC", "NFD"):
+                        norm = unicodedata.normalize(form, path)
+                        if norm != path and os.path.isfile(norm):
+                            ok = True
+                            break
+                except Exception:
+                    pass
         except OSError:
-            return False
+            ok = False
+
+        if cache is not None:
+            cache[path] = (time.time(), ok)
+            # Не раздуваем cache
+            if len(cache) > 64:
+                oldest = sorted(cache.items(), key=lambda x: x[1][0])[:16]
+                for k, _ in oldest:
+                    cache.pop(k, None)
+        return ok
 
     def _imo_cb_set_enabled(self, cb, enabled: bool) -> None:
         """Включить/выключить ttk.Checkbutton надёжно (macOS + theme clam)."""
@@ -1772,14 +1844,18 @@ class App:
         self._schedule_imo_rescan()
 
     def _schedule_imo_rescan(self) -> None:
+        """Редкий rescan (60 с). Traces уже обновляют галочки при изменении пути.
+        Нужен только для сетевых томов, которые появились позже."""
+        if getattr(self, "_closing", False):
+            return
         try:
             self._sync_imo_checkboxes()
         except Exception:
             pass
         try:
-            self.root.after(5000, self._schedule_imo_rescan)
+            self._imo_rescan_after_id = self.root.after(60000, self._schedule_imo_rescan)  # 60 с
         except Exception:
-            pass
+            self._imo_rescan_after_id = None
 
     def _var_get(self, name: str) -> str:
 

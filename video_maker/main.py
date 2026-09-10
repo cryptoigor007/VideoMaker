@@ -1,3 +1,10 @@
+# VideoMaker FIX | 2026.09.10-r43-idlefix | 2026-09-10
+# CHANGED:
+#   r43-idlefix: logging level=INFO по умолчанию;
+#                 DEBUG только если VIDEOMAKER_DEBUG=1|true|yes.
+# PREV: (без шапки) entrypoint + SIGINT/SIGTERM + Tk mainloop
+# REPLACE: video_maker/main.py
+
 """Точка входа — main.py."""
 import logging
 import os
@@ -45,8 +52,12 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
 
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
+    # INFO по умолчанию (меньше disk I/O на холостом ходу).
+    # DEBUG только если VIDEOMAKER_DEBUG=1
+    level = logging.DEBUG if os.environ.get("VIDEOMAKER_DEBUG", "").strip() in ("1", "true", "yes") else logging.INFO
+
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),

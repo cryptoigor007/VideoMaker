@@ -1,35 +1,51 @@
 # VideoMaker — контроль версий
 
-**Текущая сборка: r43-clean** (2026-09-09)
+**Текущая сборка: r43.3-stable** (2026-09-10)
 
-Единый номер сборки = максимальный rN среди файлов с шапкой `VideoMaker FIX | …-rN`.
+Единый номер сборки = максимальный **rN** (или **rN.M**) среди файлов с шапкой  
+`VideoMaker FIX | YYYY.MM.DD-rN[-suffix]`.
+
+Минор **.1** = безопасная оптимизация финализации без смены логики encode/BGM/субтитров.
 
 ---
 
-## Таблица версий файлов (r43-clean)
+## Таблица версий файлов (сборка r43.1-place)
 
-| Файл | Версия | Дата | Примечание |
-|------|--------|------|------------|
-| video_maker/engines/subtitles.py | **2026.09.09-r43-clean** | 2026-09-09 | default Clean Pro; dead builders removed |
-| video_maker/engines/colors.py | **2026.09.09-r43-clean** | 2026-09-09 | only strong helpers |
-| video_maker/gui/app.py | 2026.09.09-r43-clean | 2026-09-09 | default clean_pro; dead _choose_* removed |
-| video_maker/pipeline/stages.py | 2026.09.09-r43-clean | 2026-09-09 | caption_style default clean_pro |
-| video_maker/engines/placement.py | — | — | **удалён** (stub, не использовался) |
-| video_maker/external/gemini_analyzer.py | — | — | **удалён** (дубль analysis.py) |
+| Файл | Версия в шапке | Дата | Примечание |
+|------|----------------|------|------------|
+| video_maker/pipeline/finalize.py | **2026.09.10-r43.1-place** | 2026-09-10 | same FS → move; EXDEV → copy; keep_temp → copy |
+| video_maker/engines/subtitles.py | 2026.09.10-r43-phrase | 2026-09-10 | phrase-break + display clean |
+| video_maker/gui/app.py | 2026.09.10-r43-idlefix | 2026-09-10 | idle + close |
+| video_maker/main.py | 2026.09.10-r43-idlefix | 2026-09-10 | logging INFO |
+| start.command | 2026.09.10-r43-idlefix | 2026-09-10 | без tee/read |
+| video_maker/engines/colors.py | 2026.09.09-r43-clean | 2026-09-09 | strong palette |
+| video_maker/pipeline/stages.py | 2026.09.09-r43-clean | 2026-09-09 | caption default |
 
 ---
 
 ## История сборок
 
+### r43.1-place — 2026-09-10
+- Finalize: `os.replace` на одном разделе; `copy2` при EXDEV / keep_temp_files.
+- Лог: `→ move` или `→ copy`. Shorts «already in place» без изменений.
+- Encode, BGM, subtitles, idlefix — без изменений.
+- 26/26 unit-тестов зелёные.
+
+### r43-phrase — 2026-09-10
+- Phrase-break субтитров + idlefix в одной поставке.
+
+### r43-idlefix — 2026-09-10
+- Idle timers, close, logging, start.command.
+
 ### r43-clean — 2026-09-09
-- Default caption = Clean Pro (parity) для H и V/Shorts (`auto_aisie` → parity).
-- Удалены корневые engines/gui/pipeline (старые r12).
-- Удалены dead: placement stub, GeminiAnalyzer, `_build_clean_pro_window`, `_build_wide_subtitles`, `reframe_*`, `_encode_vt_args`, `probe_sample_rate`, color helpers без вызовов, GUI `_choose_*`.
-- `start.command`: относительный `PROJECT_DIR`.
-- Lexicon/legacy-пресеты сохранены (явный выбор hormozi и т.д. в GUI).
+- Clean Pro default, dead-code cleanup.
 
-### r43 — 2026-09-05
-- Clean Pro visual поверх r42 parity (Gemini strong).
+---
 
-### r42 — 2026-09-05
-- shorts_parity каркас.
+## Проверка
+
+```bash
+head -3 video_maker/pipeline/finalize.py     # → 2026.09.10-r43.1-place
+head -3 video_maker/engines/subtitles.py     # → 2026.09.10-r43-phrase
+python -m pytest tests/ -q                   # → 26 passed
+```

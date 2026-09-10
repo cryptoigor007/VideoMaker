@@ -1,10 +1,9 @@
-# VideoMaker FIX | 2026.09.10-r43-long | 2026-09-10
+# VideoMaker FIX | 2026.09.10-r43.3-stable | 2026-09-10
 # CHANGED:
-#   r43-long: grouping — слово ≥8 букв (norm) не втягивается в 2–3;
-#             long solo; sticky+long → [short, long]; sticky/solo-force/orphan
-#             не ломают solo-long.
-#   r43-clean: Clean Pro default, sentence break, prev_end deconflict
-# PREV: 2026.09.09-r43-clean
+#   r43.3-stable: \q2 no-wrap; жёсткий deconflict (нет двух строк сразу);
+#                 phrase-break только .!?… (запятая не рвёт каждую группу);
+#                 пунктуация на экране (r43.2) сохранена.
+# PREV: 2026.09.10-r43.2-punct
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -245,29 +244,132 @@ def _words_from_transcription(transcription: dict | None) -> list[dict]:
     return words
 
 
+# Краевая пунктуация (Whisper / ASR). Fullwidth-знаки тоже.
+_EDGE_PUNCT = (
+    r"\s\.,!?;:«»\"'()\[\]…"
+    r"\u2026\u3002\uff0c\uff01\uff1f\uff1b\uff1a"  # … 。，！？；：
+    r"—–\-"
+)
+_EDGE_PUNCT_RE_L = re.compile(f"^[{_EDGE_PUNCT}]+")
+_EDGE_PUNCT_RE_R = re.compile(f"[{_EDGE_PUNCT}]+$")
+_CLOSE_QUOTE_RE = re.compile(r"[\u00bb\"'\)\]\}]+$")
+# Жёсткий обрыв группы: только конец предложения (. ! ? …).
+# Запятая/точка с запятой НЕ рвут — иначе 1–2 слова и «дёрганье» + ощущение каши.
+# Тире/дефис не рвут (кто-то, переносы ASR).
+_PHRASE_END_RE = re.compile(
+    r"[.!?\u2026\u3002\uff01\uff1f]+$"
+)
+# Ведущий конец предложения на следующем токене (".Слово")
+_PHRASE_LEAD_RE = re.compile(
+    r"^[.!?\u2026\u3002\uff01\uff1f]+"
+)
+
+
 def _norm_word_key(text: str) -> str:
     """Ключ для strong_map: lower, ё→е, без пунктуации."""
-    import re
     t = (text or "").strip().lower().replace("ё", "е")
-    t = re.sub(r"^[\s\.,!?;:«»\"\'()\[\]…—–\-]+", "", t)
-    t = re.sub(r"[\s\.,!?;:«»\"\'()\[\]…—–\-]+$", "", t)
+    t = _EDGE_PUNCT_RE_L.sub("", t)
+    t = _EDGE_PUNCT_RE_R.sub("", t)
     return t
 
 
+def _is_pure_punct(text: str) -> bool:
+    """Токен без букв/цифр — только знаки (., -, —, …). Не рендерим, не solo-группа."""
+    return not _norm_word_key(text)
+
+
+def _display_word(text: str) -> str:
+    """Текст на экран: сохраняем пунктуацию и дефисы (кто-то, слово, слово.).
+
+    Раньше (r43-phrase) срезали краевые знаки — из-за этого на видео
+    пропали запятые/точки/тире. Norm-ключ для strong по-прежнему без пунктуации.
+    """
+    return (text or "").strip()
+
+
+def _deconflict_events(events: list[dict], min_dur: float = 0.10) -> list[dict]:
+    """Гарантировать: events[i].start >= events[i-1].end (одна строка karaoke).
+
+    Layer 1 (captions) только; hooks/CTA (layer 2) не трогаем здесь.
+    """
+    if not events:
+        return events
+    # стабильный порядок
+    events = sorted(events, key=lambda e: (float(e.get("start", 0)), float(e.get("end", 0))))
+    prev_end = -1.0
+    out: list[dict] = []
+    for ev in events:
+        e = dict(ev)
+        t0 = float(e.get("start", 0))
+        t1 = float(e.get("end", t0 + min_dur))
+        if t0 < prev_end:
+            t0 = prev_end
+        if t1 < t0 + min_dur:
+            t1 = t0 + min_dur
+        e["start"], e["end"] = t0, t1
+        out.append(e)
+        prev_end = t1
+    return out
+
+
+def _assemble_group_display(words: list[dict], group: list[int]) -> dict[int, str]:
+    """Склеить pure-punct с соседним словом; вернуть idx → текст для ASS.
+
+    Пример: [«друг», «.», «Да»] → {0: «друг.», 2: «Да»}
+    «кто-то» остаётся одним токеном как пришло от Whisper.
+    """
+    out: dict[int, str] = {}
+    pending_lead = ""
+    last_idx: int | None = None
+    for j in group:
+        raw = str(words[j].get("text") or "").strip()
+        if not raw:
+            continue
+        if _is_pure_punct(raw):
+            if last_idx is not None and last_idx in out:
+                out[last_idx] = out[last_idx] + raw
+            else:
+                pending_lead += raw
+            continue
+        wt = _display_word(raw)
+        if not wt:
+            continue
+        if pending_lead:
+            wt = pending_lead + wt
+            pending_lead = ""
+        out[j] = wt
+        last_idx = j
+    return out
+
 
 def _word_ends_sentence(text: str) -> bool:
-    """True, если слово заканчивает предложение (. ! ? …).
+    """True, если слово заканчивает предложение (. ! ? …). Сохранено для совместимости."""
+    return _word_ends_phrase(text, sentence_only=True)
 
-    Учитывает кавычки/скобки после знака: «да.» «нет!» слово)?
-    Не считает многоточие внутри аббревиатур вроде «т.е.» без конечного стопа —
-    смотрим только хвостовую пунктуацию токена Whisper.
+
+def _word_ends_phrase(text: str, sentence_only: bool = False) -> bool:
+    """Обрыв группы по хвосту токена.
+
+    sentence_only=True → только . ! ? …
+    иначе также , ; : и хвостовой дефис/тире (не «кто-то» — дефис не в хвосте).
     """
     t = (text or "").strip()
     if not t:
         return False
-    # снять закрывающие кавычки/скобки справа, ищем терминальный стоп
-    t = re.sub(r"[\u00bb\"\'\)\]\}]+$", "", t)
-    return bool(re.search(r"[.!?\u2026]+$", t))
+    t = _CLOSE_QUOTE_RE.sub("", t)
+    if not t:
+        return False
+    if sentence_only:
+        return bool(re.search(r"[.!?\u2026\u3002\uff01\uff1f]+$", t))
+    return bool(_PHRASE_END_RE.search(t))
+
+
+def _word_starts_new_phrase(text: str) -> bool:
+    """Токен начинается с фразового знака (Whisper: '.Далее' / ',и')."""
+    t = (text or "").strip()
+    if not t or _is_pure_punct(t):
+        return False
+    return bool(_PHRASE_LEAD_RE.search(t))
 
 
 def _strong_lookup(strong: dict, word_text: str) -> str:
@@ -448,7 +550,8 @@ def _group_words_with_boundaries(
     - по умолчанию 2–3 слова на экране;
     - 4 слова только если каждое ≤ 4 символов И суммарно ≤ max_chars;
     - must_start / must_end — границы шортов Gemini (не раздувают группу!);
-    - sentence-break после .!?…;
+    - phrase-break после .!?… , ; : и хвостового дефиса/тире;
+    - leading-punct / pure-punct — барьер фразы; pure-punct не стартует группу;
     - LONG (≥8 букв по _norm_word_key): не втягивать в чужую 2–3;
       solo; исключение [sticky_short, LONG].
     """
@@ -480,6 +583,12 @@ def _group_words_with_boundaries(
     groups: list[list[int]] = []
     i = 0
     while i < n:
+        # Голые знаки (".", "-", "—") не начинают группу
+        while i < n and _is_pure_punct(str(words[i].get("text") or "")):
+            i += 1
+        if i >= n:
+            break
+
         hard_end = n
         for e in sorted(must_end):
             if e >= i:
@@ -489,15 +598,23 @@ def _group_words_with_boundaries(
             if s > i:
                 hard_end = min(hard_end, s)
                 break
-        # граница предложения: после слова с .!?… нельзя тянуть следующее предложение
+        # Фразовый барьер: , ; : . ! ? … / хвостовой дефис / pure-punct / leading-punct
         for j in range(i, hard_end):
-            if _word_ends_sentence(str(words[j].get("text") or "")):
+            raw_j = str(words[j].get("text") or "")
+            if j > i and _is_pure_punct(raw_j):
+                # отдельный знак — конец текущей фразы (знак можно включить в окно, не рендерим)
+                hard_end = min(hard_end, j + 1)
+                break
+            if j > i and _word_starts_new_phrase(raw_j):
+                # ".Слово" / ",и" — новая фраза с j, текущая заканчивается до j
+                hard_end = min(hard_end, j)
+                break
+            if _word_ends_phrase(raw_j):
                 hard_end = min(hard_end, j + 1)
                 break
 
         remain = hard_end - i
         if remain <= 0:
-            groups.append([i])
             i += 1
             continue
 
@@ -768,39 +885,38 @@ def _build_shorts_parity_window(
         if edges[-1] - edges[-2] < 0.12:
             edges[-1] = edges[-2] + 0.18
 
+        disp = _assemble_group_display(words, group)
         for gi, active_idx in enumerate(group):
             t0 = edges[gi]
             t1 = edges[gi + 1]
-            # не пересекаться с предыдущим event (иначе libass рисует 2 строки)
+            # одна caption-строка: следующий event только после prev_end
             if t0 < prev_end:
                 t0 = prev_end
             if t1 <= t0:
-                t1 = t0 + 0.08
+                t1 = t0 + 0.12
             parts = []
             for j in group:
-                wt = str(words[j].get("text") or "").strip()
+                wt = disp.get(j)
                 if not wt:
                     continue
+                raw = str(words[j].get("text") or "").strip()
                 is_active = (j == active_idx)
-                key = _norm_word_key(wt)
+                key = _norm_word_key(raw)
                 level = strong.get(key, "") if key else ""
 
                 if is_active and level:
-                    # strong active: neon color + scale
                     color = get_strong_ass_color(level)
                     scale = get_strong_scale(level)
                     size = max(36, int(fs * scale))
                     parts.append(f"{{{bs}c{color}{bs}fs{size}}}{wt}")
                 elif is_active:
-                    # non-strong active: mild yellow, scale 1.0
                     parts.append(f"{{{bs}c{COL_ACTIVE}{bs}fs{fs}}}{wt}")
                 else:
-                    # non-active (strong или нет): base white, scale 1.0
-                    # → нет pre-color neon
                     parts.append(f"{{{bs}c{COL_BASE}{bs}fs{fs}}}{wt}")
             if not parts:
                 continue
-            line = pos + " ".join(parts)
+            # \q2 = не переносить строку (иначе «две строки» на 4K)
+            line = f"{pos}{{{bs}q2}}" + " ".join(parts)
             events.append({
                 "start": t0,
                 "end": t1,
@@ -810,7 +926,7 @@ def _build_shorts_parity_window(
             })
             prev_end = t1
 
-    return events
+    return _deconflict_events(events)
 
 
 def _build_karaoke_window(
@@ -1029,21 +1145,26 @@ def _build_karaoke_window(
                 t0 = prev_end
             if t1 <= t0:
                 t1 = t0 + 0.08
+            disp = _assemble_group_display(words, group)
             parts = []
             for j in group:
-                wt = words[j]["text"]
-                if strong_weight(wt):
+                wt = disp.get(j)
+                if not wt:
+                    continue
+                raw = str(words[j].get("text") or "")
+                if strong_weight(raw):
                     strong_hit_count += 1
                 parts.append(tags_word(wt, j == active))
-            line = pos + " ".join(parts)
-            # Один слой только — без Glow overlay (устраняет «раздваивание»)
+            if not parts:
+                continue
+            line = f"{pos}{{\\q2}}" + " ".join(parts)
             events.append({
                 "start": t0, "end": t1, "style": style_name,
                 "text": line, "layer": 1,
             })
             prev_end = t1
 
-    return events
+    return _deconflict_events(events)
 
 
 

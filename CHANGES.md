@@ -1,3 +1,57 @@
+# VideoMaker — r43.3-stable (2026-09-10)
+
+## Стабильные субтитры
+- phrase-break только `.!?…` (запятая не рвёт)
+- `\q2` без переноса строки
+- deconflict таймингов (нет двух karaoke-строк сразу)
+- пунктуация на экране сохранена
+
+---
+
+# VideoMaker — r43.2-punct (2026-09-10)
+
+## Пунктуация снова на экране
+
+`_display_word` больше не срезает знаки; pure-punct клеится к слову; phrase-break сохранён.
+
+---
+
+# VideoMaker — r43.1-place (2026-09-10)
+
+## r43.1-place — быстрая финализация (move vs copy)
+
+1. **finalize.py**: `os.replace` если один раздел; `copy2` при EXDEV или `keep_temp_files`.
+2. Лог: `→ move` / `→ copy`. Shorts already-in-place без изменений.
+3. Не трогает BGM, encode, субтитры, GUI.
+
+---
+
+# VideoMaker — r43-phrase (2026-09-10)
+
+## r43-phrase — phrase-break субтитров + полная поставка idlefix
+
+### Что сделано
+1. **subtitles.py**: phrase-break после `, ; : . ! ? …` и хвостового дефиса/тире;
+   leading-punct / pure-punct-барьер; `_display_word`; pure-punct не в ASS.
+2. В архив входят все правки **r43-idlefix** (GUI close, logging, start.command).
+3. **VERSION.md / README_FIX / шапки main.py + start.command** выровнены под алгоритм версий.
+4. 26/26 unit-тестов зелёные.
+
+---
+
+# VideoMaker — r43-idlefix (2026-09-10)
+
+## r43-idlefix — idle + надёжное закрытие
+
+### Что сделано
+1. **Idle**: IMO-rescan 60 с (было 5) + кэш isfile 30 с; heartbeat 30 с.
+2. **Закрытие**: `_closing` flag, `after_cancel`, всегда `prevent_sleep_stop`, kill ffmpeg/ffprobe, `os._exit(0)`.
+3. **Логи**: INFO по умолчанию; DEBUG только при `VIDEOMAKER_DEBUG=1`; log_text ≤ ~3000 строк.
+4. **start.command**: без `tee` и блокирующего `read`.
+5. Все 26 unit-тестов зелёные.
+
+---
+
 # VideoMaker — r43-clean (2026-09-09)
 
 ## r43-clean — уборка + default Clean Pro

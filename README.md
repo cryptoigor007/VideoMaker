@@ -2,7 +2,7 @@
 
 Автоматическое создание видео-контента (YouTube, Shorts, Reels) из аудио + B-roll.
 
-**Сборка: r27-clean** (2026-09-04) — см. [VERSION.md](VERSION.md) и [CHANGES.md](CHANGES.md).
+**Сборка: r43.3-stable** (2026-09-10) — см. [VERSION.md](VERSION.md) и [CHANGES.md](CHANGES.md).
 
 ## Быстрый старт (macOS)
 
