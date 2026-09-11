@@ -541,19 +541,20 @@ def _group_words_with_boundaries(
     words: list[dict],
     must_start: set[int] | None = None,
     must_end: set[int] | None = None,
-    max_words: int = 3,
-    max_chars: int = 28,
+    max_words: int = 2,
+    max_chars: int = 13,
 ) -> list[list[int]]:
-    """Группы 2–3 слова (макс. 4 — только если все слова короткие).
+    """Группы 1–2 слова (читаемость vertical/shorts).
 
-    Жёсткие правила (AISIE-совместимо):
-    - по умолчанию 2–3 слова на экране;
-    - 4 слова только если каждое ≤ 4 символов И суммарно ≤ max_chars;
+    r47:
+    - max_words default 2 (hard cap 2) — реально соблюдается в теле;
+    - max_chars default 13: «большой риск»(12) вместе,
+      «главный секрет»(14) / «проблема серьёзная» — разбиваются;
     - must_start / must_end — границы шортов Gemini (не раздувают группу!);
     - phrase-break после .!?… , ; : и хвостового дефиса/тире;
     - leading-punct / pure-punct — барьер фразы; pure-punct не стартует группу;
-    - LONG (≥8 букв по _norm_word_key): не втягивать в чужую 2–3;
-      solo; исключение [sticky_short, LONG].
+    - LONG (≥8 букв по _norm_word_key): solo; исключение [sticky_short, LONG]
+      (если пара ≤ max_chars).
     """
     n = len(words)
     if n == 0:
@@ -568,7 +569,8 @@ def _group_words_with_boundaries(
         "я", "ты", "он", "она", "мы", "вы", "они",
     }
     LONG_MIN = 8  # букв после нормализации
-    max_chars = min(int(max_chars or 28), 28)
+    max_words = max(1, min(int(max_words or 2), 2))  # hard cap 2
+    max_chars = max(1, min(int(max_chars or 13), 13))  # hard cap 13
 
     def _key(idx: int) -> str:
         return _norm_word_key(str(words[idx].get("text") or ""))
@@ -579,6 +581,16 @@ def _group_words_with_boundaries(
 
     def _is_sticky(idx: int) -> bool:
         return _key(idx) in sticky
+
+    def _chars_span(a: int, b: int) -> int:
+        """Сумма длин display-текста слов [a, b) + пробелы между ними."""
+        if b <= a:
+            return 0
+        total = 0
+        for k in range(a, b):
+            total += len(str(words[k].get("text") or ""))
+        total += max(0, (b - a) - 1)
+        return total
 
     groups: list[list[int]] = []
     i = 0
@@ -618,27 +630,28 @@ def _group_words_with_boundaries(
             i += 1
             continue
 
-        # --- LONG: solo или [sticky, LONG] ---
+        # --- LONG: solo (не раздуваем за счёт max_chars) ---
         if _is_long(i):
             end = i + 1
-            # trailing sticky short после long — обычно не нужно; не расширяем
             groups.append(list(range(i, end)))
             i = end
             continue
 
-        # sticky + LONG → одна группа из двух
+        # sticky + LONG → одна группа из двух, только если влезает в max_chars
         if (
             remain >= 2
+            and max_words >= 2
             and _is_sticky(i)
             and (i + 1) < hard_end
             and _is_long(i + 1)
+            and _chars_span(i, i + 2) <= max_chars
         ):
             end = i + 2
             groups.append(list(range(i, end)))
             i = end
             continue
 
-        # не втягивать следующее LONG в обычную 2–3/4 группу
+        # не втягивать следующее LONG в обычную группу
         for j in range(i + 1, hard_end):
             if _is_long(j):
                 hard_end = j
@@ -650,39 +663,33 @@ def _group_words_with_boundaries(
             i += 1
             continue
 
-        # целевой размер: 2 или 3
-        target = 2 if remain >= 2 else 1
-        if remain >= 3:
-            chunk3 = words[i:i + 3]
-            chars3 = sum(len((w.get("text") or "")) for w in chunk3) + 2
-            if chars3 <= max_chars:
-                target = 3
-        # 4 только если remain>=4 и ВСЕ слова короткие (не long)
-        if remain >= 4 and target == 3:
-            chunk4 = words[i:i + 4]
-            keys4 = [_norm_word_key(str(w.get("text") or "")) for w in chunk4]
-            if all(len(k) <= 4 for k in keys4):
-                chars4 = sum(len((w.get("text") or "")) for w in chunk4) + 3
-                if chars4 <= max_chars:
-                    target = 4
+        # целевой размер: 1 или 2 (max_words hard-cap)
+        target = 1
+        if remain >= 2 and max_words >= 2 and _chars_span(i, i + 2) <= max_chars:
+            target = 2
 
-        end = min(i + target, hard_end)
+        end = min(i + target, hard_end, i + max_words)
 
-        # sticky: частица в конце → +1, но НЕ если следующее LONG
-        if end < hard_end and (end - i) < 4:
+        # sticky: частица в конце → +1, только в пределах max_words / max_chars
+        if end < hard_end and (end - i) < max_words:
             if _is_sticky(end - 1) and not _is_long(end):
-                end = min(end + 1, hard_end, i + 4)
+                trial = min(end + 1, hard_end, i + max_words)
+                if _chars_span(i, trial) <= max_chars:
+                    end = trial
 
-        # не оставлять одно слово, если можно 2 — но не если это LONG (уже обработан)
-        # и не дотягивать до LONG
-        if end - i == 1 and end < hard_end and not _is_long(i):
-            if not _is_long(end):
-                end = min(i + 2, hard_end)
+        # не оставлять одно слово, если можно 2 и влезает по chars
+        if end - i == 1 and end < hard_end and max_words >= 2 and not _is_long(i):
+            if not _is_long(end) and _chars_span(i, end + 1) <= max_chars:
+                end = min(i + 2, hard_end, i + max_words)
 
-        # сирота: забрать только если ≤3 слов и сирота НЕ long
-        if hard_end - end == 1 and (end - i + 1) <= 3:
-            if not _is_long(end):
+        # сирота: забрать только если ≤ max_words и влезает по chars
+        if hard_end - end == 1 and (end - i + 1) <= max_words:
+            if not _is_long(end) and _chars_span(i, hard_end) <= max_chars:
                 end = hard_end
+
+        end = min(end, i + max_words, hard_end)
+        if end <= i:
+            end = i + 1
 
         groups.append(list(range(i, end)))
         i = end
@@ -695,21 +702,92 @@ def _group_words_static(
     must_start: set[int] | None = None,
     must_end: set[int] | None = None,
 ) -> list[list[int]]:
-    """Статичные группы 2–3 слова + границы шортов Gemini."""
+    """Статичные группы 1–2 слова + границы шортов Gemini."""
     return _group_words_with_boundaries(
-        words, must_start=must_start, must_end=must_end, max_words=3, max_chars=28,
+        words, must_start=must_start, must_end=must_end, max_words=2, max_chars=13,
     )
+
+
+def _group_by_strong_runs(
+    words: list[dict],
+    strong: dict[str, str] | None,
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    max_words: int = 2,
+    max_chars: int = 13,
+) -> list[list[int]]:
+    """Группировка с изоляцией strong от ordinary (r48).
+
+    Поток слов режется на runs одного типа (ordinary | strong).
+    Внутри каждого run — стандартные лимиты max_words/max_chars
+    через _group_words_with_boundaries (LONG, sticky, punct, must_*).
+
+    Правила:
+    - strong никогда не в одной группе с non-strong;
+    - подряд strong группируются только если влезают в маску (2 / 13);
+    - isolated strong → solo-группа;
+    - пустой strong → обычная группировка без изменений.
+    """
+    if not words:
+        return []
+    if not strong:
+        return _group_words_with_boundaries(
+            words,
+            must_start=must_start,
+            must_end=must_end,
+            max_words=max_words,
+            max_chars=max_chars,
+        )
+
+    must_start_s = set(must_start or ())
+    must_end_s = set(must_end or ())
+
+    def is_strong_idx(idx: int) -> bool:
+        key = _norm_word_key(str(words[idx].get("text") or ""))
+        if not key:
+            return False
+        return bool(strong.get(key))
+
+    n = len(words)
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        flag = is_strong_idx(i)
+        j = i + 1
+        while j < n and is_strong_idx(j) == flag:
+            j += 1
+        runs.append((i, j))
+        i = j
+
+    out: list[list[int]] = []
+    for a, b in runs:
+        if a >= b:
+            continue
+        sub = words[a:b]
+        local_ms = {x - a for x in must_start_s if a <= x < b}
+        local_me = {x - a for x in must_end_s if a <= x < b}
+        local_groups = _group_words_with_boundaries(
+            sub,
+            must_start=local_ms or None,
+            must_end=local_me or None,
+            max_words=max_words,
+            max_chars=max_chars,
+        )
+        for g in local_groups:
+            if g:
+                out.append([a + idx for idx in g])
+    return out
 
 
 def _group_words_one_line(
     words: list[dict],
-    max_chars: int = 28,
-    max_words: int = 3,
+    max_chars: int = 13,
+    max_words: int = 2,
     must_start: set[int] | None = None,
     must_end: set[int] | None = None,
     strong: dict | None = None,
 ) -> list[list[int]]:
-    """Clean Pro: фразы 2–3 слова; strong-словосочетания не рвутся.
+    """Clean Pro: фразы 1–2 слова; strong-словосочетания не рвутся.
 
     Phrase karaoke: важное слово + соседняя частица/слово держатся в одной группе.
     """
@@ -820,18 +898,13 @@ def _build_shorts_parity_window(
     analysis: dict | None = None,
     honor_strong: bool = True,
 ):
-    """Clean Pro / shorts_parity (r42 каркас + r43 optional strong).
+    """Clean Pro / shorts_parity (r42 + r43 strong + r47 density + r48 isolate).
 
-    Стабильность r42:
-    1. Группы 2–3 слова (_group_words_with_boundaries).
-    2. non-active = base white. Без pre-color neon.
-    3. Active non-strong = mild yellow.
-    4. hooks=0 не мешает events.
-
-    r43 optional strong (Gemini strong_words only):
-    - strong color + scale ТОЛЬКО когда is_active
-    - до речи strong в группе = base white (тот же размер)
-    - zero lexicon / zero idiom / zero «один цвет = одна строка»
+    1. Группы 1–2 слова, max_chars=13 (_group_by_strong_runs).
+    2. r48: strong и ordinary не смешиваются в одной группе.
+    3. non-active = base white. Без pre-color neon.
+    4. Active non-strong = mild yellow.
+    5. strong color + scale ТОЛЬКО когда is_active.
     """
     if not words:
         return []
@@ -862,12 +935,14 @@ def _build_shorts_parity_window(
     pos = _caption_pos(playres_x, playres_y, wide)
     strong = _parity_strong_lookup(analysis, honor_strong)
 
-    groups = _group_words_with_boundaries(
+    # r48: ordinary и strong не смешиваются в одной группе; лимиты те же (2/13)
+    groups = _group_by_strong_runs(
         words,
+        strong,
         must_start=must_start,
         must_end=must_end,
-        max_words=3,
-        max_chars=28,
+        max_words=2,
+        max_chars=13,
     )
 
     events: list[dict] = []

@@ -1,0 +1,30 @@
+VideoMaker full snapshot + r47 subtitle density patch
+=====================================================
+
+Included:
+- Full upstream master (cryptoigor007/VideoMaker)
+- Modified: video_maker/engines/subtitles.py
+  * max_words=2, max_chars=13 (hard caps)
+  * max_words actually enforced in grouping body
+- Modified: tests/test_shorts_parity.py (+4 grouping tests)
+- Added: start.command (was missing from GitHub archive)
+
+Behavior:
+  «большой риск» (12) → together
+  «главный секрет» (14) → split
+  «проблема серьёзная» → split
+
+Install (macOS):
+  cd VideoMaker_full   # or your project folder
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  pip install mlx-whisper
+  brew install ffmpeg
+  cp .env.example .env   # add GEMINI_API_KEY
+  python -m video_maker.main
+  # or: ./start.command
+
+Verify:
+  python -m py_compile video_maker/engines/subtitles.py
+  python -m pytest tests/test_shorts_parity.py -v

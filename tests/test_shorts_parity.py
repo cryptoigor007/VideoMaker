@@ -1,5 +1,5 @@
-# tests/test_shorts_parity.py — r43
-"""Тесты parity + optional Gemini strong (r42 каркас / r43 visual)."""
+# tests/test_shorts_parity.py — r48
+"""Тесты parity: density r47 + strong isolation r48."""
 from __future__ import annotations
 
 import sys
@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from video_maker.engines.subtitles import (
     _build_shorts_parity_window,
     _group_words_with_boundaries,
+    _group_by_strong_runs,
     _parity_strong_lookup,
 )
 
@@ -21,7 +22,7 @@ def _make_words(texts_and_times):
     ]
 
 
-def test_grouping_2_3_words():
+def test_grouping_1_2_words():
     words = _make_words([
         ("Привет", 0.0, 0.4),
         ("мир", 0.4, 0.7),
@@ -35,10 +36,87 @@ def test_grouping_2_3_words():
     ])
     groups = _group_words_with_boundaries(words)
     sizes = [len(g) for g in groups]
-    assert all(1 <= s <= 4 for s in sizes)
-    assert max(sizes) >= 2
+    assert all(1 <= s <= 2 for s in sizes)
     covered = sorted(i for g in groups for i in g)
     assert covered == list(range(len(words)))
+
+
+def test_bolshoy_risk_stays_together():
+    words = _make_words([("большой", 0.0, 0.4), ("риск", 0.4, 0.8)])
+    assert _group_words_with_boundaries(words) == [[0, 1]]
+
+
+def test_glavnyy_sekret_splits():
+    words = _make_words([("главный", 0.0, 0.4), ("секрет", 0.4, 0.9)])
+    assert _group_words_with_boundaries(words) == [[0], [1]]
+
+
+def test_problema_seryoznaya_splits():
+    words = _make_words([("проблема", 0.0, 0.5), ("серьёзная", 0.5, 1.1)])
+    groups = _group_words_with_boundaries(words)
+    assert len(groups) == 2
+    assert all(len(g) == 1 for g in groups)
+
+
+def test_eto_vazhno_stays_together():
+    words = _make_words([("это", 0.0, 0.3), ("важно", 0.3, 0.7)])
+    assert _group_words_with_boundaries(words) == [[0, 1]]
+
+
+def test_strong_isolated_from_ordinary():
+    """это ВАЖНО сейчас → ordinary | solo strong | ordinary."""
+    words = _make_words([
+        ("это", 0.0, 0.3),
+        ("ВАЖНО", 0.3, 0.7),
+        ("сейчас", 0.7, 1.1),
+    ])
+    strong = {"важно": "L3"}
+    groups = _group_by_strong_runs(words, strong)
+    # each word own group (or это alone, ВАЖНО alone, сейчас alone)
+    assert [0] in groups
+    assert [1] in groups
+    assert [2] in groups
+    # no mixed group
+    for g in groups:
+        flags = []
+        for i in g:
+            k = words[i]["text"].lower().replace("ё", "е")
+            flags.append(k in strong or k == "важно")
+        assert all(flags) or not any(flags), f"mixed group {g}"
+
+
+def test_two_short_strong_together():
+    """Два коротких strong ≤13 → одна группа."""
+    words = _make_words([
+        ("да", 0.0, 0.2),
+        ("нет", 0.2, 0.5),
+    ])
+    strong = {"да": "L2", "нет": "L2"}
+    groups = _group_by_strong_runs(words, strong)
+    assert groups == [[0, 1]]
+
+
+def test_two_long_strong_split():
+    """Два длинных strong >13 chars together → по одному."""
+    words = _make_words([
+        ("главный", 0.0, 0.4),
+        ("секрет", 0.4, 0.9),
+    ])
+    strong = {"главный": "L3", "секрет": "L3"}
+    groups = _group_by_strong_runs(words, strong)
+    assert groups == [[0], [1]]
+
+
+def test_strong_empty_same_as_boundaries():
+    words = _make_words([
+        ("большой", 0.0, 0.4),
+        ("риск", 0.4, 0.8),
+        ("здесь", 0.8, 1.2),
+    ])
+    a = _group_words_with_boundaries(words)
+    b = _group_by_strong_runs(words, {})
+    c = _group_by_strong_runs(words, None)
+    assert a == b == c
 
 
 def test_active_only_in_own_interval():
@@ -121,7 +199,6 @@ def test_strong_active_gets_color_and_scale():
 
 
 def test_strong_not_precolored():
-    """До речи strong-слово в группе = base white, без neon."""
     words = _make_words([
         ("сначала", 0.0, 0.4),
         ("важное", 0.4, 0.9),
@@ -135,9 +212,7 @@ def test_strong_not_precolored():
     )
     assert len(events) >= 2
     pink = "&H00FF00FF&"
-    # event 0: active=сначала → pink не должно быть
     assert pink not in events[0]["text"], "pre-color neon before strong is active"
-    # event 1: active=важное → pink есть
     assert pink in events[1]["text"]
 
 
@@ -155,3 +230,23 @@ def test_parity_strong_lookup_exact():
     assert "рост" in m
     assert "и" not in m
     assert _parity_strong_lookup(analysis, honor_strong=False) == {}
+
+
+def test_parity_uses_isolation_for_mixed():
+    """End-to-end: mixed ordinary/strong → strong solo in events timeline."""
+    words = _make_words([
+        ("это", 0.0, 0.3),
+        ("важно", 0.3, 0.7),
+        ("сейчас", 0.7, 1.1),
+    ])
+    analysis = {"strong_words": [{"word": "важно", "visual_weight": "L3"}]}
+    events = _build_shorts_parity_window(
+        words, 1080, 1920, 72, wide=False,
+        analysis=analysis, honor_strong=True,
+    )
+    # When active=важно, line should not contain это/сейчас
+    orange = "&H00005EFF&"
+    for ev in events:
+        if orange in ev["text"] and "важно" in ev["text"]:
+            assert "это" not in ev["text"]
+            assert "сейчас" not in ev["text"]
