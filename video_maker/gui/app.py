@@ -59,6 +59,7 @@ PATH_VARS = [
     "imo_folder_var",
     "cover_h_var",
     "cover_v_var",
+    "shorts_cover_var",
     "whisperx_path_var",
     "output_var",
     "h_intro_path", "h_mid_path", "h_outro_path",
@@ -85,6 +86,8 @@ OTHER_VARS = [
     "s_intro_duration", "s_intro_position", "s_intro_custom_time",
     "s_mid_position", "s_mid_custom_time",
     "s_outro_duration", "s_outro_position", "s_outro_custom_time",
+    "playlist_season_url_var", "playlist_block_url_var", "playlist_block_label_var",
+    "required_hashtags_var", "shorts_desc_max_len_var",
 ]
 
 BOOL_VARS = [
@@ -93,6 +96,7 @@ BOOL_VARS = [
     "s_intro", "s_middle", "s_outro", "s_hooks", "s_subs", "s_strong",
     "voice_enhance_var", "add_bgm_var", "intro_gemini_var", "keep_temp_var",
     "prevent_sleep_var", "shutdown_when_done_var",
+    "append_playlist_footer_var", "shorts_use_template_var",
 ]
 
 
@@ -165,6 +169,34 @@ class App:
                  f"whisper={self.settings.whisper_model}")
 
         self.model_var = tk.StringVar(value=self.settings.gemini_model)
+        # r51 packaging
+        self.playlist_season_url_var = tk.StringVar(
+            value=getattr(self.settings, "playlist_season_url", "")
+            or "https://www.youtube.com/playlist?list=PLOsH4yc61thU"
+        )
+        self.playlist_block_url_var = tk.StringVar(
+            value=getattr(self.settings, "playlist_block_url", "")
+            or "https://www.youtube.com/playlist?list=PLfOYg9HTzi0s"
+        )
+        self.playlist_block_label_var = tk.StringVar(
+            value=getattr(self.settings, "playlist_block_label", "") or "Одиночество и отношения"
+        )
+        self.required_hashtags_var = tk.StringVar(
+            value=getattr(self.settings, "required_hashtags", "")
+            or "#ТочкаНаблюдения #ТайныйКризисЧеловечества"
+        )
+        self.append_playlist_footer_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "append_playlist_footer", True))
+        )
+        self.shorts_desc_max_len_var = tk.StringVar(
+            value=str(getattr(self.settings, "shorts_desc_max_len", 280) or 280)
+        )
+        self.shorts_use_template_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "shorts_use_template", True))
+        )
+        self.prompt_extra_var = tk.StringVar(value="")  # full text kept in Text widget
+        self._prompt_extra_default = str(getattr(self.settings, "prompt_extra", "") or "")
+
         self.running = False
         self.cancel_event = threading.Event()
         self.whisperx_path_var = tk.StringVar(value=self.settings.whisperx_path)
@@ -760,6 +792,22 @@ class App:
         row2 = ttk.Frame(covers)
         row2.pack(fill=tk.X)
         self._add_browse_row(row2, "Вертикальная:", "cover_v_var", "file", [("Изображения", "*.jpg *.jpeg *.png")])
+        if not hasattr(self, "shorts_cover_var"):
+            self.shorts_cover_var = tk.StringVar()
+        row3 = ttk.Frame(covers)
+        row3.pack(fill=tk.X, pady=(4, 0))
+        self._add_browse_row(
+            row3,
+            "Фон Shorts:",
+            "shorts_cover_var",
+            "file",
+            [("Изображения", "*.jpg *.jpeg *.png *.webp")],
+        )
+        ttk.Label(
+            covers,
+            text="На фон наложится hook каждого short (как в начале ролика) → short_XXX_cover.jpg",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(4, 0))
 
     # ─── Хелперы ──────────────────────────────────────────────────────────
 
@@ -990,77 +1038,245 @@ class App:
 
     # ─── Настройки ───────────────────────────────────────────────────────
 
+
     def _open_settings(self) -> None:
-        """Открыть окно настроек (Gemini + WhisperX)."""
+        """Настройки: Gemini/Whisper + описания YouTube + доп. промпт."""
         win = tk.Toplevel(self.root)
         win.title("Настройки")
-        win.geometry("520x520")
-        win.configure(bg=COLORS["bg"])
+        win.geometry("640x640")
+        win.configure(bg=COLORS.get("bg", "#1e1e1e"))
         win.transient(self.root)
         win.grab_set()
 
-        frame = ttk.Frame(win, padding=20)
-        frame.pack(fill=tk.BOTH, expand=True)
+        nb = ttk.Notebook(win)
+        nb.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        ttk.Label(frame, text="Модель Gemini (по умолчанию 2.5-flash):", style="Section.TLabel").pack(anchor="w")
-        ttk.Combobox(
-            frame, textvariable=self.model_var,
-            values=[
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-3.6-flash",
-                "gemini-3.5-flash",
-                "gemini-3.6-pro",
-                "gemini-3.6-flash-lite",
-                "gemini-1.5-flash",
-            ],
-            state="readonly", font=("SF Pro Text", 10),
-        ).pack(fill=tk.X, pady=(4, 12))
+        # --- Tab: Модели ---
+        tab_m = ttk.Frame(nb, padding=12)
+        nb.add(tab_m, text="Модели")
+        ttk.Label(tab_m, text="Модель Gemini:", style="Section.TLabel").pack(anchor="w")
+        try:
+            from ..engines.analysis import AVAILABLE_GEMINI_MODELS
+            _model_values = list(AVAILABLE_GEMINI_MODELS)
+        except Exception:
+            _model_values = [
+                "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash",
+                "gemini-1.5-flash", "gemini-1.5-pro",
+            ]
+        cur = (self.model_var.get() or "").strip()
+        if cur and cur not in _model_values:
+            _model_values = [cur] + _model_values
+        row_m = ttk.Frame(tab_m)
+        row_m.pack(fill=tk.X, pady=(4, 4))
+        model_combo = ttk.Combobox(
+            row_m,
+            textvariable=self.model_var,
+            values=_model_values,
+            state="normal",
+        )
+        model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._settings_model_combo = model_combo
+        model_status = ttk.Label(tab_m, text="Список: локальный каталог. Нажмите «Обновить с API».")
+        model_status.pack(anchor="w", pady=(0, 2))
+        self._settings_model_status = model_status
 
+        def _refresh_models_from_api():
+            # ключи из поля настроек (ещё не сохранённые тоже)
+            raw = ""
+            if hasattr(self, "_settings_keys_box"):
+                try:
+                    raw = self._settings_keys_box.get("1.0", "end").strip()
+                except Exception:
+                    raw = ""
+            keys = []
+            if raw:
+                import re as _re
+                keys = [k.strip() for k in raw.replace(",", "\n").replace(";", "\n").splitlines() if k.strip()]
+            if not keys:
+                keys = list(self.settings.gemini_api_keys or [])
+            if not keys and self.settings.gemini_api_key:
+                keys = [self.settings.gemini_api_key]
+            model_status.configure(text="Запрос списка моделей у API…")
+            win.update_idletasks()
+
+            def work():
+                err = ""
+                names = []
+                try:
+                    from ..engines.analysis import list_available_gemini_models
+                    names = list_available_gemini_models(
+                        api_keys=keys,
+                        api_key=(keys[0] if keys else ""),
+                        log_fn=lambda m: log.info(m),
+                    )
+                except Exception as e:
+                    err = str(e)
+                    names = []
+
+                def done():
+                    if not names:
+                        model_status.configure(
+                            text=f"Не удалось получить список ({err or 'пусто'}). Остался локальный каталог."
+                        )
+                        return
+                    # сохранить текущий выбор если ещё актуален
+                    cur_m = (self.model_var.get() or "").strip()
+                    vals = list(names)
+                    if cur_m and cur_m not in vals:
+                        vals = [cur_m] + vals
+                    model_combo.configure(values=vals)
+                    if cur_m in vals:
+                        self.model_var.set(cur_m)
+                    elif vals:
+                        self.model_var.set(vals[0])
+                    model_status.configure(
+                        text=f"С API: {len(names)} моделей. Выберите нужную и сохраните."
+                    )
+                    log.info("[SETTINGS] Gemini models from API: %s", ", ".join(names[:12]))
+
+                try:
+                    win.after(0, done)
+                except Exception:
+                    done()
+
+            import threading
+            threading.Thread(target=work, daemon=True).start()
+
+        ttk.Button(
+            row_m, text="Обновить с API", width=16, command=_refresh_models_from_api
+        ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(
-            frame,
-            text="API ключи Gemini (каждый с новой строки или через запятую):",
-            style="Section.TLabel",
-        ).pack(anchor="w")
+            tab_m,
+            text="Выбранная модель идёт первой. При 404 — fallback на другие из списка (после обновления — из API).",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Label(tab_m, text="API ключи Gemini (с новой строки или через запятую):", style="Section.TLabel").pack(anchor="w")
         keys_list = list(self.settings.gemini_api_keys or [])
         if not keys_list and self.settings.gemini_api_key:
             keys_list = [self.settings.gemini_api_key]
-        keys_str = "\n".join(keys_list)
-        keys_box = tk.Text(frame, height=5, font=("SF Pro Text", 10), wrap="word")
-        keys_box.pack(fill=tk.X, pady=(4, 4))
-        keys_box.insert("1.0", keys_str)
+        keys_box = tk.Text(tab_m, height=5, wrap="word")
+        keys_box.pack(fill=tk.X, pady=(4, 8))
+        keys_box.insert("1.0", "\n".join(keys_list))
         self._settings_keys_box = keys_box
-        ttk.Label(
-            frame,
-            text="При 429/исчерпании лимита — сразу следующий ключ. Последний рабочий запоминается.",
-            font=("SF Pro Text", 9),
-        ).pack(anchor="w", pady=(0, 12))
-
-        ttk.Label(frame, text="WhisperX", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
-        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text="Модель:", width=14).pack(side=tk.LEFT)
-        ttk.Combobox(row, textvariable=self.whisper_model_var, values=["tiny","base","small","medium","large-v2","large-v3","large-v3-turbo"], state="readonly", width=14).pack(side=tk.LEFT)
-        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text="Язык:", width=14).pack(side=tk.LEFT)
+        ttk.Label(tab_m, text="Whisper", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
+        row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Модель:", width=12).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_model_var, values=["tiny","base","small","medium","large-v2","large-v3","large-v3-turbo"], state="readonly", width=16).pack(side=tk.LEFT)
+        row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Язык:", width=12).pack(side=tk.LEFT)
         ttk.Combobox(row, textvariable=self.whisper_lang_var, values=["ru","en","auto"], state="readonly", width=10).pack(side=tk.LEFT)
-        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text="Устройство:", width=14).pack(side=tk.LEFT)
-        ttk.Combobox(row, textvariable=self.whisper_dev_var, values=["auto","cpu","mps","cuda"], state="readonly", width=10).pack(side=tk.LEFT)
-        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=2)
-        ttk.Label(row, text="Compute type:", width=14).pack(side=tk.LEFT)
-        ttk.Combobox(row, textvariable=self.whisper_comp_var, values=["auto","int8","float16","float32"], state="readonly", width=10).pack(side=tk.LEFT)
-        row = ttk.Frame(frame); row.pack(fill=tk.X, pady=4)
-        ttk.Label(row, text="Путь:", width=14).pack(side=tk.LEFT)
+        row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Device:", width=12).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_dev_var, values=["cpu","cuda","auto"], state="readonly", width=10).pack(side=tk.LEFT)
+        row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Compute:", width=12).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=self.whisper_comp_var, values=["int8","float16","float32"], state="readonly", width=10).pack(side=tk.LEFT)
+        row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=4)
+        ttk.Label(row, text="WhisperX:", width=12).pack(side=tk.LEFT)
         ttk.Label(row, textvariable=self.whisperx_status_var).pack(side=tk.LEFT)
         ttk.Button(row, text="Найти", width=8, command=self._find_whisperx).pack(side=tk.LEFT, padx=4)
         ttk.Button(row, text="Вручную", width=8, command=self._browse_whisperx).pack(side=tk.LEFT)
+
+        # --- Tab: Описания YouTube ---
+        tab_d = ttk.Frame(nb, padding=12)
+        nb.add(tab_d, text="Описания YouTube")
+        ttk.Label(tab_d, text="Плейлисты (добавляются в конец description.txt):", style="Section.TLabel").pack(anchor="w")
+        row = ttk.Frame(tab_d); row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Весь сезон URL:", width=18).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=self.playlist_season_url_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(tab_d); row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Блок URL:", width=18).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=self.playlist_block_url_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(tab_d); row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Название блока:", width=18).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=self.playlist_block_label_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(tab_d); row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Обязательные #:", width=18).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=self.required_hashtags_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Checkbutton(
+            tab_d, text="Всегда дописывать плейлисты в описание полного видео",
+            variable=self.append_playlist_footer_var,
+        ).pack(anchor="w", pady=(8, 2))
+        ttk.Checkbutton(
+            tab_d, text="Шаблон описания Shorts (5 блоков в промпте Gemini)",
+            variable=self.shorts_use_template_var,
+        ).pack(anchor="w", pady=2)
+        row = ttk.Frame(tab_d); row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Max длина Shorts desc:", width=18).pack(side=tk.LEFT)
+        ttk.Entry(row, textvariable=self.shorts_desc_max_len_var, width=8).pack(side=tk.LEFT)
+        ttk.Label(tab_d, text="Файлы: *_description.txt и short_XXX_upload.txt — для copy-paste в YouTube.", font=("SF Pro Text", 9)).pack(anchor="w", pady=(10, 0))
+
+        # --- Tab: Промпт ---
+
+        tab_p = ttk.Frame(nb, padding=12)
+        nb.add(tab_p, text="Промпт")
+        ttk.Label(
+            tab_p,
+            text="Полное тело промпта Gemini (можно менять целиком). Пусто при сохранении = снова встроенный.",
+            style="Section.TLabel",
+        ).pack(anchor="w")
+        prompt_box = tk.Text(tab_p, height=20, wrap="word")
+        prompt_box.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
+        # Загрузить: сохранённое тело или встроенный промпт
+        body = str(getattr(self.settings, "prompt_body", "") or "").strip()
+        if not body:
+            try:
+                from ..engines.analysis import get_builtin_analysis_prompt
+                series = ""
+                if hasattr(self, "series_var"):
+                    try:
+                        series = (self.series_var.get() or "").strip()
+                    except Exception:
+                        pass
+                body = get_builtin_analysis_prompt(series_name=series)
+            except Exception as e:
+                body = f"(не удалось загрузить встроенный промпт: {e})"
+        prompt_box.delete("1.0", "end")
+        prompt_box.insert("1.0", body)
+        self._settings_prompt_box = prompt_box
+
+        ttk.Label(
+            tab_p,
+            text="Доп. инструкции (необязательно) — дописываются ПОСЛЕ тела промпта:",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(8, 0))
+        extra_box = tk.Text(tab_p, height=4, wrap="word")
+        extra_box.pack(fill=tk.X, pady=(4, 4))
+        extra_box.insert("1.0", str(getattr(self.settings, "prompt_extra", "") or ""))
+        self._settings_prompt_extra_box = extra_box
+
+        def _reset_prompt():
+            try:
+                from ..engines.analysis import get_builtin_analysis_prompt
+                series = ""
+                if hasattr(self, "series_var"):
+                    try:
+                        series = (self.series_var.get() or "").strip()
+                    except Exception:
+                        pass
+                text = get_builtin_analysis_prompt(series_name=series)
+            except Exception as e:
+                text = f"(ошибка загрузки: {e})"
+            prompt_box.delete("1.0", "end")
+            prompt_box.insert("1.0", text)
+            self.settings.prompt_body = ""  # пусто = builtin at runtime until save with content
+
+        rowp = ttk.Frame(tab_p)
+        rowp.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(rowp, text="Сбросить к встроенному", command=_reset_prompt).pack(side=tk.LEFT)
+        ttk.Label(
+            tab_p,
+            text="При запуске: если тело сохранено — оно используется целиком; таймкоды транскрипта добавятся автоматически, если их ещё нет в тексте.",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(6, 0))
 
         def save():
             self.settings.gemini_model = self.model_var.get()
             raw = self._settings_keys_box.get("1.0", "end").strip()
             if raw:
                 import re as _re
-                keys = [k.strip() for k in _re.split(r"[\n,;]+", raw) if k.strip()]
+                keys = [k.strip() for k in raw.replace(",", "\n").replace(";", "\n").splitlines() if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
             self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
@@ -1069,13 +1285,114 @@ class App:
             self.settings.whisper_compute_type = self.whisper_comp_var.get()
             if hasattr(self, "whisperx_path_var"):
                 self.settings.whisperx_path = self.whisperx_path_var.get()
-            log.info(f"[SETTINGS] Gemini={self.settings.gemini_model} Whisper={self.settings.whisper_model}")
+            # packaging
+            self.settings.playlist_season_url = self.playlist_season_url_var.get().strip()
+            self.settings.playlist_block_url = self.playlist_block_url_var.get().strip()
+            self.settings.playlist_block_label = self.playlist_block_label_var.get().strip()
+            self.settings.required_hashtags = self.required_hashtags_var.get().strip()
+            self.settings.append_playlist_footer = bool(self.append_playlist_footer_var.get())
+            self.settings.shorts_use_template = bool(self.shorts_use_template_var.get())
+            try:
+                self.settings.shorts_desc_max_len = int(str(self.shorts_desc_max_len_var.get()).strip() or "280")
+            except ValueError:
+                self.settings.shorts_desc_max_len = 280
+            pb = self._settings_prompt_box.get("1.0", "end").strip()
+            # Сравниваем со встроенным: если совпадает — храним пусто (builtin)
+            try:
+                from ..engines.analysis import get_builtin_analysis_prompt
+                builtin = get_builtin_analysis_prompt().strip()
+            except Exception:
+                builtin = ""
+            if pb and builtin and pb == builtin:
+                self.settings.prompt_body = ""
+            else:
+                self.settings.prompt_body = pb
+            pe = ""
+            if hasattr(self, "_settings_prompt_extra_box"):
+                pe = self._settings_prompt_extra_box.get("1.0", "end").strip()
+            self.settings.prompt_extra = pe
+            log.info(
+                "[SETTINGS] Gemini=%s packaging footer=%s prompt_body_len=%s extra_len=%s",
+                self.settings.gemini_model,
+                self.settings.append_playlist_footer,
+                len(getattr(self.settings, "prompt_body", "") or ""),
+                len(pe),
+            )
             self._save_settings()
+            # also persist packaging fields not bound only via *_var lists
+            self._save_packaging_settings()
             win.destroy()
 
-        ttk.Button(frame, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X, pady=(16, 0))
+        btn_row = ttk.Frame(win, padding=(12, 0, 12, 12))
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X)
 
-    # ─── Логирование ─────────────────────────────────────────────────────
+    def _save_packaging_settings(self) -> None:
+        """Дописать packaging-поля в JSON настроек (и prompt_extra)."""
+        try:
+            data = {}
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
+            data.update({
+                "playlist_season_url": getattr(self.settings, "playlist_season_url", ""),
+                "playlist_block_url": getattr(self.settings, "playlist_block_url", ""),
+                "playlist_block_label": getattr(self.settings, "playlist_block_label", ""),
+                "required_hashtags": getattr(self.settings, "required_hashtags", ""),
+                "append_playlist_footer": bool(getattr(self.settings, "append_playlist_footer", True)),
+                "shorts_use_template": bool(getattr(self.settings, "shorts_use_template", True)),
+                "shorts_desc_max_len": int(getattr(self.settings, "shorts_desc_max_len", 280) or 280),
+                "prompt_extra": str(getattr(self.settings, "prompt_extra", "") or ""),
+                "prompt_body": str(getattr(self.settings, "prompt_body", "") or ""),
+            })
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning("[GUI] packaging settings save: %s", e)
+
+    def _packaging_opts_from_settings(self) -> dict:
+        """Собрать opts для analysis/finalize из GUI settings."""
+        try:
+            max_len = int(str(self.shorts_desc_max_len_var.get()).strip() or "280")
+        except Exception:
+            max_len = int(getattr(self.settings, "shorts_desc_max_len", 280) or 280)
+        # доп. инструкции
+        pe = str(getattr(self.settings, "prompt_extra", "") or "")
+        if hasattr(self, "_settings_prompt_extra_box"):
+            try:
+                pe = self._settings_prompt_extra_box.get("1.0", "end").strip()
+            except Exception:
+                pass
+        # полное тело промпта
+        pb = str(getattr(self.settings, "prompt_body", "") or "")
+        if hasattr(self, "_settings_prompt_box"):
+            try:
+                pb_live = self._settings_prompt_box.get("1.0", "end").strip()
+                if pb_live:
+                    # если открыты настройки и текст изменён — берём live
+                    pb = pb_live
+            except Exception:
+                pass
+        # если тело = встроенный — не считаем кастомом
+        if pb:
+            try:
+                from ..engines.analysis import get_builtin_analysis_prompt
+                if pb.strip() == get_builtin_analysis_prompt().strip():
+                    pb = ""
+            except Exception:
+                pass
+        return {
+            "playlist_season_url": (self.playlist_season_url_var.get() if hasattr(self, "playlist_season_url_var") else getattr(self.settings, "playlist_season_url", "")).strip(),
+            "playlist_block_url": (self.playlist_block_url_var.get() if hasattr(self, "playlist_block_url_var") else getattr(self.settings, "playlist_block_url", "")).strip(),
+            "playlist_block_label": (self.playlist_block_label_var.get() if hasattr(self, "playlist_block_label_var") else getattr(self.settings, "playlist_block_label", "")).strip(),
+            "required_hashtags": (self.required_hashtags_var.get() if hasattr(self, "required_hashtags_var") else getattr(self.settings, "required_hashtags", "")).strip(),
+            "append_playlist_footer": bool(self.append_playlist_footer_var.get()) if hasattr(self, "append_playlist_footer_var") else bool(getattr(self.settings, "append_playlist_footer", True)),
+            "prompt_extra": pe,
+            "prompt_body": pb,
+            "shorts_desc_max_len": max_len,
+            "shorts_use_template": bool(self.shorts_use_template_var.get()) if hasattr(self, "shorts_use_template_var") else bool(getattr(self.settings, "shorts_use_template", True)),
+        }
+
 
     def _log(self, msg: str) -> None:
         """Потокобезопасная запись в лог. Ограничение ~3000 строк — нет утечки RAM."""
@@ -1226,6 +1543,8 @@ class App:
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
         self.settings.cover_horizontal = self.cover_h_var.get()
         self.settings.cover_vertical = self.cover_v_var.get()
+        if hasattr(self, "shorts_cover_var"):
+            self.settings.shorts_cover_image = self.shorts_cover_var.get().strip()
         self.settings.series_name = (self.series_entry.get("1.0", "end").strip() if hasattr(self, "series_entry") else self.series_var.get())
         self.settings.gemini_model = self.model_var.get()
         self.settings.intro_gemini = self.intro_gemini_var.get()
@@ -1427,6 +1746,7 @@ class App:
                 progress_span = 100.0 / total
 
                 ctx = PipelineContext(
+                    packaging_opts=self._packaging_opts_from_settings(),
                     audio_path=audio_file,
                     broll_horizontal=self.settings.broll_horizontal,
                     broll_vertical=self.settings.broll_vertical,
@@ -1435,6 +1755,7 @@ class App:
                     vertical_background=self.settings.vertical_background,
                     cover_horizontal=self.settings.cover_horizontal,
                     cover_vertical=self.settings.cover_vertical,
+                    shorts_cover_image=getattr(self.settings, "shorts_cover_image", "") or "",
                     output_folder=out_dir,
                     series_name=series,
                     gemini_model=self.settings.gemini_model,
@@ -1890,6 +2211,30 @@ class App:
                         obj.set(value)
                         continue
             log.info("[GUI] Настройки загружены из %s", SETTINGS_FILE)
+            # r51 packaging fields → settings + vars
+            for attr in (
+                "playlist_season_url", "playlist_block_url", "playlist_block_label",
+                "required_hashtags", "prompt_extra", "prompt_body",
+            ):
+                if attr in data and isinstance(data[attr], str):
+                    setattr(self.settings, attr, data[attr])
+            if "append_playlist_footer" in data:
+                self.settings.append_playlist_footer = bool(data["append_playlist_footer"])
+            if "shorts_use_template" in data:
+                self.settings.shorts_use_template = bool(data["shorts_use_template"])
+            if "shorts_desc_max_len" in data:
+                try:
+                    self.settings.shorts_desc_max_len = int(data["shorts_desc_max_len"])
+                except (TypeError, ValueError):
+                    pass
+            if hasattr(self, "playlist_season_url_var"):
+                self.playlist_season_url_var.set(getattr(self.settings, "playlist_season_url", "") or self.playlist_season_url_var.get())
+                self.playlist_block_url_var.set(getattr(self.settings, "playlist_block_url", "") or self.playlist_block_url_var.get())
+                self.playlist_block_label_var.set(getattr(self.settings, "playlist_block_label", "") or self.playlist_block_label_var.get())
+                self.required_hashtags_var.set(getattr(self.settings, "required_hashtags", "") or self.required_hashtags_var.get())
+                self.append_playlist_footer_var.set(bool(getattr(self.settings, "append_playlist_footer", True)))
+                self.shorts_use_template_var.set(bool(getattr(self.settings, "shorts_use_template", True)))
+                self.shorts_desc_max_len_var.set(str(getattr(self.settings, "shorts_desc_max_len", 280)))
             self._wake_network_paths()
             self._sync_imo_checkboxes()
             self._bind_imo_path_traces()
@@ -1955,9 +2300,15 @@ class App:
                 pass
 
     def _save_settings(self) -> None:
-        """Сохранить текущие настройки в JSON."""
+        """Сохранить текущие настройки в JSON (merge — не затираем packaging/prompt_extra)."""
         try:
             data = {}
+            if os.path.exists(SETTINGS_FILE):
+                try:
+                    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f) or {}
+                except Exception:
+                    data = {}
             for name in PATH_VARS + OTHER_VARS + BOOL_VARS:
                 if not hasattr(self, name):
                     continue
@@ -1969,6 +2320,42 @@ class App:
                     value = value.strip()
                 key = name[:-4] if name.endswith("_var") else name
                 data[key] = value
+            # r51: packaging всегда в том же файле (иначе затирается)
+            data.update({
+                "playlist_season_url": getattr(self.settings, "playlist_season_url", "") or (
+                    self.playlist_season_url_var.get().strip() if hasattr(self, "playlist_season_url_var") else ""
+                ),
+                "playlist_block_url": getattr(self.settings, "playlist_block_url", "") or (
+                    self.playlist_block_url_var.get().strip() if hasattr(self, "playlist_block_url_var") else ""
+                ),
+                "playlist_block_label": getattr(self.settings, "playlist_block_label", "") or (
+                    self.playlist_block_label_var.get().strip() if hasattr(self, "playlist_block_label_var") else ""
+                ),
+                "required_hashtags": getattr(self.settings, "required_hashtags", "") or (
+                    self.required_hashtags_var.get().strip() if hasattr(self, "required_hashtags_var") else ""
+                ),
+                "append_playlist_footer": bool(
+                    self.append_playlist_footer_var.get()
+                    if hasattr(self, "append_playlist_footer_var")
+                    else getattr(self.settings, "append_playlist_footer", True)
+                ),
+                "shorts_use_template": bool(
+                    self.shorts_use_template_var.get()
+                    if hasattr(self, "shorts_use_template_var")
+                    else getattr(self.settings, "shorts_use_template", True)
+                ),
+                "shorts_desc_max_len": int(
+                    getattr(self.settings, "shorts_desc_max_len", 280) or 280
+                ),
+                "prompt_extra": str(getattr(self.settings, "prompt_extra", "") or ""),
+                "prompt_body": str(getattr(self.settings, "prompt_body", "") or ""),
+            })
+            try:
+                data["shorts_desc_max_len"] = int(
+                    str(self.shorts_desc_max_len_var.get()).strip() or "280"
+                )
+            except Exception:
+                pass
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             log.info("[GUI] Настройки сохранены в %s", SETTINGS_FILE)

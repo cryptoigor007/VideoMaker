@@ -1,5 +1,5 @@
-# tests/test_shorts_parity.py — r48
-"""Тесты parity: density r47 + strong isolation r48."""
+# tests/test_shorts_parity.py — r49
+"""Тесты parity: density r47 + isolation r48 + hyphen r49."""
 from __future__ import annotations
 
 import sys
@@ -12,6 +12,9 @@ from video_maker.engines.subtitles import (
     _group_words_with_boundaries,
     _group_by_strong_runs,
     _parity_strong_lookup,
+    _merge_hyphenated_tokens,
+    _join_ass_parts,
+    _assemble_group_display,
 )
 
 
@@ -250,3 +253,60 @@ def test_parity_uses_isolation_for_mixed():
         if orange in ev["text"] and "важно" in ev["text"]:
             assert "это" not in ev["text"]
             assert "сейчас" not in ev["text"]
+
+
+def test_merge_hyphen_three_tokens():
+    words = [
+        {"text": "кто", "start": 0.0, "end": 0.2},
+        {"text": "-", "start": 0.2, "end": 0.22},
+        {"text": "то", "start": 0.22, "end": 0.4},
+    ]
+    m = _merge_hyphenated_tokens(words)
+    assert len(m) == 1
+    assert m[0]["text"] == "кто-то"
+    assert m[0]["start"] == 0.0
+    assert m[0]["end"] == 0.4
+
+
+def test_merge_hyphen_trailing():
+    words = [
+        {"text": "кто-", "start": 0.0, "end": 0.2},
+        {"text": "то", "start": 0.2, "end": 0.4},
+    ]
+    m = _merge_hyphenated_tokens(words)
+    assert len(m) == 1 and m[0]["text"] == "кто-то"
+
+
+def test_merge_hyphen_leading_on_second():
+    words = [
+        {"text": "кто", "start": 0.0, "end": 0.2},
+        {"text": "-то", "start": 0.2, "end": 0.4},
+    ]
+    m = _merge_hyphenated_tokens(words)
+    assert len(m) == 1 and m[0]["text"] == "кто-то"
+
+
+def test_join_ass_parts_no_space_after_hyphen():
+    s = _join_ass_parts(["{tag}кто-", "{tag}то"])
+    assert "кто- " not in s
+    assert "кто-{tag}то" in s
+
+
+
+def test_hyphen_not_split_across_groups():
+    """После merge один токен — не разъедется по строкам."""
+    words = _merge_hyphenated_tokens([
+        {"text": "это", "start": 0.0, "end": 0.2},
+        {"text": "кто", "start": 0.2, "end": 0.35},
+        {"text": "-", "start": 0.35, "end": 0.36},
+        {"text": "то", "start": 0.36, "end": 0.5},
+        {"text": "здесь", "start": 0.5, "end": 0.8},
+    ])
+    assert any(w["text"] == "кто-то" for w in words)
+    groups = _group_words_with_boundaries(words)
+    # «кто-то» целиком в одной группе
+    for g in groups:
+        texts = [words[i]["text"] for i in g]
+        if "кто-то" in texts:
+            assert texts.count("кто-то") == 1
+            assert "-" not in texts

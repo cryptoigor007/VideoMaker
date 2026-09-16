@@ -175,6 +175,16 @@ class FinalizeStage(Stage):
         # Packaging полного видео: одинаково в wide/ и vertical/
         pkg_title = str(ctx.analysis.get("package_title") or "")
         pkg_desc = str(ctx.analysis.get("package_description") or "")
+        # r50/r51: guarantee playlist footer + hashtags (opts from GUI if any)
+        try:
+            from ..engines.analysis import _ensure_playlist_footer
+            pkg_desc = _ensure_playlist_footer(
+                pkg_desc,
+                str(ctx.analysis.get("package_hashtags") or ""),
+                packaging_opts=getattr(ctx, "packaging_opts", None) or {},
+            )
+        except Exception:
+            pass
         pkg_hook = str(ctx.analysis.get("package_hook") or (ctx.analysis.get("hook") or {}).get("text") or "")
         pkg_tags = str(ctx.analysis.get("package_hashtags") or "")
         for d in (wide_dir, vert_dir):

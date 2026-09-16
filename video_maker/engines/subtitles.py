@@ -1,9 +1,10 @@
-# VideoMaker FIX | 2026.09.10-r43.3-stable | 2026-09-10
+# VideoMaker FIX | 2026.09.16-r55-cover-hook-parity | 2026-09-16
 # CHANGED:
-#   r43.3-stable: \q2 no-wrap; жёсткий deconflict (нет двух строк сразу);
-#                 phrase-break только .!?… (запятая не рвёт каждую группу);
-#                 пунктуация на экране (r43.2) сохранена.
-# PREV: 2026.09.10-r43.2-punct
+#   r49-hyphen: склейка ASR-токенов с дефисом (кто-то) до группировки;
+#               join без пробела после хвостового дефиса/тире.
+#   r48: _group_by_strong_runs — strong не смешивается с ordinary.
+#   r47: max_words=2, max_chars=13.
+# PREV: 2026.09.10-r43.3-stable (+r47/r48 на master)
 # REPLACE: video_maker/engines/subtitles.py
 
 """Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
@@ -20,6 +21,15 @@ import uuid
 # r24: display durations (long + shorts)
 HOOK_DUR = 4.5   # was ~2.5–3.2
 CTA_DUR = 7.0    # was 5.0
+
+# Цвета on-screen хука (и обложки Shorts) — один источник правды
+HOOK_MARKER_COLORS = (
+    "&H00952DFF&",  # fuchsia
+    "&H0000FFB8&",  # lime
+    "&H00006BFF&",  # orange
+    "&H00FFF000&",  # cyan
+)
+HOOK_MARKER_BLACK = "&H00000000&"
 
 from .ffmpeg_resilient import (
     SubtitleStageFailed,
@@ -316,7 +326,8 @@ def _assemble_group_display(words: list[dict], group: list[int]) -> dict[int, st
     """Склеить pure-punct с соседним словом; вернуть idx → текст для ASS.
 
     Пример: [«друг», «.», «Да»] → {0: «друг.», 2: «Да»}
-    «кто-то» остаётся одним токеном как пришло от Whisper.
+    После r49 hyphen-merge «кто-то» обычно один токен; если нет — pure «-»
+    клеится к соседу без пробела.
     """
     out: dict[int, str] = {}
     pending_lead = ""
@@ -334,11 +345,137 @@ def _assemble_group_display(words: list[dict], group: list[int]) -> dict[int, st
         wt = _display_word(raw)
         if not wt:
             continue
+        # «-то» после уже собранного слова → без пробела (страховка, если merge не сработал)
+        if (
+            last_idx is not None
+            and last_idx in out
+            and wt[:1] in "-–—"
+            and not _is_pure_punct(wt)
+        ):
+            out[last_idx] = out[last_idx] + wt
+            continue
         if pending_lead:
             wt = pending_lead + wt
             pending_lead = ""
+        # предыдущий токен оканчивается дефисом → склеить без пробела
+        if (
+            last_idx is not None
+            and last_idx in out
+            and out[last_idx]
+            and out[last_idx][-1] in "-–—"
+        ):
+            out[last_idx] = out[last_idx] + wt
+            continue
         out[j] = wt
         last_idx = j
+    return out
+
+
+# Дефис состава (кто-то). Длинное тире «—» — пауза, не склеиваем.
+_COMPOUND_HYPHEN_CHARS = frozenset("-–")
+
+
+def _merge_hyphenated_tokens(words: list[dict]) -> list[dict]:
+    """Склеить разорванные ASR дефисные слова до группировки (r49).
+
+    Паттерны Whisper/MLX:
+      «кто» + «-» + «то»  → «кто-то»
+      «кто-» + «то»       → «кто-то»
+      «кто» + «-то»       → «кто-то»
+    Не склеиваем паузу: «слово» «—» «другое».
+    """
+    if not words or len(words) < 2:
+        return list(words or [])
+
+    def _txt(w: dict) -> str:
+        return str(w.get("text") or "").strip()
+
+    def _ends_hyphen(t: str) -> bool:
+        return bool(t) and t[-1] in _COMPOUND_HYPHEN_CHARS and not _is_pure_punct(t)
+
+    def _starts_hyphen(t: str) -> bool:
+        return bool(t) and t[0] in _COMPOUND_HYPHEN_CHARS and not _is_pure_punct(t)
+
+    def _is_hyphen_only(t: str) -> bool:
+        return bool(t) and all(c in _COMPOUND_HYPHEN_CHARS for c in t)
+
+    out: list[dict] = []
+    i = 0
+    n = len(words)
+    while i < n:
+        cur = dict(words[i])
+        t0 = _txt(cur)
+        # «кто» + «-» + «то»
+        if (
+            i + 2 < n
+            and t0
+            and not _is_pure_punct(t0)
+            and not _ends_hyphen(t0)
+            and _is_hyphen_only(_txt(words[i + 1]))
+            and _txt(words[i + 2])
+            and not _is_pure_punct(_txt(words[i + 2]))
+        ):
+            t2 = _txt(words[i + 2])
+            hy = _txt(words[i + 1])
+            cur["text"] = f"{t0}{hy}{t2}"
+            try:
+                cur["end"] = float(words[i + 2].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 3
+            continue
+        # «кто-» + «то»
+        if (
+            i + 1 < n
+            and _ends_hyphen(t0)
+            and _txt(words[i + 1])
+            and not _is_pure_punct(_txt(words[i + 1]))
+            and not _starts_hyphen(_txt(words[i + 1]))
+        ):
+            cur["text"] = t0 + _txt(words[i + 1])
+            try:
+                cur["end"] = float(words[i + 1].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 2
+            continue
+        # «кто» + «-то»
+        if (
+            i + 1 < n
+            and t0
+            and not _is_pure_punct(t0)
+            and not _ends_hyphen(t0)
+            and _starts_hyphen(_txt(words[i + 1]))
+        ):
+            cur["text"] = t0 + _txt(words[i + 1])
+            try:
+                cur["end"] = float(words[i + 1].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 2
+            continue
+        out.append(cur)
+        i += 1
+    return out
+
+
+def _join_ass_parts(parts: list[str]) -> str:
+    """Склеить ASS-фрагменты; не ставить пробел после хвостового дефиса/тире."""
+    if not parts:
+        return ""
+    out = parts[0]
+    for p in parts[1:]:
+        # видимый хвост предыдущего фрагмента (после последнего '}')
+        prev_tail = out
+        br = prev_tail.rfind("}")
+        visible = prev_tail[br + 1 :] if br >= 0 else prev_tail
+        if visible.endswith(("-", "–", "—")):
+            out = out + p
+        else:
+            out = out + " " + p
     return out
 
 
@@ -991,7 +1128,8 @@ def _build_shorts_parity_window(
             if not parts:
                 continue
             # \q2 = не переносить строку (иначе «две строки» на 4K)
-            line = f"{pos}{{{bs}q2}}" + " ".join(parts)
+            # r49: без пробела после хвостового дефиса
+            line = f"{pos}{{{bs}q2}}" + _join_ass_parts(parts)
             events.append({
                 "start": t0,
                 "end": t1,
@@ -1365,13 +1503,8 @@ def _build_hook_events(
         cta_t = max(0.0, float(video_duration) - CTA_DUR)
     MIN_GAP_BEFORE_CTA = CTA_DUR  # не пересекаться с CTA-зоной
 
-    MARKER_COLORS = (
-        "&H00952DFF&",  # fuchsia
-        "&H0000FFB8&",  # lime
-        "&H00006BFF&",  # orange
-        "&H00FFF000&",  # cyan
-    )
-    BLACK = "&H00000000&"
+    MARKER_COLORS = HOOK_MARKER_COLORS
+    BLACK = HOOK_MARKER_BLACK
 
     # Предрасчёт таймингов, затем фильтр последнего vs CTA
     prepared: list[dict] = []
@@ -1545,13 +1678,8 @@ def _build_cta_events(
     if end_t <= start_t:
         end_t = start_t + CTA_DUR
 
-    MARKER_COLORS = (
-        "&H00952DFF&",
-        "&H0000FFB8&",
-        "&H00006BFF&",
-        "&H00FFF000&",
-    )
-    BLACK = "&H00000000&"
+    MARKER_COLORS = HOOK_MARKER_COLORS
+    BLACK = HOOK_MARKER_BLACK
     size = max(int(base_size * 1.15), int(base_size * 1.05))
     size = min(size, int(base_size * 1.45))
     bord = max(2, int(base_size * 0.03))
@@ -1580,6 +1708,74 @@ def _build_cta_events(
         "text": main,
         "layer": 2,
     }]
+
+
+def build_short_hook_cover_ass(
+    hook_text: str,
+    play_w: int = 1080,
+    play_h: int = 1920,
+    color_index: int = 0,
+) -> str:
+    """ASS для обложки Shorts — тот же визуал, что on-screen хук на первых кадрах.
+
+    Копирует правила _build_hook_events (vertical, idx=0, start≈0):
+    UPPERCASE, max 7 слов, цвет MARKER, \\an8\\pos y≈12%, fs/bord/shad.
+    Без \\fad: на одном JPG-кадре fade-in с t=0 делает текст невидимым.
+    """
+    text_h = _strip_ass_overrides((hook_text or "").strip())
+    if not text_h:
+        return ""
+    words = text_h.split()
+    if len(words) > 7:
+        text_h = " ".join(words[:7])
+    text_h = text_h.upper()
+
+    # base_size как burn_subtitles для vertical 1080
+    scale = max(play_w / 1080.0, 1.0)
+    base_size = max(72, int(82 * scale))
+    size = max(int(base_size * 1.25), int(base_size * 1.15))
+    size = min(size, int(base_size * 1.55))
+    bord = max(2, int(base_size * 0.03))
+
+    color = HOOK_MARKER_COLORS[int(color_index) % len(HOOK_MARKER_COLORS)]
+    black = HOOK_MARKER_BLACK
+
+    # vertical short: y_percent default 12
+    cy = int(play_h * 0.12)
+    cx = play_w // 2
+    pos_t = f"\\an8\\pos({cx},{cy})"
+
+    # Полная непрозрачность — без fad (иначе JPG с t≈0 почти пустой)
+    body = (
+        f"{{{pos_t}\\c{color}\\3c{black}\\4c{black}"
+        f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0}}"
+        f"{text_h}"
+    )
+
+    # Style: минимальный header; реальный вид — в override Dialogue
+    hook_sz = max(88, int(102 * scale))
+    bord_h = max(7, int(10 * scale))
+    ml = int(play_w * 0.035)
+    margin_v = int(play_h * 0.028)
+
+    return f"""[Script Info]
+Title: VideoMaker Short Cover Hook
+ScriptType: v4.00+
+PlayResX: {play_w}
+PlayResY: {play_h}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,8,{ml},{ml},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 2,0:00:00.00,0:00:01.00,HookMarker,,0,0,0,,{body}
+"""
+
 
 
 def burn_subtitles(
@@ -1646,6 +1842,12 @@ def burn_subtitles(
     # Karaoke: всегда при наличии words (full + clip). Fallback — только если words пусто.
     if enable_subtitles:
         words = _words_from_transcription(transcription)
+        # r49: склеить «кто»+«-»+«то» / «кто-»+«то» до группировки и strong
+        if words:
+            before_m = len(words)
+            words = _merge_hyphenated_tokens(words)
+            if len(words) != before_m:
+                _log(f"[СУБТИТРЫ] hyphen-merge tokens {before_m} → {len(words)}")
         # strong_map (lexicon) считаем только для legacy-стилей; parity берёт Gemini отдельно
         _cs_pre = (caption_style or "auto_aisie").strip().lower()
         _is_parity = _cs_pre in ("clean_pro", "shorts_parity", "", "auto", "auto_aisie")

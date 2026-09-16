@@ -1,5 +1,6 @@
-# VideoMaker FIX | 2026.09.05-r32 | 2026-09-05
-# CHANGED r33: снова 4–5 shorts; лимит «1 short» снят
+# VideoMaker FIX | 2026.09.16-r54-json-sanitize | 2026-09-16
+# CHANGED r54: sanitize control chars in Gemini JSON; fix JSON-retry (RuntimeError was not caught)
+# PREV: r53 short-covers; r52 live-models; r51 packaging; r50 desc
 """Движок анализа — Gemini API."""
 from __future__ import annotations
 
@@ -19,19 +20,319 @@ log = logging.getLogger(__name__)
 # 503 → максимум 2 коротких retry (2с, 4с), затем следующий ключ
 # Запоминаем последний успешный ключ и модель в ~/video_maker/cache/gemini_state.json
 
-DEFAULT_MODEL_CHAIN = (
-    "gemini-2.5-flash",      # приоритет по умолчанию
-    "gemini-2.0-flash",
+# Каталог моделей для GUI (порядок = рекомендуемый fallback).
+# Выбор пользователя в настройках всегда первый в цепочке; остальные — только если выбранная недоступна (404/etc).
+AVAILABLE_GEMINI_MODELS: tuple[str, ...] = (
     "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",   # was invalid "gemini-3.6-flash-lite"
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
     "gemini-1.5-flash",
+    "gemini-1.5-pro",
 )
+
+# Fallback-цепочка = тот же каталог (без дублей). Не «прибита» к одной модели.
+
+DEFAULT_MODEL_CHAIN: tuple[str, ...] = AVAILABLE_GEMINI_MODELS
+
+
+def list_available_gemini_models(
+    api_keys: list[str] | None = None,
+    api_key: str = "",
+    log_fn=None,
+) -> list[str]:
+    """Актуальный список моделей Gemini с API (generateContent).
+
+    По кнопке в GUI. При ошибке — fallback AVAILABLE_GEMINI_MODELS.
+    """
+    _log = log_fn or (lambda *a, **k: None)
+    keys: list[str] = []
+    if api_keys:
+        for k in api_keys:
+            k = (k or "").strip()
+            if k and k not in keys:
+                keys.append(k)
+    k0 = (api_key or "").strip()
+    if k0 and k0 not in keys:
+        keys.insert(0, k0)
+    if not keys:
+        _log("[GEMINI] list models: нет API ключа → fallback-каталог")
+        return list(AVAILABLE_GEMINI_MODELS)
+
+    last_err = ""
+    for key in keys:
+        # --- SDK ---
+        try:
+            from google import genai
+
+            client = genai.Client(api_key=key)
+            names: list[str] = []
+            for m in client.models.list():
+                name = getattr(m, "name", None) or ""
+                name = str(name).strip()
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                methods = (
+                    getattr(m, "supported_generation_methods", None)
+                    or getattr(m, "supported_actions", None)
+                    or []
+                )
+                if methods:
+                    ml = [str(x).lower() for x in methods]
+                    if not any("generatecontent" in x or x == "generate" for x in ml):
+                        continue
+                low = name.lower()
+                if name and ("gemini" in low or "gemma" in low):
+                    if name not in names:
+                        names.append(name)
+            if names:
+                _log(f"[GEMINI] list models OK (SDK): {len(names)}")
+                return names
+            last_err = "SDK empty"
+        except Exception as e:
+            last_err = f"SDK: {e}"
+
+        # --- REST ---
+        try:
+            import json as _json
+            import urllib.error
+            import urllib.request
+
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models"
+                f"?key={key}&pageSize=100"
+            )
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                payload = _json.loads(resp.read().decode("utf-8", errors="replace"))
+            names = []
+            for m in payload.get("models") or []:
+                name = str(m.get("name") or "").strip()
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                methods = m.get("supportedGenerationMethods") or []
+                ml = [str(x).lower() for x in methods]
+                if ml and "generatecontent" not in ml:
+                    continue
+                low = name.lower()
+                if name and ("gemini" in low or "gemma" in low):
+                    if name not in names:
+                        names.append(name)
+            if names:
+                _log(f"[GEMINI] list models OK (REST): {len(names)}")
+                return names
+            last_err = "REST empty"
+        except Exception as e:
+            last_err = f"REST: {e}"
+            _log(f"[GEMINI] list models: {last_err}")
+
+    _log(f"[GEMINI] list models fallback ({last_err})")
+    return list(AVAILABLE_GEMINI_MODELS)
+
 
 STATE_PATH = Path.home() / "video_maker" / "cache" / "gemini_state.json"
 
 # Stage D: response cache key = hash(audio) + model + schema
-ANALYSIS_SCHEMA_VERSION = "v1-package-hooks-subs-shorts"
+ANALYSIS_SCHEMA_VERSION = "v4-reject-empty-analysis"
 ANALYSIS_CACHE_DIR = Path.home() / "video_maker" / "cache" / "gemini_analysis"
+
+
+# --- r50: packaging text for YouTube copy-paste (description .txt only) ---
+PLAYLIST_SEASON_URL = "https://www.youtube.com/playlist?list=PLOsH4yc61thU"
+PLAYLIST_BLOCK_URL = "https://www.youtube.com/playlist?list=PLfOYg9HTzi0s"
+PLAYLIST_BLOCK_LABEL = "Одиночество и отношения"
+REQUIRED_HASHTAGS = ("#ТочкаНаблюдения", "#ТайныйКризисЧеловечества")
+
+
+def _packaging_defaults(opts: dict | None = None) -> dict:
+    """Normalize packaging options from GUI/settings (safe defaults)."""
+    o = dict(opts or {})
+    season = str(o.get("playlist_season_url") or PLAYLIST_SEASON_URL).strip()
+    block = str(o.get("playlist_block_url") or PLAYLIST_BLOCK_URL).strip()
+    label = str(o.get("playlist_block_label") or PLAYLIST_BLOCK_LABEL).strip()
+    req = str(o.get("required_hashtags") or " ".join(REQUIRED_HASHTAGS)).strip()
+    append = o.get("append_playlist_footer")
+    if append is None:
+        append = True
+    max_len = o.get("shorts_desc_max_len")
+    try:
+        max_len = int(max_len) if max_len is not None else 280
+    except (TypeError, ValueError):
+        max_len = 280
+    max_len = max(80, min(max_len, 500))
+    return {
+        "playlist_season_url": season,
+        "playlist_block_url": block,
+        "playlist_block_label": label or PLAYLIST_BLOCK_LABEL,
+        "required_hashtags": req,
+        "append_playlist_footer": bool(append),
+        "prompt_extra": str(o.get("prompt_extra") or "").strip(),
+        "prompt_body": str(o.get("prompt_body") or "").strip(),
+        "shorts_desc_max_len": max_len,
+        "shorts_use_template": bool(o.get("shorts_use_template", True)),
+    }
+
+
+def _build_playlist_footer_text(opts: dict | None = None) -> str:
+    d = _packaging_defaults(opts)
+    lines = []
+    if d["playlist_season_url"]:
+        lines.append(f"→ Весь сезон: {d['playlist_season_url']}")
+    if d["playlist_block_url"]:
+        lines.append(
+            f"→ Блок «{d['playlist_block_label']}»: {d['playlist_block_url']}"
+        )
+    return "\n".join(lines)
+
+
+def _normalize_hashtag_list(
+    raw: str,
+    *,
+    required: bool = True,
+    max_tags: int = 12,
+    required_tags: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    tags: list[str] = []
+    for part in (raw or "").replace(",", " ").split():
+        p = part.strip()
+        if not p:
+            continue
+        if not p.startswith("#"):
+            p = "#" + p.lstrip("#")
+        if not p.startswith("#") or len(p) < 2:
+            continue
+        if p not in tags:
+            tags.append(p)
+    if required:
+        req_src = required_tags if required_tags is not None else REQUIRED_HASHTAGS
+        ordered: list[str] = []
+        for req in req_src:
+            r = str(req).strip()
+            if not r:
+                continue
+            if not r.startswith("#"):
+                r = "#" + r.lstrip("#")
+            if r not in ordered:
+                ordered.append(r)
+        for p in tags:
+            if p not in ordered:
+                ordered.append(p)
+        tags = ordered
+    return tags[:max_tags]
+
+
+
+def _ensure_playlist_footer(
+    description: str,
+    hashtags: str = "",
+    packaging_opts: dict | None = None,
+) -> str:
+    """Idempotent: body + playlist links + hashtags for full-video description.txt."""
+    opts = _packaging_defaults(packaging_opts)
+    body = (description or "").strip()
+    harvested: list[str] = []
+    lines = [ln.rstrip() for ln in body.splitlines()]
+    cleaned: list[str] = []
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("→ Весь сезон:") or s.startswith("→ Блок"):
+            continue
+        if s.startswith("http") and "youtube.com/playlist" in s:
+            continue
+        if s and all(p.startswith("#") for p in s.split() if p):
+            for p in s.split():
+                if p.startswith("#") and p not in harvested:
+                    harvested.append(p)
+            continue
+        cleaned.append(ln)
+    body = "\n".join(cleaned).strip()
+    req_raw = (opts.get("required_hashtags") or "").split()
+    req_norm: list[str] = []
+    for p in req_raw:
+        p = p.strip()
+        if not p:
+            continue
+        if not p.startswith("#"):
+            p = "#" + p.lstrip("#")
+        if p not in req_norm:
+            req_norm.append(p)
+    if not req_norm:
+        req_norm = list(REQUIRED_HASHTAGS)
+    merged_tags = " ".join(harvested + [(hashtags or "").strip()])
+    tags = _normalize_hashtag_list(
+        merged_tags, required=True, max_tags=12, required_tags=req_norm
+    )
+    tag_line = " ".join(tags)
+    parts: list[str] = []
+    if body:
+        parts.append(body)
+    if opts.get("append_playlist_footer", True):
+        footer = _build_playlist_footer_text(opts)
+        if footer:
+            parts.append(footer)
+    if tag_line:
+        parts.append(tag_line)
+    return "\n\n".join(parts).strip() + "\n"
+
+
+def _format_short_description(
+    description: str,
+    hashtags: str = "",
+    title: str = "",
+    packaging_opts: dict | None = None,
+) -> str:
+    """Keep short description copy-paste friendly; do not force long series blurb."""
+    desc = (description or "").strip()
+    legacy = "Полная серия «Тайный кризис человечества» на канале «Точка наблюдения»."
+    if legacy in desc:
+        desc = desc.replace(legacy, "").strip()
+    for tail in (
+        "Напишите в комментариях, согласны ли вы.",
+        "Напишите в комментариях согласны ли вы.",
+    ):
+        if desc.endswith(tail):
+            desc = desc[: -len(tail)].strip()
+    harvested: list[str] = []
+    body_lines: list[str] = []
+    for ln in desc.splitlines():
+        s = ln.strip()
+        if s and all(p.startswith("#") for p in s.split() if p):
+            for p in s.split():
+                if p.startswith("#") and p not in harvested:
+                    harvested.append(p)
+            continue
+        body_lines.append(ln)
+    body = "\n".join(body_lines).strip()
+    if not body and title:
+        body = f"{title.strip()} 💡"
+    opts = _packaging_defaults(packaging_opts)
+    req_raw = (opts.get("required_hashtags") or "").split()
+    req_norm = []
+    for p in req_raw:
+        p = str(p).strip()
+        if not p:
+            continue
+        if not p.startswith("#"):
+            p = "#" + p.lstrip("#")
+        if p not in req_norm:
+            req_norm.append(p)
+    tags = _normalize_hashtag_list(
+        " ".join(harvested + [(hashtags or "").strip()]),
+        required=True,
+        max_tags=5,
+        required_tags=req_norm or None,
+    )
+    tag_line = " ".join(tags)
+    if tag_line and tag_line not in body:
+        out = (body + "\n" + tag_line).strip() if body else tag_line
+    else:
+        out = body
+    max_len = int(_packaging_defaults(packaging_opts).get("shorts_desc_max_len", 280))
+    if len(out) > max_len:
+        out = out[: max(0, max_len - 1)].rstrip() + "…"
+    return out.strip() + ("\n" if out else "")
 
 
 def _audio_fingerprint(audio_path: str) -> str:
@@ -52,17 +353,22 @@ def _analysis_cache_key(
     intro_gemini: bool,
     series_name: str,
     transcription: dict | None,
+    packaging_opts: dict | None = None,
 ) -> str:
-    """Gemini cache key = hash(audio) + model + schema (+ intro/series + text fingerprint)."""
+    """Gemini cache key = hash(audio) + model + schema (+ intro/series + text + packaging)."""
     audio_fp = _audio_fingerprint(audio_path)
     text = ""
     if transcription:
         segs = transcription.get("segments") or []
         text = " ".join((s.get("text") or "") for s in segs[:50])
     text_fp = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    pkg = _packaging_defaults(packaging_opts)
+    pkg_fp = hashlib.sha256(
+        repr(sorted(pkg.items())).encode("utf-8", errors="ignore")
+    ).hexdigest()[:12]
     raw = (
         f"{audio_fp}|{model_name}|{ANALYSIS_SCHEMA_VERSION}|"
-        f"intro={int(bool(intro_gemini))}|series={series_name or ''}|txt={text_fp}"
+        f"intro={int(bool(intro_gemini))}|series={series_name or ''}|txt={text_fp}|pkg={pkg_fp}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:40]
 
@@ -161,13 +467,15 @@ class GeminiKeyManager:
         )
 
     def _build_model_chain(self, preferred: str) -> list[str]:
+        """Выбранная в настройках модель — первая; дальше каталог как fallback при 404."""
         chain: list[str] = []
-        if preferred:
-            chain.append(preferred)
-        for m in DEFAULT_MODEL_CHAIN:
-            if m not in chain:
+        pref = (preferred or "").strip()
+        if pref:
+            chain.append(pref)
+        for m in AVAILABLE_GEMINI_MODELS:
+            if m and m not in chain:
                 chain.append(m)
-        return chain
+        return chain or ["gemini-3.6-flash"]
 
     @property
     def current_key(self) -> str:
@@ -207,8 +515,9 @@ class GeminiKeyManager:
 
 
 
-def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool = True, series_name: str = "") -> str:
+def _build_analysis_prompt(text: str, segments: list[dict], intro_gemini: bool = True, series_name: str = "", packaging_opts: dict | None = None) -> str:
     """Промпт Gemini: packaging полного видео + Shorts-стратег (Точка наблюдения)."""
+    opts = _packaging_defaults(packaging_opts)
     timings = "\n".join(
         f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
         for s in (segments or [])[:400]
@@ -276,12 +585,12 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
 3) PACKAGING ПОЛНОГО ВИДЕО (package_* — одинаково для wide и vertical)
 ═══════════════════════════════════════
 - package_title ≤ 70 символов
-- package_description: в духе:
-  «В этом выпуске сериала «Тайный кризис человечества» на канале «Точка наблюдения» мы разбираем [тема].
-  Вы узнаете, почему [интрига1], как [интрига2]...
-  📍 В этом видео: [4–6 пунктов с таймкодами из источника]
-  👇 Напишите в комментариях: [спорный вопрос]?
-  🔔 Подписывайтесь на «Точка наблюдения»…»
+- package_description: готовый текст для копирования в YouTube (красиво, по абзацам):
+  1) 2–4 предложения: тема выпуска + интрига (сериал «Тайный кризис человечества», канал «Точка наблюдения»)
+  2) блок «📍 В этом видео:» — 4–6 пунктов с таймкодами из источника
+  3) вопрос в комментарии + призыв подписаться
+  4) НЕ вставляй ссылки на плейлисты и НЕ дублируй длинный список хештегов в конце —
+     пайплайн сам добавит фиксированный блок ссылок и хештеги в description.txt
 - package_hook: 3–8 слов — главный packaging-хук
 - package_hashtags: 8–12 через пробел, ОБЯЗАТЕЛЬНО #ТочкаНаблюдения #ТайныйКризисЧеловечества
 
@@ -305,10 +614,14 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
 - cta: 3–7 слов — вопрос в комментарии (≠ hook)
 - cta_start / cta_end: АБСОЛЮТНЫЕ, последние ~5с клипа (cta_end ≈ end)
 - title ≤ 40 символов
-- description: 1–2 предложения + призыв комментировать + отсылка на полную серию
-  «Тайный кризис человечества» и канал «Точка наблюдения»
-- hashtags: 5–8 через пробел; ОБЯЗАТЕЛЬНО #ТочкаНаблюдения и #ТайныйКризисЧеловечества
-  + 3–6 нишевых
+- description: ГОТОВЫЙ текст для Shorts (copy-paste), лаконично, целевой объём до ~200 символов:
+  1) [Крючок]: первое предложение с проблемой/вопросом и эмодзи (суть клипа)
+  2) [Контекст/Интрига]: 1–2 коротких предложения — доп. инсайт, желание досмотреть
+  3) [CTA Комментарии]: вопрос с 2 вариантами ответа (провокация обсуждения)
+  4) [CTA Действие]: «📌 Сохрани и отправь другу! 🔔 Подпишись для [краткая польза].»
+  5) Хештеги можно не писать в description — они будут в поле hashtags (3–5 штук)
+  Без воды, без длинных отсылок «смотрите полную серию…»
+- hashtags: 3–5 через пробел; ОБЯЗАТЕЛЬНО #ТочкаНаблюдения #ТайныйКризисЧеловечества + 1–3 нишевых
 - scores (опционально): hook/self/emotion/comments/reposts 1–10, total
 
 Внутренне доводи каждый клип до ≥8/10 (ни один критерий не ниже 6). Слабые отбрасывай.
@@ -339,7 +652,7 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
   "cta_wide": {{"text": "Вопрос для комментариев YouTube", "start": 0.0, "end": 0.0}},
   "cta_vertical": {{"text": "Другой вопрос для вертикали", "start": 0.0, "end": 0.0}},
   "package_title": "Заголовок полного ролика ≤70",
-  "package_description": "Описание полного выпуска + таймкоды + вопрос + подписка",
+  "package_description": "Текст выпуска + таймкоды + вопрос (ссылки/хештеги добавит пайплайн)",
   "package_hook": "Главный packaging-хук 3–8 слов",
   "package_hashtags": "#ТочкаНаблюдения #ТайныйКризисЧеловечества #tag3 #tag4 #tag5 #tag6 #tag7 #tag8",
   "clips_for_shorts": [
@@ -354,8 +667,8 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
       "cta_start": 13.0,
       "cta_end": 18.0,
       "title": "заголовок ≤40",
-      "description": "описание + комментарий + отсылка на сериал и канал",
-      "hashtags": "#ТочкаНаблюдения #ТайныйКризисЧеловечества #tag3 #tag4 #tag5"
+      "description": "Крючок с эмодзи. Интрига. Вопрос: А или Б?\n📌 Сохрани! 🔔 Подпишись для разборов.",
+      "hashtags": "#ТочкаНаблюдения #ТайныйКризисЧеловечества #одиночество"
     }}
   ],
   "intro": {{"start": 0.0, "end": 3.5}},
@@ -371,15 +684,33 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
 
 
 
+def get_builtin_analysis_prompt(
+    series_name: str = "",
+    intro_gemini: bool = True,
+) -> str:
+    """Встроенный промпт для GUI (редактор / сброс)."""
+    demo_segments = [
+        {"start": 0.0, "end": 2.0, "text": "…фрагмент транскрипта…"},
+    ]
+    return _build_analysis_prompt(
+        "…полный текст будет подставлен из транскрипции…",
+        demo_segments,
+        intro_gemini=intro_gemini,
+        series_name=series_name or "",
+        packaging_opts=None,
+    )
+
+
 def analyze(
     transcription: dict,
     api_key: str = "",
     api_keys: list[str] | None = None,
-    model_name: str = "gemini-2.5-flash",
+    model_name: str = "gemini-3.6-flash",
     intro_gemini: bool = True,
     series_name: str = "",
     log_fn=None,
     audio_path: str = "",
+    packaging_opts: dict | None = None,
 ) -> dict:
     """Единый вызов Gemini → пакет ANALYSIS. Нормальная ротация ключей/моделей.
 
@@ -398,19 +729,60 @@ def analyze(
         return _empty_analysis()
 
     # Stage D — response cache
+    pkg = _packaging_defaults(packaging_opts)
     cache_key = _analysis_cache_key(
         audio_path or "",
-        model_name or "gemini-2.5-flash",
+        model_name or "gemini-3.6-flash",
         bool(intro_gemini),
         series_name or "",
         transcription,
+        packaging_opts=pkg,
     )
     cached = _analysis_cache_get(cache_key, log_fn=_log)
     if cached is not None:
         return cached
 
     full_text = " ".join(s.get("text", "") for s in segments)
-    prompt = _build_analysis_prompt(full_text, segments, intro_gemini, series_name)
+    # Полный промпт: GUI prompt_body или встроенный
+    custom_body = (pkg.get("prompt_body") or "").strip()
+    if custom_body:
+        prompt = custom_body
+        timings = "\n".join(
+            f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
+            for s in (segments or [])[:400]
+        )
+        if "ТАЙМКОДЫ_ТРАНСКРИПТА" in prompt:
+            prompt = prompt.replace("ТАЙМКОДЫ_ТРАНСКРИПТА", timings)
+            prompt = prompt.replace("ПОЛНЫЙ_ТЕКСТ_ТРАНСКРИПТА", full_text)
+        elif timings and timings[:60] not in prompt:
+            prompt = (
+                prompt
+                + "\n\n═══════════════════════════════════════\n"
+                + "ТАЙМКОДЫ (источник, не выдумывай секунды)\n"
+                + "═══════════════════════════════════════\n"
+                + timings
+                + "\n\nПОЛНЫЙ ТЕКСТ:\n"
+                + full_text
+            )
+    else:
+        prompt = _build_analysis_prompt(
+            full_text, segments, intro_gemini, series_name, packaging_opts=pkg
+        )
+    if not pkg.get("shorts_use_template", True):
+        prompt = (
+            prompt
+            + "\n\n[SHORTS description] Свободный формат 1–3 предложения + CTA; лимит ~"
+            + str(pkg.get("shorts_desc_max_len", 280))
+            + " символов.\n"
+        )
+    if pkg.get("prompt_extra"):
+        prompt = (
+            prompt
+            + "\n\n═══════════════════════════════════════\n"
+            + "ДОП. ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ\n"
+            + "═══════════════════════════════════════\n"
+            + pkg["prompt_extra"]
+        )
 
     km = GeminiKeyManager(keys, preferred_model=model_name, log_fn=_log)
     _log(f"[GEMINI] Анализ | ключей={km.n} | модель={km.current_model} | cache_key={cache_key[:12]}…")
@@ -435,7 +807,13 @@ def analyze(
             raw = response.text
             if not raw or not raw.strip():
                 raise RuntimeError("Gemini вернул пустой ответ")
-            analysis = _parse_analysis(raw, segments)
+            analysis = _parse_analysis(raw, segments, packaging_opts=pkg)
+            if _is_weak_analysis(analysis):
+                preview = (raw or "").strip().replace("\n", " ")[:220]
+                raise RuntimeError(
+                    "Gemini вернул пустой ANALYSIS (shorts=0, title='', hooks=0). "
+                    f"preview={preview!r}"
+                )
             km.mark_success()
             _log(
                 f"[GEMINI] OK: shorts={len(analysis.get('clips_for_shorts', []))} "
@@ -510,16 +888,28 @@ def analyze(
                     f"Модель Gemini недоступна: {model_name} и fallback-цепочка."
                 ) from e
 
-            # --- JSON parse ---
-            if isinstance(e, (json.JSONDecodeError, ValueError)) and "JSON" in err_str:
-                if json_retries < 1:
+            # --- JSON parse (RuntimeError из _parse_analysis или сырой JSONDecodeError) ---
+            is_json_err = (
+                isinstance(e, (json.JSONDecodeError, ValueError))
+                or "JSON parse error" in err_str
+                or "JSONDecodeError" in err_str
+            )
+            if is_json_err and "JSON" in err_str:
+                if json_retries < 2:  # было 1 → даём 2 попытки + sanitize уже внутри parse
                     json_retries += 1
-                    _log("[GEMINI] JSON parse error — повтор со строгим промптом")
+                    _log(f"[GEMINI] JSON parse error — повтор со строгим промптом ({json_retries}/2)")
                     prompt += (
                         "\n\nВАЖНО: Верни ТОЛЬКО валидный JSON без markdown, "
-                        "без комментариев, без лишнего текста."
+                        "без комментариев, без лишнего текста. "
+                        "Никаких управляющих символов внутри строк."
                     )
                     time.sleep(1.0)
+                    continue
+                # после sanitize + retries — пробуем следующую модель
+                consecutive_503 = 0
+                if km.next_model():
+                    json_retries = 0
+                    _log(f"[GEMINI] JSON всё ещё битый → модель {km.current_model}")
                     continue
                 raise
 
@@ -530,25 +920,68 @@ def analyze(
 
 
 
-def _parse_analysis(raw: str, segments: list[dict]) -> dict:
-    """Распарсить ответ Gemini в структурированный ANALYSIS."""
-    try:
-        # Убираем markdown code blocks
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
+
+def _is_weak_analysis(analysis: dict | None) -> bool:
+    """True если нет ни shorts, ни title, ни hooks — бесполезный ответ."""
+    if not analysis or not isinstance(analysis, dict):
+        return True
+    clips = analysis.get("clips_for_shorts") or []
+    title = str(analysis.get("package_title") or "").strip()
+    hooks = (
+        analysis.get("hooks_vertical")
+        or analysis.get("hooks_wide")
+        or analysis.get("hooks")
+        or []
+    )
+    return (not clips) and (not title) and (not hooks)
+
+
+def _sanitize_json_control_chars(text: str) -> str:
+    """Убрать control characters, из-за которых json.loads падает.
+
+    Gemini иногда вставляет сырые \\x00-\\x1f (включая \\t/\\n/\\r) *внутри* строк —
+    это невалидный JSON (допустимы только escaped). Все C0 → пробел (безопасно
+    и для whitespace вне строк, и для мусора внутри).
+    """
+    if not text:
+        return text
+    return re.sub(r"[\x00-\x1f]", " ", text)
+
+
+def _parse_analysis(raw: str, segments: list[dict], packaging_opts: dict | None = None) -> dict:
+    """Распарсить ответ Gemini. Битый JSON → exception (ротация модели)."""
+    text = (raw or "").strip()
+    if not text:
+        raise RuntimeError("Gemini вернул пустой текст")
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0]
         text = text.strip()
-
+    # иногда модель оборачивает JSON в пояснения — вырежем первый {...}
+    if not text.startswith("{"):
+        a, b = text.find("{"), text.rfind("}")
+        if a >= 0 and b > a:
+            text = text[a : b + 1]
+    # 1) попытка as-is
+    try:
         data = json.loads(text)
-        return _normalize_analysis(data, segments)
-    except (json.JSONDecodeError, IndexError) as e:
-        log.error(f"[GEMINI] Ошибка парсинга JSON: {e}. Ответ: {raw[:500]}")
-        return _empty_analysis()
+    except json.JSONDecodeError:
+        # 2) sanitize control chars и повтор
+        cleaned = _sanitize_json_control_chars(text)
+        try:
+            data = json.loads(cleaned)
+            log.warning("[GEMINI] JSON принят после очистки control characters")
+        except json.JSONDecodeError as e:
+            log.error("[GEMINI] Ошибка парсинга JSON: %s. Ответ: %s", e, (raw or "")[:500])
+            raise RuntimeError(f"Gemini JSON parse error: {e}") from e
+    if not isinstance(data, dict):
+        raise RuntimeError("Gemini JSON не объект")
+    return _normalize_analysis(data, segments, packaging_opts=packaging_opts)
 
 
-def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
+
+def _normalize_analysis(data: dict, segments: list[dict], packaging_opts: dict | None = None) -> dict:
     """Нормализовать ANALYSIS пакет с fallback на Whisper segments для субтитров."""
     corrected_text = data.get("corrected_text", "")
     
@@ -635,23 +1068,13 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
     cta_vertical = _norm_cta(data.get("cta_vertical") or data.get("cta"))
 
     # Shorts: hook + CTA на клип (абсолютные таймкоды на таймлайне полного ролика)
-    REQUIRED_TAGS = ["#ТочкаНаблюдения", "#ТайныйКризисЧеловечества"]
-
-    def _ensure_hashtags(raw: str) -> str:
-        tags = []
-        for part in (raw or "").replace(",", " ").split():
-            p = part.strip()
-            if not p:
-                continue
-            if not p.startswith("#"):
-                p = "#" + p.lstrip("#")
-            if p not in tags:
-                tags.append(p)
-        for req in REQUIRED_TAGS:
-            if req not in tags:
-                tags.insert(0, req)
-        # 5–12 тегов
-        return " ".join(tags[:12])
+    # required tags from GUI packaging_opts (fallback to brand defaults)
+    _pkg = _packaging_defaults(packaging_opts)
+    _req_tags = [
+        t if t.startswith("#") else f"#{t}"
+        for t in (_pkg.get("required_hashtags") or "").split()
+        if t.strip()
+    ] or list(REQUIRED_HASHTAGS)
 
     def _abs_time(val, fallback, clip_start):
         """Если модель вернула относительное время (< начала клипа) — сдвигаем."""
@@ -698,14 +1121,21 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
             cs = max(c_start, c_end - 5.0)
             ce = c_end
 
-        ht = _ensure_hashtags(str(c.get("hashtags") or ""))
-        desc = str(c.get("description") or "").strip()
-        if "Точка наблюдения" not in desc and "точке наблюдения" not in desc.lower():
-            desc = (desc + " " if desc else "") + (
-                "Полная серия «Тайный кризис человечества» на канале «Точка наблюдения»."
+        # r50: short description — template from Gemini; no long series blurb
+        desc = _format_short_description(
+            str(c.get("description") or ""),
+            hashtags=str(c.get("hashtags") or ""),
+            title=str(c.get("title") or ""),
+            packaging_opts=packaging_opts,
+        )
+        ht = " ".join(
+            _normalize_hashtag_list(
+                str(c.get("hashtags") or ""),
+                required=True,
+                max_tags=5,
+                required_tags=_req_tags,
             )
-        if "коммент" not in desc.lower() and "?" not in desc:
-            desc = desc + " Напишите в комментариях, согласны ли вы."
+        )
 
         item = {
             **c,
@@ -742,20 +1172,20 @@ def _normalize_analysis(data: dict, segments: list[dict]) -> dict:
         elif isinstance(main_hook, str):
             package_hook = main_hook.strip()
     package_hashtags = _str_field("package_hashtags", "hashtags")
-    # гарантируем обязательные теги канала/сериала
-    ph_tags = []
-    for part in (package_hashtags or "").replace(",", " ").split():
-        p = part.strip()
-        if not p:
-            continue
-        if not p.startswith("#"):
-            p = "#" + p.lstrip("#")
-        if p not in ph_tags:
-            ph_tags.append(p)
-    for req in ("#ТочкаНаблюдения", "#ТайныйКризисЧеловечества"):
-        if req not in ph_tags:
-            ph_tags.insert(0, req)
-    package_hashtags = " ".join(ph_tags[:12])
+    # обязательные теги из packaging_opts (GUI), не хардкод
+    package_hashtags = " ".join(
+        _normalize_hashtag_list(
+            package_hashtags,
+            required=True,
+            max_tags=12,
+            required_tags=_req_tags,
+        )
+    )
+
+    # r50: full-video description.txt — body + playlists + hashtags (copy-paste)
+    package_description = _ensure_playlist_footer(
+        package_description, package_hashtags, packaging_opts=packaging_opts
+    )
 
     return {
         "corrected_text": corrected_text,

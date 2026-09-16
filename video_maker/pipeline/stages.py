@@ -22,6 +22,7 @@ class PipelineContext:
     vertical_background: str = ""
     cover_horizontal: str = ""
     cover_vertical: str = ""
+    shorts_cover_image: str = ""
     output_folder: str = ""
     series_name: str = ""
 
@@ -82,6 +83,8 @@ class PipelineContext:
     vstack_top_ratio: float = 0.6
     caption_style: str = "clean_pro"
     hook_style: str = "auto_aisie"
+    # r51: YouTube description packaging (from GUI settings)
+    packaging_opts: dict = field(default_factory=dict)
 
     # Чекбоксы
     h_enable_intro: bool = False
@@ -190,6 +193,7 @@ class GeminiStage(Stage):
             series_name=ctx.series_name,
             log_fn=ctx.log,
             audio_path=getattr(ctx, "audio_path", "") or "",
+            packaging_opts=getattr(ctx, "packaging_opts", None) or {},
         )
         ctx.log("[GEMINI] Пакет ANALYSIS готов")
         ctx.progress = 25.0

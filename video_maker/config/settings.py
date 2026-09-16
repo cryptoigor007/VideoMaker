@@ -1,6 +1,6 @@
 """Конфигурация приложения — dataclass с валидацией."""
-# VideoMaker FIX | 2026.09.04-r27 | 2026-09-04
-# CHANGED: validate() — убрана блокировка по whisperx_path (движок = MLX Whisper)
+# VideoMaker FIX | 2026.09.16-r51-gui-packaging | 2026-09-16
+# CHANGED: packaging fields for YouTube descriptions + prompt_extra
 # REPLACE: video_maker/config/settings.py
 import os
 from dataclasses import dataclass, field
@@ -31,6 +31,7 @@ class Settings:
     vertical_background: str = ""
     cover_horizontal: str = ""
     cover_vertical: str = ""
+    shorts_cover_image: str = ""  # r53: фон обложки Shorts
     output_folder: str = ""
 
     # Название серии
@@ -78,6 +79,17 @@ class Settings:
     keep_temp_files: bool = False
     target_lufs: float = -14.0
     vstack_top_ratio: float = 0.6
+
+    # r51: YouTube packaging (description .txt / GUI)
+    playlist_season_url: str = "https://www.youtube.com/playlist?list=PLOsH4yc61thU"
+    playlist_block_url: str = "https://www.youtube.com/playlist?list=PLfOYg9HTzi0s"
+    playlist_block_label: str = "Одиночество и отношения"
+    required_hashtags: str = "#ТочкаНаблюдения #ТайныйКризисЧеловечества"
+    append_playlist_footer: bool = True
+    prompt_extra: str = ""
+    prompt_body: str = ""  # полный промпт; пусто = встроенный
+    shorts_desc_max_len: int = 280
+    shorts_use_template: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":

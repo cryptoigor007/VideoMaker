@@ -1,4 +1,5 @@
-# VideoMaker FIX | 2026.09.09-r43-tail | 2026-09-09
+# VideoMaker FIX | 2026.09.16-r55-cover-color | 2026-09-16
+# CHANGED r55: clip_start → cover color parity with on-screen hook
 # CHANGED:
 #   r43-tail: cut end = max(gemini_end, last_word_end) + 0.40s (clamp к video_duration)
 #             чтобы последнее слово не обрезалось; лог [SHORTS] tail: ...
@@ -134,13 +135,9 @@ class ShortsCutter(Stage):
 
         clip = dict(clip)
         clip["end"] = end
+        # r50: description already normalized in analysis (template + tags); do not append long blurb
         clip["hashtags"] = _ensure_hashtags(str(clip.get("hashtags") or ""))
-        desc = str(clip.get("description") or "").strip()
-        if "Точка наблюдения" not in desc and "точке наблюдения" not in desc.lower():
-            desc = (desc + " " if desc else "") + (
-                "Полная серия «Тайный кризис человечества» на канале «Точка наблюдения»."
-            )
-        clip["description"] = desc.strip()
+        clip["description"] = str(clip.get("description") or "").strip()
 
         short_dir = os.path.join(output_dir, f"short_{index:03d}")
         os.makedirs(short_dir, exist_ok=True)
@@ -309,6 +306,33 @@ class ShortsCutter(Stage):
             pass
 
         self._write_sidecar_files(clip, short_dir, index)
+        # r53: обложка = фон + hook (отдельный jpg, short не падает при ошибке)
+        try:
+            cover_bg = (getattr(ctx, "shorts_cover_image", "") or "").strip()
+            if cover_bg and os.path.isfile(cover_bg):
+                hook_txt = clip.get("hook") or ""
+                if isinstance(hook_txt, dict):
+                    hook_txt = hook_txt.get("text") or ""
+                hook_txt = str(hook_txt).strip()
+                if hook_txt:
+                    from ..engines.short_cover import render_short_cover
+                    cover_out = os.path.join(short_dir, f"short_{index:03d}_cover.jpg")
+                    # clip.start → тот же color_index, что у хука в burn_subtitles
+                    try:
+                        _cstart = float(clip.get("start", 0) or 0)
+                    except (TypeError, ValueError):
+                        _cstart = 0.0
+                    render_short_cover(
+                        cover_bg,
+                        hook_txt,
+                        cover_out,
+                        log_fn=ctx.log,
+                        clip_start=_cstart,
+                    )
+                else:
+                    ctx.log(f"[COVER] short #{index}: skip — пустой hook")
+        except Exception as e:
+            ctx.log(f"[COVER] short #{index}: ошибка (short сохранён): {e}")
         self._write_metadata(
             clip, ctx, os.path.join(short_dir, f"short_{index:03d}_meta.txt")
         )
@@ -328,9 +352,14 @@ class ShortsCutter(Stage):
         ]
         desc = str(clip.get("description") or "").strip()
         tags = _ensure_hashtags(str(clip.get("hashtags") or ""))
+        # description уже может содержать хештеги (r50) — не дублировать в upload.txt
         upload_block = desc
         if tags:
-            upload_block = (desc + "\n\n" if desc else "") + tags
+            desc_has_tag = any(
+                p.startswith("#") for p in desc.replace("\n", " ").split() if p
+            )
+            if not desc_has_tag:
+                upload_block = (desc + "\n\n" if desc else "") + tags
         fields.append(("upload", upload_block))
         for kind, content in fields:
             p = os.path.join(short_dir, f"{base}_{kind}.txt")
