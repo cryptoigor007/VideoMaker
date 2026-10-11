@@ -1,16 +1,40 @@
 """Движок аудио — 48kHz, BGM, loudnorm."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import random
 import re
 import subprocess
+from collections import OrderedDict
 
 log = logging.getLogger(__name__)
 
-_PROBE_CACHE: dict[str, float] = {}
+# r57: кэш с инвалидацией (path|mtime_ns|size) — перезаписанный файл
+# по тому же пути больше не возвращает старую длительность.
+_PROBE_CACHE: "OrderedDict[str, float]" = OrderedDict()
+_PROBE_CACHE_MAX = 4096
+
+
+def _probe_key(path: str) -> str:
+    """Ключ кэша probe: путь + mtime + размер (дёшево, без ffprobe)."""
+    if not path:
+        return ""
+    try:
+        st = os.stat(path)
+        return f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}"
+    except OSError:
+        return os.path.abspath(path)
+
+
+def _probe_cache_put(key: str, value: float) -> None:
+    if not key:
+        return
+    _PROBE_CACHE[key] = value
+    _PROBE_CACHE.move_to_end(key)
+    while len(_PROBE_CACHE) > _PROBE_CACHE_MAX:
+        _PROBE_CACHE.popitem(last=False)
 
 
 def probe_duration(path: str) -> float:
@@ -19,13 +43,11 @@ def probe_duration(path: str) -> float:
     Устойчиво к битым/неполным файлам: при ошибке ffprobe возвращает 0.0
     (вызывающий код обычно пропускает клипы с dur <= 0.05).
     """
-    # session cache (abspath → duration)
-    if path:
-        key = os.path.abspath(path)
-        if key in _PROBE_CACHE:
-            return _PROBE_CACHE[key]
-    else:
-        key = ""
+    # session cache (path|mtime|size → duration)
+    key = _probe_key(path) if path else ""
+    if key and key in _PROBE_CACHE:
+        _PROBE_CACHE.move_to_end(key)
+        return _PROBE_CACHE[key]
     if not path or not os.path.exists(path):
         log.warning("[АУДИО] probe_duration: путь не существует: %s", path)
         return 0.0
@@ -65,8 +87,7 @@ def probe_duration(path: str) -> float:
         try:
             val = float(dur)
             if val > 0:
-                if key:
-                    _PROBE_CACHE[key] = val
+                _probe_cache_put(key, val)
                 return val
         except (TypeError, ValueError):
             pass
@@ -84,8 +105,7 @@ def probe_duration(path: str) -> float:
         except (TypeError, ValueError):
             continue
     if best > 0:
-        if key:
-            _PROBE_CACHE[key] = best
+        _probe_cache_put(key, best)
         return best
 
     log.warning(
@@ -147,6 +167,136 @@ def voice_enhance_filter(audio_path: str, output_path: str, log_fn=None) -> str:
     return output_path
 
 
+# ── BGM: подбор трека, loudnorm-хелперы, сборка аудио-цепочки ──────────────
+_BGM_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus")
+
+
+def list_bgm_tracks(bgm_folder: str) -> list[str]:
+    """Аудиофайлы BGM в папке (без скрытых). Пустая/несуществующая → []."""
+    folder = (bgm_folder or "").strip()
+    if not folder or not os.path.isdir(folder):
+        return []
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return []
+    return [
+        os.path.join(folder, n)
+        for n in names
+        if not n.startswith(".") and n.lower().endswith(_BGM_EXTS)
+    ]
+
+
+def pick_bgm_track(bgm_folder: str, seed_key: str = "") -> str:
+    """Детерминированный выбор трека: один и тот же выпуск → одна и та же музыка.
+
+    Раньше был random.choice: разные площадки/прогоны получали разный трек.
+    """
+    tracks = list_bgm_tracks(bgm_folder)
+    if not tracks:
+        return ""
+    if len(tracks) == 1:
+        return tracks[0]
+    seed = f"{seed_key}|{len(tracks)}".encode("utf-8")
+    idx = int.from_bytes(hashlib.sha256(seed).digest()[:4], "big") % len(tracks)
+    return tracks[idx]
+
+
+def measure_loudnorm_params(
+    media_path: str,
+    target_lufs: float = -14.0,
+    log_fn=None,
+) -> dict | None:
+    """Pass-1 loudnorm по АУДИО (быстро: -vn). Возвращает measured_* или None.
+
+    Измеряем один раз на мастер-аудио и переиспользуем во всех энкодах —
+    точность two-pass без дополнительных проходов по 4K-видео.
+    """
+    _log = log_fn or log.info
+    if not media_path or not os.path.isfile(media_path):
+        return None
+    cmd = [
+        "ffmpeg", "-y", "-i", media_path, "-vn",
+        "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:print_format=json",
+        "-f", "null", "-",
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except Exception as e:
+        _log(f"[АУДИО] loudnorm measure failed: {e}")
+        return None
+    m = re.search(r"\{.*\}", res.stderr or "", re.DOTALL)
+    if not m:
+        return None
+    try:
+        d = json.loads(m.group())
+        out = {
+            "i": float(d.get("input_i", -14.0)),
+            "tp": float(d.get("input_tp", -1.5)),
+            "lra": float(d.get("input_lra", 11.0)),
+            "thresh": float(d.get("input_thresh", -20.0)),
+            "offset": float(d.get("target_offset", 0.0)),
+        }
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        _log(f"[АУДИО] loudnorm measure parse: {e}")
+        return None
+    _log(
+        f"[АУДИО] loudnorm measured: I={out['i']:.1f} LUFS, "
+        f"TP={out['tp']:.1f}, LRA={out['lra']:.1f}"
+    )
+    return out
+
+
+def loudnorm_tail(target_lufs: float, measured: dict | None) -> str:
+    """Хвост цепочки loudnorm: two-pass при наличии измерений, иначе one-pass."""
+    if measured:
+        return (
+            f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:"
+            f"measured_I={measured['i']}:measured_TP={measured['tp']}:"
+            f"measured_LRA={measured['lra']}:measured_thresh={measured['thresh']}:"
+            f"offset={measured['offset']}:linear=true"
+        )
+    return f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
+
+
+def build_bgm_filter(
+    video_dur: float,
+    target_lufs: float = -14.0,
+    measured: dict | None = None,
+    duck: bool = True,
+    bgm_label: str = "1:a",
+    voice_label: str = "0:a",
+    out_label: str = "outa",
+) -> str:
+    """Аудио-цепочка «голос + BGM» для filter_complex.
+
+    Используется и в mix_bgm (аудио-ремукс), и в inline-энкодах
+    (burn субтитров / vstack) — один источник правды.
+    """
+    dur = max(0.5, float(video_dur or 0.0))
+    bgm = (
+        f"[{bgm_label}]aloop=loop=-1:size=2e9,"
+        f"loudnorm=I=-18:TP=-3:LRA=11,"
+        f"afade=t=in:st=0:d=1.5,"
+        f"atrim=0:{dur:.3f},asetpts=N/SR/TB[bg]"
+    )
+    if duck:
+        ducking = (
+            f"[bg][{voice_label}]sidechaincompress="
+            f"threshold=0.03:ratio=8:attack=5:release=250[bgd]"
+        )
+        mix_in = f"[{voice_label}][bgd]"
+    else:
+        ducking = ""
+        mix_in = f"[{voice_label}][bg]"
+    fade_out = f"afade=t=out:st={max(0.0, dur - 2.0):.3f}:d=2," if dur > 3.0 else ""
+    mix = (
+        f"{mix_in}amix=inputs=2:duration=first:weights=1 0.9:"
+        f"dropout_transition=3,{fade_out}{loudnorm_tail(target_lufs, measured)}[{out_label}]"
+    )
+    return bgm + ";" + (ducking + ";" if ducking else "") + mix
+
+
 def mix_bgm(
     video_path: str,
     bgm_folder: str,
@@ -155,46 +305,33 @@ def mix_bgm(
     loudnorm: bool = False,
     target_lufs: float = -14.0,
 ) -> str:
-    """Смешать голос с BGM (sidechain compression) — луп до конца видео."""
+    """Смешать голос с BGM (ducking) — луп до конца видео. Видео: stream copy."""
     _log = log_fn or log.info
     _log("[АУДИО] Смешивание с BGM...")
 
-    bgm_files = [
-        os.path.join(bgm_folder, f)
-        for f in [f for f in os.listdir(bgm_folder) if not f.startswith(".") and f.lower().endswith((".mp3", ".wav", ".m4a", ".flac", ".aac"))]
-        if f.lower().endswith((".mp3", ".wav", ".flac", ".m4a"))
-    ]
-    if not bgm_files:
-        _log("[АУДИО] BGM файлы не найдены, пропускаем")
+    if not (bgm_folder or "").strip() or not os.path.isdir(bgm_folder):
+        _log(f"[АУДИО] BGM папка недоступна: {bgm_folder!r} — пропускаем")
         return video_path
 
-    bgm_file = random.choice(bgm_files)
+    bgm_file = pick_bgm_track(bgm_folder, seed_key=os.path.basename(video_path))
+    if not bgm_file:
+        _log("[АУДИО] BGM файлы не найдены, пропускаем")
+        return video_path
+    _log(f"[АУДИО] BGM трек: {os.path.basename(bgm_file)}")
 
-    # Получаем длительность видео для обрезки BGM
     video_dur = probe_duration(video_path)
-
-    # BGM: бесконечный луп -> громкость -18 LUFS -> обрезка по длине видео
-    if loudnorm:
-        filter_complex = (
-            f"[1:a]aloop=loop=-1:size=2e9,"
-            f"loudnorm=I=-18:TP=-3:LRA=11,"
-            f"atrim=0:{video_dur},"
-            f"apad=whole_dur={video_dur}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3,"
-            f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11[out]"
-        )
-    else:
-        filter_complex = (
-            f"[1:a]aloop=loop=-1:size=2e9,"
-            f"loudnorm=I=-18:TP=-3:LRA=11,"
-            f"atrim=0:{video_dur},"
-            f"apad=whole_dur={video_dur}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:weights=1 0.3:dropout_transition=3[out]"
-        )
+    filter_complex = build_bgm_filter(
+        video_dur,
+        target_lufs=target_lufs,
+        measured=None,
+        duck=True,
+        out_label="out",
+    )
 
     # Всегда пишем во временный файл (ffmpeg не умеет in-place на том же пути)
     import tempfile
     out_dir = os.path.dirname(output_path) or "."
+    os.makedirs(out_dir, exist_ok=True)
     fd, tmp_output_path = tempfile.mkstemp(suffix=".mp4", prefix="bgm_", dir=out_dir)
     os.close(fd)
     try:
@@ -208,7 +345,10 @@ def mix_bgm(
             "-ar", "48000",
             tmp_output_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("mix_bgm timeout 3600s") from e
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "")[-600:]
             _log(f"[АУДИО] mix_bgm ffmpeg error: {err}")
@@ -308,7 +448,7 @@ def measure_loudness(path: str) -> dict | None:
     peak_dbtp = None
 
     lines = stderr.split("\n")
-    for i, line in enumerate(lines):
+    for line in lines:
         # Ищем "I:         -26.9 LUFS" после "Integrated loudness:"
         if "I:" in line and "LUFS" in line:
             parts = line.split("I:")

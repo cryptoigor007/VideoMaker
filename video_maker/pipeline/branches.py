@@ -119,7 +119,8 @@ class FinalHorizontal(Stage):
             current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
 
         # BGM — мешаем ОДИН раз на long wide (единственный mix в пайплайне)
-        if ctx.add_bgm and ctx.bgm_folder:
+        # r56: BGM deferred to Finalize (per social platform)
+        if False and ctx.add_bgm and ctx.bgm_folder:
             from ..engines.audio import mix_bgm
             current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log, loudnorm=True)
             ctx.horizontal_audio_normalized = True
@@ -281,8 +282,8 @@ class FinalVertical(Stage):
                 ctx.log("[BGM] vertical: reused mixed audio from wide (no re-mix)")
             elif ctx.voice_enhance:
                 current = self._apply_audio_post(current, ctx, output_path)
-        elif ctx.add_bgm and ctx.bgm_folder:
-            # Wide не мешал BGM (выключен на H) — единственный mix здесь
+        elif False and ctx.add_bgm and ctx.bgm_folder:
+            # r56: BGM deferred to Finalize
             from ..engines.audio import mix_bgm
             bgm_out = os.path.join(output_dir, "final_9x16_bgm.mp4")
             current = mix_bgm(current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True)
@@ -307,8 +308,8 @@ class FinalVertical(Stage):
             tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced_v.aac")
             os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
             current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
-        # BGM only if not already mixed upstream
-        if ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
+        # r56: BGM deferred to Finalize (per platform)
+        if False and ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
             from ..engines.audio import mix_bgm
             current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log, loudnorm=True)
             ctx.bgm_mixed = True

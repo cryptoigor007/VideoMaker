@@ -18,6 +18,8 @@ class PipelineContext:
     broll_horizontal: str = ""
     broll_vertical: str = ""
     bgm_folder: str = ""
+    # r56: [{id, label, folder}, ...] — BGM/раскладка по соцсетям
+    bgm_platforms: list = field(default_factory=list)
     intro_middle_outro_folder: str = ""
     vertical_background: str = ""
     cover_horizontal: str = ""
@@ -56,14 +58,14 @@ class PipelineContext:
     master_vertical: str = ""
     final_horizontal: str = ""
     final_vertical: str = ""
-    horizontal_audio_normalized: bool = False
-    vertical_audio_normalized: bool = False
-    shorts_audio_normalized: bool = False
+    # r57: аудио (BGM + loudnorm) обрабатывается одним проходом вместе с видео
+    audio_normalized: bool = False
+    base_bgm_folder: str = ""          # папка BGM базовой площадки (инлайн-микс)
+    inline_bgm: bool = False           # ≤1 уникальная папка BGM → микшируем в энкод
+    loudnorm_params: dict = field(default_factory=dict)  # измерение pass-1
     shorts: list[str] = field(default_factory=list)
-    # BGM: mix ровно один раз на long, дальше reuse
-    bgm_mixed: bool = False
-    bgm_source_video: str = ""
-    # IMO applied on horizontal (для безопасного reuse audio на vertical)
+    short_indices: list = field(default_factory=list)    # исходные номера клипов
+    # IMO applied on horizontal
     h_did_imo: bool = False
 
     # Настройки

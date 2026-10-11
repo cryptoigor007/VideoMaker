@@ -1,8 +1,12 @@
-# VideoMaker FIX | 2026.09.10-r43-idlefix | 2026-09-10
+# VideoMaker | 2026.09.23-r57-api.1 | 2026-09-23
 # CHANGED:
-#   r43-idlefix: logging level=INFO по умолчанию;
-#                 DEBUG только если VIDEOMAKER_DEBUG=1|true|yes.
-# PREV: (без шапки) entrypoint + SIGINT/SIGTERM + Tk mainloop
+#   r57-api: запуск HTTP-пульта (video_maker/api) поверх приложения +
+#            headless-режим без окна. Новые ключи: --headless (скрыть окно),
+#            --api-port N (порт пульта), --no-api (не поднимать пульт).
+#            App сохраняется в переменную — пульту нужен доступ к нему.
+#   r57-api.1: понятные сообщения о режимах: «[ОКНО] без окна» и «[API] пульт
+#              выключен ключом --no-api».
+# PREV: 2026.09.10-r43-idlefix — logging level=INFO; DEBUG по VIDEOMAKER_DEBUG
 # REPLACE: video_maker/main.py
 
 """Точка входа — main.py."""
@@ -105,24 +109,61 @@ def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
+def _parse_args(argv: list[str]) -> tuple[bool, int | None, bool]:
+    """Разобрать ключи: (headless, порт пульта, не поднимать пульт)."""
+    headless = "--headless" in argv
+    no_api = "--no-api" in argv
+    port: int | None = None
+    if "--api-port" in argv:
+        idx = argv.index("--api-port")
+        if idx + 1 < len(argv):
+            try:
+                port = int(argv[idx + 1])
+            except ValueError:
+                log.warning("Некорректный --api-port %r — беру порт по умолчанию", argv[idx + 1])
+    return headless, port, no_api
+
+
 def main() -> None:
     """Запуск приложения."""
-    log.info("LIFECYCLE start pid=%s cwd=%s python=%s", os.getpid(), os.getcwd(), sys.version.split()[0])
+    headless, api_port, no_api = _parse_args(sys.argv[1:])
+    log.info("LIFECYCLE start pid=%s cwd=%s python=%s headless=%s api=%s",
+             os.getpid(), os.getcwd(), sys.version.split()[0], headless,
+             "выключен" if no_api else "включён")
     
     try:
         log.info("Создание корневого окна Tk()...")
         root = tk.Tk()
         log.info(f"LIFECYCLE tk_created root={root}")
 
-        # Принудительно показываем окно на переднем плане (macOS)
-        _bring_window_to_front(root)
+        if headless:
+            # Окно скрыто, но Tk-цикл живёт: пайплайн работает как обычно.
+            root.withdraw()
+            log.info("[ОКНО] режим без окна: главное окно скрыто, приложение работает в фоне")
+        else:
+            # Принудительно показываем окно на переднем плане (macOS)
+            _bring_window_to_front(root)
 
         log.info("Импорт App...")
         from .gui.app import App
 
         log.info("Создание App(root)...")
-        _ = App(root)
+        app = App(root)
         log.info("LIFECYCLE app_created")
+
+        if no_api:
+            log.info("[API] пульт выключен ключом --no-api")
+        else:
+            try:
+                from .api import start_api
+
+                runtime = start_api(app, root, headless=headless, port=api_port)
+                if runtime is not None:
+                    # держим ссылку: иначе пульт соберёт сборщик мусора
+                    globals()["_API_RUNTIME"] = runtime
+                    log.info("LIFECYCLE api_started")
+            except Exception:
+                log.exception("Не удалось поднять пульт")
 
         # окно: размер и позиция (видно, не уехало ли за экран)
         root.update_idletasks()

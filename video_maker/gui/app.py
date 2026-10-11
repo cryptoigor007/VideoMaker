@@ -1,12 +1,12 @@
-# VideoMaker FIX | 2026.09.10-r43-idlefix | 2026-09-10
-# CHANGED (idle + close reliability):
-#   1) IMO rescan: 60s вместо 5s + _closing guard + лёгкий cache isfile (30s).
-#   2) Heartbeat: 30s + _closing guard + after_id для отмены.
-#   3) _on_close: всегда prevent_sleep_stop, kill children, after_cancel,
-#      _closing=True, os._exit(0) в конце — процесс гарантированно умирает.
-#   4) log_text: ограничение ~3000 строк (нет утечки RAM).
-#   5) _kill_ffmpeg: ffmpeg + ffprobe.
-# PREV: 2026.09.09-r43-clean
+# VideoMaker | 2026.09.23-r57-api | 2026-09-23
+# CHANGED (r57-api — пульт и живой статус):
+#   1) Статус-бар: строка «▶ что идёт сейчас» — последнее действие пайплайна
+#      (рамки-разделители отбрасываются). Заполняется из _log.
+#   2) Блок «Пульт» в главной вкладке: адрес для телефона, галочка «Доступ из
+#      локальной сети», кнопка «Открыть пульт».
+#   3) Новые методы: _show_api_info, _on_api_lan_toggle, _open_api_page.
+# PREV: 2026.09.10-r43-idlefix — надёжность idle/закрытия: IMO rescan 60s,
+#       heartbeat 30s, _on_close, log_text 3000 строк, _kill_ffmpeg.
 # REPLACE: video_maker/gui/app.py
 
 """Главное окно — Tkinter GUI с тёмной темой и подробным логированием."""
@@ -19,6 +19,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import contextlib
 import json
 from tkinter import filedialog, messagebox, ttk
 
@@ -55,7 +56,7 @@ PATH_VARS = [
     "broll_h_var",
     "broll_v_var",
     "bg_var",
-    "bgm_var",
+    "bgm_youtube_folder_var", "bgm_tiktok_folder_var", "bgm_instagram_folder_var", "bgm_rutube_folder_var", "bgm_vk_folder_var", "bgm_facebook_folder_var", "bgm_other_folder_var",
     "imo_folder_var",
     "cover_h_var",
     "cover_v_var",
@@ -94,7 +95,9 @@ BOOL_VARS = [
     "h_intro", "h_middle", "h_outro", "h_hooks", "h_subs", "h_strong",
     "v_intro", "v_middle", "v_outro", "v_hooks", "v_subs", "v_strong",
     "s_intro", "s_middle", "s_outro", "s_hooks", "s_subs", "s_strong",
-    "voice_enhance_var", "add_bgm_var", "intro_gemini_var", "keep_temp_var",
+    "voice_enhance_var", "intro_gemini_var", "keep_temp_var",
+    "bgm_youtube_enable_var", "bgm_tiktok_enable_var",
+    "bgm_instagram_enable_var", "bgm_rutube_enable_var", "bgm_vk_enable_var", "bgm_facebook_enable_var", "bgm_other_enable_var",
     "prevent_sleep_var", "shutdown_when_done_var",
     "append_playlist_footer_var", "shorts_use_template_var",
 ]
@@ -518,10 +521,49 @@ class App:
             left_col, "Фон для вертикального видео",
             [("Файл:", "bg_var", "file", [("Изображения/Видео", "*.jpg *.jpeg *.png *.mp4 *.mov")])],
         )
-        self._add_file_section(
-            left_col, "Фоновая музыка",
-            [("Папка:", "bgm_var", "dir", [])],
-        )
+        # r56: BGM — YouTube база; остальные только с папкой, где есть аудио
+        bgm_sec = self._add_section(left_col, "BGM для соцсетей")
+        ttk.Label(
+            bgm_sec,
+            text="YouTube — всегда (BGM если в папке есть треки). Остальные: галочка + папка с аудио.",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(0, 4))
+        self.bgm_youtube_enable_var = tk.BooleanVar(value=True)
+        self.bgm_tiktok_enable_var = tk.BooleanVar(value=False)
+        self.bgm_instagram_enable_var = tk.BooleanVar(value=False)
+        self.bgm_rutube_enable_var = tk.BooleanVar(value=False)
+        self.bgm_vk_enable_var = tk.BooleanVar(value=False)
+        self.bgm_facebook_enable_var = tk.BooleanVar(value=False)
+        self.bgm_other_enable_var = tk.BooleanVar(value=False)
+        self.bgm_youtube_folder_var = tk.StringVar()
+        self.bgm_tiktok_folder_var = tk.StringVar()
+        self.bgm_instagram_folder_var = tk.StringVar()
+        self.bgm_rutube_folder_var = tk.StringVar()
+        self.bgm_vk_folder_var = tk.StringVar()
+        self.bgm_facebook_folder_var = tk.StringVar()
+        self.bgm_other_folder_var = tk.StringVar()
+        self.bgm_var = self.bgm_youtube_folder_var  # legacy
+        self._bgm_platform_rows = []
+        for _en, _lab, _fvar, _is_base in (
+            (self.bgm_youtube_enable_var, "BGM YouTube", self.bgm_youtube_folder_var, True),
+            (self.bgm_tiktok_enable_var, "TikTok", self.bgm_tiktok_folder_var, False),
+            (self.bgm_instagram_enable_var, "Instagram", self.bgm_instagram_folder_var, False),
+            (self.bgm_rutube_enable_var, "RuTube", self.bgm_rutube_folder_var, False),
+            (self.bgm_vk_enable_var, "VK", self.bgm_vk_folder_var, False),
+            (self.bgm_facebook_enable_var, "Facebook", self.bgm_facebook_folder_var, False),
+            (self.bgm_other_enable_var, "Другое", self.bgm_other_folder_var, False),
+        ):
+            row = ttk.Frame(bgm_sec)
+            row.pack(fill=tk.X, pady=2)
+            cb = ttk.Checkbutton(row, text=_lab, variable=_en, width=14)
+            cb.pack(side=tk.LEFT)
+            ent = ttk.Entry(row, textvariable=_fvar, font=("SF Pro Text", 10))
+            ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+            ttk.Button(
+                row, text="…", width=3,
+                command=lambda v=_fvar, e=_en, base=_is_base: self._browse_bgm_folder(v, e, base),
+            ).pack(side=tk.LEFT)
+            self._bgm_platform_rows.append((_en, _fvar, _is_base, cb))
         self._add_file_section(
             left_col, "Папка вывода",
             [("Папка:", "output_var", "dir", [])],
@@ -533,7 +575,7 @@ class App:
         self.intro_gemini_var = tk.BooleanVar(value=True)
         self.keep_temp_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(audio_settings, text="Усилить голос", variable=self.voice_enhance_var).pack(anchor="w", pady=2)
-        ttk.Checkbutton(audio_settings, text="Добавить BGM", variable=self.add_bgm_var).pack(anchor="w", pady=2)
+        # r56: BGM включается галочками соцсетей выше
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
         self.prevent_sleep_var = tk.BooleanVar(value=True)
@@ -669,6 +711,13 @@ class App:
         self.stage_label.pack(side=tk.LEFT, padx=(12, 0))
         self.time_label = ttk.Label(time_row, text="", style="Progress.TLabel")
         self.time_label.pack(side=tk.RIGHT)
+
+        # Строка «что сейчас происходит» — последнее действие пайплайна
+        self.activity_label = ttk.Label(
+            parent, text="", style="Progress.TLabel", anchor="w", justify="left",
+        )
+        self.activity_label.pack(fill=tk.X, pady=(0, 6))
+        self._activity_text = ""
         self._pipeline_t0 = 0.0
 
         # === Лог ===
@@ -694,6 +743,97 @@ class App:
         self.log_text.configure(yscrollcommand=log_scrollbar.set)
         log_scrollbar.pack(side="right", fill="y")
         self.log_text.pack(fill="both", expand=True)
+
+        # === Пульт (HTTP API): телефон и Orchestrator ===
+        api_frame = self._add_section(parent, "Пульт (телефон / Orchestrator)")
+        api_frame.configure(padding=4)
+        self.api_label = ttk.Label(
+            api_frame, text="пульт поднимается…", style="Progress.TLabel",
+            anchor="w", justify="left", wraplength=880,
+        )
+        self.api_label.pack(fill=tk.X)
+        api_row = ttk.Frame(api_frame)
+        api_row.pack(fill=tk.X, pady=(6, 0))
+        self.api_lan_var = tk.BooleanVar(value=False)
+        self.api_lan_cb = ttk.Checkbutton(
+            api_row, text="Доступ из локальной сети (телефон)",
+            variable=self.api_lan_var, command=self._on_api_lan_toggle,
+        )
+        self.api_lan_cb.pack(side=tk.LEFT)
+        self.api_open_btn = ttk.Button(api_row, text="Открыть пульт", command=self._open_api_page)
+        self.api_open_btn.pack(side=tk.RIGHT)
+        self._api_urls: dict = {}
+        self._api_lan_setter = None
+
+    # ─── Пульт: отображение адресов и переключатель сети ──────────────────
+    def _show_api_info(self, urls: dict, lan_setter=None) -> None:
+        """Заполнить блок пульта (вызывает video_maker.api при старте)."""
+        self._api_urls = dict(urls or {})
+        if lan_setter is not None:
+            self._api_lan_setter = lan_setter
+        local = self._api_urls.get("local", "")
+        net = self._api_urls.get("network", "")
+        text = f"Локально: {local}"
+        if net:
+            text += f"\nС телефона: {net}"
+        else:
+            text += "\nС телефона: включите «Доступ из локальной сети»"
+        if not self._api_urls.get("enabled", True):
+            text = "Пульт выключен (--no-api или enabled=false в ~/video_maker/api.json)"
+        with contextlib.suppress(tk.TclError):
+            # виджет мог быть уже уничтожен при закрытии окна
+            self.api_label.configure(text=text)
+            if hasattr(self, "api_lan_var"):
+                self.api_lan_var.set(bool(self._api_urls.get("lan")))
+
+    def _on_api_lan_toggle(self) -> None:
+        """Переключить доступ из сети (сохранение + перезапуск сервера в потоке)."""
+        setter = getattr(self, "_api_lan_setter", None)
+        if setter is None:
+            return
+        want = bool(self.api_lan_var.get())
+        # Сразу видно, что нажатие принято: перезапуск сервера занимает доли
+        # секунды, но подпись успевает показать, что происходит.
+        with contextlib.suppress(tk.TclError):
+            self.api_label.configure(
+                text=f"Переключаю доступ из сети: {'включаю' if want else 'выключаю'}…")
+
+        def _show(urls) -> None:
+            if urls:
+                self._show_api_info(urls, setter)
+            else:
+                # не получилось — вернуть галочку в настоящее состояние сервера
+                self._show_api_info(getattr(self, "_api_urls", {}), None)
+
+        def _work():
+            try:
+                urls = setter(want)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[API] не удалось переключить доступ из сети: %s", exc)
+                urls = None
+            bridge = getattr(self, "_api_bridge", None)
+            if bridge is not None:
+                # Штатный путь: вызов исполнится в потоке Tk. Через root.after
+                # из чужого потока Tk молча теряет вызов (macOS).
+                with contextlib.suppress(Exception):
+                    bridge.call_async(lambda: _show(urls))
+                    return
+            with contextlib.suppress(RuntimeError):
+                self.root.after(0, lambda: _show(urls))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _open_api_page(self) -> None:
+        """Открыть страницу пульта в браузере."""
+        url = (self._api_urls or {}).get("network") or (self._api_urls or {}).get("local")
+        if not url:
+            return
+        try:
+            import webbrowser
+
+            webbrowser.open(url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[API] не удалось открыть браузер: %s", exc)
 
     def _build_imo_tab(self, parent) -> None:
         """Вкладка Intro / Middle / Outro для каждого формата."""
@@ -864,6 +1004,27 @@ class App:
             # иначе в JSON уходил bool=False от старого disabled.
             self._sync_imo_checkboxes()
             self._save_settings()
+
+    def _browse_dir_into(self, var) -> None:
+        from tkinter import filedialog
+        path = filedialog.askdirectory()
+        if path:
+            var.set(path)
+
+    def _browse_bgm_folder(self, folder_var, enable_var, is_youtube_base: bool = False) -> None:
+        """Выбор папки BGM: если в ней есть аудио — галочка включается автоматически."""
+        from tkinter import filedialog
+        path = filedialog.askdirectory()
+        if not path:
+            return
+        folder_var.set(path)
+        from ..config.settings import Settings
+        has = Settings.folder_has_bgm_audio(path)
+        if has:
+            enable_var.set(True)
+        elif not is_youtube_base:
+            # доп. соцсеть без треков — галочку лучше снять
+            enable_var.set(False)
 
     def _browse_audio(self) -> None:
         """Одна кнопка: выбрать файл или папку. Тип определяется автоматически, инфо — в лог."""
@@ -1415,6 +1576,16 @@ class App:
                     pass
                 self.log_text.see(tk.END)
                 self.log_text.configure(state=tk.DISABLED)
+                # Статус-бар: что идёт прямо сейчас (рамки-разделители пропускаем)
+                line = ""
+                for candidate in reversed((msg or "").splitlines()):
+                    c = candidate.strip()
+                    if c and not set(c) <= set("─═-— "):
+                        line = c
+                        break
+                if line and hasattr(self, "activity_label"):
+                    self._activity_text = line
+                    self.activity_label.configure(text=f"▶ {line}")
             except Exception:
                 pass
         try:
@@ -1539,7 +1710,22 @@ class App:
         self.settings.broll_horizontal = self.broll_h_var.get()
         self.settings.broll_vertical = self.broll_v_var.get()
         self.settings.vertical_background = self.bg_var.get()
-        self.settings.bgm_folder = self.bgm_var.get()
+        # r56 platform BGM
+        self.settings.bgm_youtube_folder = self.bgm_youtube_folder_var.get().strip()
+        self.settings.bgm_tiktok_folder = self.bgm_tiktok_folder_var.get().strip()
+        self.settings.bgm_instagram_folder = self.bgm_instagram_folder_var.get().strip()
+        self.settings.bgm_rutube_folder = self.bgm_rutube_folder_var.get().strip()
+        self.settings.bgm_vk_folder = self.bgm_vk_folder_var.get().strip()
+        self.settings.bgm_facebook_folder = self.bgm_facebook_folder_var.get().strip()
+        self.settings.bgm_other_folder = self.bgm_other_folder_var.get().strip()
+        self.settings.bgm_youtube_enable = bool(self.bgm_youtube_enable_var.get())
+        self.settings.bgm_tiktok_enable = bool(self.bgm_tiktok_enable_var.get())
+        self.settings.bgm_instagram_enable = bool(self.bgm_instagram_enable_var.get())
+        self.settings.bgm_rutube_enable = bool(self.bgm_rutube_enable_var.get())
+        self.settings.bgm_vk_enable = bool(self.bgm_vk_enable_var.get())
+        self.settings.bgm_facebook_enable = bool(self.bgm_facebook_enable_var.get())
+        self.settings.bgm_other_enable = bool(self.bgm_other_enable_var.get())
+        self.settings.bgm_folder = self.settings.bgm_youtube_folder  # legacy
         self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
         self.settings.cover_horizontal = self.cover_h_var.get()
         self.settings.cover_vertical = self.cover_v_var.get()
@@ -1605,10 +1791,18 @@ class App:
         self.settings.s_enable_strong_words = self.s_strong.get()
 
         self.settings.voice_enhance = self.voice_enhance_var.get()
-        self.settings.add_bgm = self.add_bgm_var.get()
+        self.settings.add_bgm = any([
+            self.settings.bgm_youtube_enable,
+            self.settings.bgm_tiktok_enable,
+            self.settings.bgm_instagram_enable,
+            self.settings.bgm_rutube_enable,
+            self.settings.bgm_vk_enable,
+            self.settings.bgm_facebook_enable,
+            self.settings.bgm_other_enable,
+        ])
 
         log.info(f"[GUI] voice_enhance = {self.settings.voice_enhance}")
-        log.info(f"[GUI] add_bgm = {self.settings.add_bgm}")
+        log.info(f"[GUI] bgm platforms = {self.settings.active_bgm_platforms()}")
 
         # Папка вывода: явная, либо родитель файла, либо сама папка аудио
         out = self.output_var.get().strip()
@@ -1751,6 +1945,7 @@ class App:
                     broll_horizontal=self.settings.broll_horizontal,
                     broll_vertical=self.settings.broll_vertical,
                     bgm_folder=self.settings.bgm_folder,
+                    bgm_platforms=self.settings.active_bgm_platforms(),
                     intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
                     vertical_background=self.settings.vertical_background,
                     cover_horizontal=self.settings.cover_horizontal,

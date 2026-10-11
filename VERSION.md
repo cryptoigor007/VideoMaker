@@ -1,29 +1,66 @@
 # VideoMaker — контроль версий
 
-**Текущая сборка: r55-cover-hook-parity** (2026-09-16)
+**Текущая сборка: r57-api.1** (2026-09-23)
 
 Единый номер сборки = максимальный **rN**. Подробности — `CHANGES.md`.
 
 ---
 
-## Таблица актуальных файлов (r55)
+## Таблица актуальных файлов (r57)
 
 | Файл | Версия / суть |
 |------|----------------|
+| `video_maker/api/` (6 файлов) | **r57.1** — HTTP-пульт: статус, очередь, настройки, вебхуки |
+| `video_maker/main.py` | **r57** — `--headless` / `--api-port` / `--no-api` |
+| `video_maker/gui/app.py` | **r57** — строка «▶ что идёт сейчас» + блок «Пульт» (r56: BGM по соцсетям) |
+| `start-headless.command` | **r57** — запуск без окна |
+| `start.command` | **r57** — пробрасывает аргументы в приложение |
+| `docs/API.md` | **r57.1** — как пользоваться, что менять, как встроить в Orchestrator |
+| `tests/verify_api_live.py` | **r57.1** — 74 проверки живого пульта |
+| `tests/verify_api_settings.py` | **r57.1** — 69 проверок карты настроек |
+| `tests/verify_app_gui.py` | **r57.1** — 33 проверки блока «Пульт» в окне |
+| `video_maker/pipeline/finalize.py` | **r56** — папки соцсетей + BGM mix |
+| `video_maker/config/settings.py` | **r56** — bgm_*_enable / folder |
 | `video_maker/engines/short_cover.py` | **r55** — визуал хука = on-screen; цвет от `clip.start` |
 | `video_maker/engines/subtitles.py` | **r55** + r49 — `build_short_hook_cover_ass`, `HOOK_MARKER_COLORS` |
 | `video_maker/pipeline/shorts.py` | **r55** — передаёт `clip_start` в cover (+ r50 desc) |
 | `video_maker/engines/analysis.py` | r54 — sanitize control chars + JSON retry |
-| `video_maker/gui/app.py` | r51 — вкладки Описания / Промпт |
-| `video_maker/config/settings.py` | r51 — packaging fields |
 | `video_maker/pipeline/stages.py` | r51 — packaging_opts в context |
 | `video_maker/pipeline/finalize.py` | r50/r51 — footer в description.txt |
 | `tests/test_shorts_parity.py` | r49 — density + isolation + hyphen |
-| `start.command` | r43+ |
 
 ---
 
 ## История (новые → старые)
+
+### r57-api.1 — 2026-09-23
+
+**Сплошная проверка пульта, 18 правок.** Закрыта утечка токена через
+`/api/health`; порт больше не открыт наружу, пока не включён доступ из сети;
+CORS пускает `X-Webapp-Key`/`X-N8N-Token`; мусорные параметры и тела дают `400`,
+а не `500`; **карта настроек дополнена 25 полями** — правка галочек IMO и полей
+упаковки через API больше не теряется; завершение серии без явной папки вывода
+считается успешным; битый файл очереди не роняет пульт; обрыв связи с телефоном больше не засоряет лог; OpenAPI — 17 путей.
+
+Проверки: `tests/verify_api_live.py` (74 из 74), `tests/verify_api_settings.py`
+(69 из 69), `tests/verify_app_gui.py` (33 из 33), `pytest tests/` — 40 passed.
+
+Оконный путь отдельно: подпись пульта и кнопка «Открыть пульт» обновляются
+через мост (из чужого потока Tk дёргать нельзя), нажатие галочки сети сразу
+отзывается надписью, сервер стартует без обратного DNS.
+
+Файлы: `video_maker/api/*`, `video_maker/gui/app.py`, `docs/API.md`,
+`tests/verify_api_*.py`, `tests/verify_app_gui.py`.
+
+### r57-api — 2026-09-23
+HTTP-пульт внутри приложения: запуск, отмена, статус (стадия, прогресс, прошло,
+осталось, «что идёт сейчас»), живой лог, очередь серий, настройки, вебхуки.
+Режим без окна `--headless`; аргументы `--api-port`, `--no-api`.
+Авторизация токеном (`X-Api-Key` / `X-Webapp-Key` / `X-N8N-Token` / `?key=`),
+доступ из сети по умолчанию выключен. `/api/job` отдаёт форму Orchestrator,
+`POST /webhook/videomaker/render` — форму n8n-движка. Окно: строка «▶ что идёт
+сейчас» в статус-баре и блок «Пульт» с адресом и галочкой сети.
+Файлы: `video_maker/api/*`, `main.py`, `gui/app.py`, `start*.command`, `docs/API.md`.
 
 ### r55-cover-hook-parity — 2026-09-16
 Обложка Shorts = тот же визуал, что хук на первых кадрах ролика:

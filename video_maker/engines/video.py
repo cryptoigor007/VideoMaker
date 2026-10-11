@@ -7,15 +7,16 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 import subprocess
 import uuid
 
 from .ffmpeg_resilient import (
-    VideoEncodeFailed,
-    calculate_adaptive_bitrate,
+    atomic_replace,
+    ensure_storage,
     inject_hwaccel,
+    run_ffmpeg,
     run_vt_encode,
+    verify_mp4,
 )
 
 log = logging.getLogger(__name__)
@@ -218,17 +219,24 @@ def move_to_used(root_folder: str, paths: list[str], log_fn=None) -> int:
         if USED_DIR_NAME in parts_lower or "использованная" in parts_lower:
             continue
         base = os.path.basename(abs_p)
-        dest = os.path.join(used_dir, base)
+        # P1-7: сохраняем относительный путь (тематические подпапки не вырождаются)
+        rel = os.path.relpath(abs_p, root_abs)
+        dest = os.path.join(used_dir, rel)
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+        except OSError:
+            dest = os.path.join(used_dir, base)
         if os.path.exists(dest):
-            stem, ext = os.path.splitext(base)
+            stem, ext = os.path.splitext(os.path.basename(dest))
+            d_dir = os.path.dirname(dest)
             n = 1
             while os.path.exists(dest):
-                dest = os.path.join(used_dir, f"{stem}_{n}{ext}")
+                dest = os.path.join(d_dir, f"{stem}_{n}{ext}")
                 n += 1
         try:
             shutil.move(abs_p, dest)
             moved += 1
-            _log(f"[B-ROLL] → used: {base}")
+            _log(f"[B-ROLL] → used: {rel}")
         except OSError as e:
             _log(f"[B-ROLL] move fail {base}: {e}")
     if moved:
@@ -345,16 +353,28 @@ def fit_video_to_duration(
         ]
     else:
         cmd += ["-an"]
-    cmd.append(output_path)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    # P0-6: пишем в tmp → verify → атомарная подмена (битый мастер не уедет в ветки)
+    tmp_out = output_path + f".vm_tmp_{uuid.uuid4().hex[:8]}.mp4"
+    cmd.append(tmp_out)
     cmd = inject_hwaccel(cmd)
 
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        err = (res.stderr or res.stdout or "")[-600:]
-        _log(f"[ВИДЕО] Ошибка: {err}")
-        raise RuntimeError(f"Быстрая склейка failed: {err}")
+    check_inputs = list(selected) + ([audio_file] if has_audio else [])
+    try:
+        ensure_storage(check_inputs, tmp_out, log_fn=_log)
+        res = run_ffmpeg(cmd, log_fn=_log, media_duration=target_duration)
+        if res.returncode != 0 or not verify_mp4(tmp_out, log_fn=_log):
+            err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
+            _log(f"[ВИДЕО] Ошибка: {err}")
+            raise RuntimeError(f"Быстрая склейка failed: {err}")
+        atomic_replace(tmp_out, output_path)
+    finally:
+        if os.path.exists(tmp_out):
+            try:
+                os.remove(tmp_out)
+            except OSError:
+                pass
 
     if move_used and broll_root:
         move_to_used(broll_root, selected, log_fn=_log)
@@ -369,13 +389,91 @@ def _even(n: int) -> int:
 
 
 
+_VIDEO_META_CACHE: dict[str, dict] = {}
+_VIDEO_META_FILE = os.path.join(
+    os.path.expanduser("~"), "video_maker", "cache", "probe_video.json"
+)
+_VIDEO_META_LOADED = False
+_VIDEO_META_DIRTY = False
+
+
+def _video_meta_key(path: str) -> str:
+    try:
+        st = os.stat(path)
+        return f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}"
+    except OSError:
+        return os.path.abspath(path)
+
+
+def _load_video_meta_cache() -> None:
+    """P2-7: постоянный кэш ffprobe (папки B-roll на сотни файлов)."""
+    global _VIDEO_META_LOADED
+    if _VIDEO_META_LOADED:
+        return
+    _VIDEO_META_LOADED = True
+    try:
+        import json as _json
+
+        with open(_VIDEO_META_FILE, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        if isinstance(data, dict):
+            _VIDEO_META_CACHE.update(
+                {k: v for k, v in data.items() if isinstance(v, dict)}
+            )
+    except Exception:
+        pass
+
+
+def save_video_meta_cache() -> None:
+    """Сохранить кэш ffprobe (вызывается по завершении прогона, best-effort)."""
+    global _VIDEO_META_DIRTY
+    if not _VIDEO_META_DIRTY:
+        return
+    try:
+        import json as _json
+
+        os.makedirs(os.path.dirname(_VIDEO_META_FILE), exist_ok=True)
+        with open(_VIDEO_META_FILE, "w", encoding="utf-8") as f:
+            _json.dump(_VIDEO_META_CACHE, f, ensure_ascii=False)
+        _VIDEO_META_DIRTY = False
+    except Exception:
+        pass
+
+
+def probe_video_meta(path: str) -> dict:
+    """{width,height,fps,duration} с кэшем (память + json). Ошибки → нули."""
+    _load_video_meta_cache()
+    key = _video_meta_key(path)
+    cached = _VIDEO_META_CACHE.get(key)
+    if isinstance(cached, dict):
+        return cached
+    meta = {"width": 0, "height": 0, "fps": 0.0, "duration": 0.0}
+    try:
+        from .audio import probe_duration
+
+        w, h, fps = _ffprobe_video_info(path)
+        meta = {
+            "width": int(w),
+            "height": int(h),
+            "fps": float(fps),
+            "duration": float(probe_duration(path) or 0.0),
+        }
+    except Exception:
+        return meta
+    global _VIDEO_META_DIRTY
+    _VIDEO_META_CACHE[key] = meta
+    _VIDEO_META_DIRTY = True
+    return meta
+
+
 def _cached_bg_half(background_path: str, target_w: int, half_h: int, log_fn=None) -> str:
     """Один раз отскейлить фон до 2160x1920 и кэшировать (статика)."""
     _log = log_fn or log.info
     import hashlib
     st = os.stat(background_path)
     key = hashlib.sha256(
-        f"{os.path.abspath(background_path)}|{st.st_mtime_ns}|{st.st_size}|{target_w}x{half_h}".encode()
+        f"{os.path.abspath(background_path)}|{st.st_mtime_ns}|{st.st_size}|"
+        f"{getattr(st, 'st_ino', 0)}|{getattr(st, 'st_ctime_ns', 0)}|{target_w}x{half_h}".encode()
     ).hexdigest()[:20]
     cache_dir = os.path.join(os.path.expanduser("~"), "video_maker", "cache", "bg")
     os.makedirs(cache_dir, exist_ok=True)
@@ -790,7 +888,7 @@ def add_intro_outro_mid(
             _log(f"[IMO] intro probe fail: {e}, fallback={intro_duration}")
             intro_real_dur = float(intro_duration or 3.0)
         if intro_real_dur <= 0.05:
-            _log(f"[IMO] intro duration invalid — disable")
+            _log("[IMO] intro duration invalid — disable")
             intro_path, intro_real_dur = "", 0.0
         else:
             _log(f"[IMO] intro REPLACE first {intro_real_dur:.2f}s of main")
@@ -803,7 +901,7 @@ def add_intro_outro_mid(
             _log(f"[IMO] outro probe fail: {e}, fallback={outro_duration}")
             outro_real_dur = float(outro_duration or 3.0)
         if outro_real_dur <= 0.05:
-            _log(f"[IMO] outro duration invalid — disable")
+            _log("[IMO] outro duration invalid — disable")
             outro_path, outro_real_dur = "", 0.0
         else:
             _log(f"[IMO] outro REPLACE last {outro_real_dur:.2f}s of main")
@@ -816,13 +914,13 @@ def add_intro_outro_mid(
             _log(f"[IMO] middle probe fail: {e}, fallback={middle_duration}")
             middle_real_dur = float(middle_duration or 1.0)
         if middle_real_dur <= 0.05:
-            _log(f"[IMO] middle duration invalid — disable")
+            _log("[IMO] middle duration invalid — disable")
             middle_path, middle_real_dur = "", 0.0
         else:
             lo = intro_real_dur
             hi = main_dur - outro_real_dur - middle_real_dur
             if hi < lo:
-                _log(f"[IMO] middle не влезает между intro/outro — disable")
+                _log("[IMO] middle не влезает между intro/outro — disable")
                 middle_path, middle_real_dur = "", 0.0
             else:
                 if mid_point < lo:

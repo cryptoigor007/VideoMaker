@@ -295,10 +295,54 @@ def inject_hwaccel(cmd: list[str]) -> list[str]:
     return out
 
 
-def vt_encode_args(bitrate: str = "28M") -> list[str]:
-    """Только hardware VideoToolbox, без allow_sw."""
+def vt_encode_args(bitrate: str = "28M", allow_sw: bool = False) -> list[str]:
+    """Только hardware VideoToolbox.
+
+    allow_sw=True разрешает внутренний software-путь самого VideoToolbox
+    (не libx264) — используется там, где раньше стоял -allow_sw 1.
+    """
     br = bitrate if str(bitrate).upper().endswith("M") else f"{bitrate}M"
-    return ["-c:v", "h264_videotoolbox", "-b:v", br, "-allow_sw", "0", "-pix_fmt", "yuv420p"]
+    return [
+        "-c:v", "h264_videotoolbox", "-b:v", br,
+        "-allow_sw", "1" if allow_sw else "0", "-pix_fmt", "yuv420p",
+    ]
+
+
+def sw_encode_args(crf: int = 18, preset: str = "medium") -> list[str]:
+    """Программный fallback (libx264) — только при отказе VideoToolbox."""
+    return ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p"]
+
+
+def sw_fallback_enabled() -> bool:
+    """Разрешён ли libx264-fallback (VIDEOMAKER_SW_FALLBACK=0 — выключить)."""
+    return os.environ.get("VIDEOMAKER_SW_FALLBACK", "1").strip().lower() not in ("0", "false", "no")
+
+
+def to_software_cmd(cmd: Sequence[str], crf: int = 18) -> list[str]:
+    """Заменить видеокодер в готовой команде на libx264 (CRF вместо -b:v)."""
+    out: list[str] = []
+    i = 0
+    n = len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "-c:v" and i + 1 < n:
+            out += sw_encode_args(crf=crf)
+            i += 2
+            continue
+        if c in ("-b:v", "-allow_sw", "-maxrate", "-bufsize", "-pix_fmt") and i + 1 < n:
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return out
+
+
+def default_encode_timeout() -> float:
+    """Таймаут энкода: env VIDEOMAKER_FFMPEG_TIMEOUT или 4 часа."""
+    try:
+        return max(60.0, float(os.environ.get("VIDEOMAKER_FFMPEG_TIMEOUT", "14400")))
+    except ValueError:
+        return 14400.0
 
 
 def verify_mp4(path: str, log_fn: LogFn = None) -> bool:
@@ -323,15 +367,36 @@ def verify_mp4(path: str, log_fn: LogFn = None) -> bool:
         return False
 
 
-def run_ffmpeg(cmd: list[str], log_fn: LogFn = None, timeout: float | None = None):
+def run_ffmpeg(
+    cmd: list[str],
+    log_fn: LogFn = None,
+    timeout: float | None = None,
+    media_duration: float | None = None,
+):
+    """Запустить ffmpeg с логом и гарантированным таймаутом.
+
+    media_duration (если известно) даёт таймаут 8× реального времени —
+    зависший энкод больше не блокирует пайплайн навсегда.
+    """
     _log = log_fn or (lambda m: None)
+    if timeout is None:
+        if media_duration and float(media_duration) > 0:
+            timeout = max(600.0, float(media_duration) * 8.0)
+        else:
+            timeout = default_encode_timeout()
     cmd_s = " ".join(str(c) for c in cmd)
     if len(cmd_s) > 500:
         _log(f"[FFMPEG] CMD ({len(cmd)} args): {cmd_s[:500]}...")
     else:
         _log(f"[FFMPEG] CMD: {cmd_s}")
     t0 = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        _log(f"[FFMPEG] TIMEOUT {timeout:.0f}s — процесс убит")
+        raise VideoEncodeFailed(
+            f"ffmpeg timeout {timeout:.0f}s: {' '.join(str(c) for c in cmd[:8])}…"
+        ) from e
     elapsed = time.time() - t0
     err = (result.stderr or "").strip()
     out = (result.stdout or "").strip()
@@ -363,11 +428,12 @@ def run_vt_encode(
     log_fn: LogFn = None,
     max_io_retries: int = 4,
     stage_name: str = "VT",
+    timeout: float | None = None,
 ) -> str:
     """
     Команда с h264_videotoolbox:
     storage check → atomic tmp → verify → rename
-    I/O → wait + retry; encoder → fail без libx264.
+    I/O → wait + retry; encoder → одна попытка libx264 (если разрешено), иначе fail.
     """
     _log = log_fn or (lambda m: None)
     out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
@@ -384,6 +450,7 @@ def run_vt_encode(
         cmd.append(tmp_out)
 
     last_err = ""
+    sw_tried = False
     for attempt in range(max_io_retries):
         try:
             ensure_storage(list(input_files), tmp_out, log_fn=_log)
@@ -396,7 +463,10 @@ def run_vt_encode(
         _log(f"[{stage_name}] inputs={list(input_files)[:6]}")
         result = None
         try:
-            result = run_ffmpeg(cmd, log_fn=_log)
+            result = run_ffmpeg(cmd, log_fn=_log, timeout=timeout)
+        except VideoEncodeFailed as e:
+            last_err = str(e)
+            reason = "encoder"
         except Exception as e:
             last_err = str(e)
             reason = "io"
@@ -419,9 +489,18 @@ def run_vt_encode(
         if reason == "io":
             continue
         if reason == "encoder":
+            # P0-4: одна контролируемая попытка программным кодеком
+            if sw_fallback_enabled() and not sw_tried:
+                sw_tried = True
+                cmd = to_software_cmd(cmd)
+                _log(
+                    f"[{stage_name}] VideoToolbox недоступен → libx264 fallback "
+                    f"(crf=18, preset=medium)"
+                )
+                continue
             raise VideoEncodeFailed(
                 f"{stage_name}: VideoToolbox encoder error "
-                f"(software fallback отключён).\n{last_err}"
+                f"(software fallback {'уже пробовали' if sw_tried else 'отключён'}).\n{last_err}"
             )
         if attempt < max_io_retries - 1:
             continue

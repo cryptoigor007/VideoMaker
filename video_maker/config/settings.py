@@ -26,7 +26,22 @@ class Settings:
     audio_path: str = ""
     broll_horizontal: str = ""
     broll_vertical: str = ""
-    bgm_folder: str = ""
+    bgm_folder: str = ""  # legacy → youtube
+    # r56: BGM по соцсетям (папка + галочка)
+    bgm_youtube_enable: bool = True
+    bgm_youtube_folder: str = ""
+    bgm_tiktok_enable: bool = False
+    bgm_tiktok_folder: str = ""
+    bgm_instagram_enable: bool = False
+    bgm_instagram_folder: str = ""
+    bgm_rutube_enable: bool = False
+    bgm_rutube_folder: str = ""
+    bgm_vk_enable: bool = False
+    bgm_vk_folder: str = ""
+    bgm_facebook_enable: bool = False
+    bgm_facebook_folder: str = ""
+    bgm_other_enable: bool = False
+    bgm_other_folder: str = ""
     intro_middle_outro_folder: str = ""
     vertical_background: str = ""
     cover_horizontal: str = ""
@@ -111,6 +126,61 @@ class Settings:
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
         )
 
+
+    @staticmethod
+    def folder_has_bgm_audio(folder: str) -> bool:
+        """В папке есть хотя бы один аудиофайл для BGM."""
+        folder = (folder or "").strip()
+        if not folder or not os.path.isdir(folder):
+            return False
+        exts = (".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg")
+        try:
+            for name in os.listdir(folder):
+                if name.startswith("."):
+                    continue
+                if name.lower().endswith(exts):
+                    return True
+        except OSError:
+            return False
+        return False
+
+    def active_bgm_platforms(self) -> list[dict]:
+        """Включённые соцсети для финализации.
+
+        YouTube — база: галочка вкл → всегда ветка youtube/ (BGM если папка с аудио).
+        Остальные (TikTok, Instagram, RuTube, Другое):
+        только если галочка вкл И в папке есть аудио.
+        """
+        yt_folder = (self.bgm_youtube_folder or "").strip() or (self.bgm_folder or "").strip()
+        yt_en = bool(self.bgm_youtube_enable)
+        if not yt_en and self.add_bgm and yt_folder:
+            yt_en = True
+
+        platforms = [
+            ("youtube", "YouTube", yt_en, yt_folder, True),  # base: allow without audio
+            ("tiktok", "TikTok", self.bgm_tiktok_enable, (self.bgm_tiktok_folder or "").strip(), False),
+            ("instagram", "Instagram", self.bgm_instagram_enable, (self.bgm_instagram_folder or "").strip(), False),
+            ("rutube", "RuTube", getattr(self, "bgm_rutube_enable", False), (getattr(self, "bgm_rutube_folder", "") or "").strip(), False),
+            ("vk", "VK", getattr(self, "bgm_vk_enable", False), (getattr(self, "bgm_vk_folder", "") or "").strip(), False),
+            ("facebook", "Facebook", getattr(self, "bgm_facebook_enable", False), (getattr(self, "bgm_facebook_folder", "") or "").strip(), False),
+            ("other", "Другое", self.bgm_other_enable, (self.bgm_other_folder or "").strip(), False),
+        ]
+        out = []
+        for pid, label, en, folder, allow_no_audio in platforms:
+            if not en:
+                continue
+            has_audio = self.folder_has_bgm_audio(folder)
+            if not allow_no_audio and not has_audio:
+                continue  # доп. соцсеть без аудио в папке — пропускаем
+            out.append({
+                "id": pid,
+                "label": label,
+                "folder": folder if has_audio else "",
+            })
+        if not out:
+            out.append({"id": "youtube", "label": "YouTube", "folder": ""})
+        return out
+
     @staticmethod
     def collect_audio_files(path: str) -> list[str]:
         """Собрать аудиофайлы: один файл или все из папки (+ 1 уровень подпапок).
@@ -171,6 +241,18 @@ class Settings:
             errors.append(f"Папка вывода не найдена: {self.output_folder}")
         if self.bgm_folder and not os.path.exists(self.bgm_folder):
             errors.append(f"Папка BGM не найдена: {self.bgm_folder}")
+        for _lab, _folder in (
+            ("YouTube", self.bgm_youtube_folder),
+            ("TikTok", self.bgm_tiktok_folder),
+            ("Instagram", self.bgm_instagram_folder),
+            ("RuTube", getattr(self, "bgm_rutube_folder", "")),
+            ("VK", getattr(self, "bgm_vk_folder", "")),
+            ("Facebook", getattr(self, "bgm_facebook_folder", "")),
+            ("Другое", self.bgm_other_folder),
+        ):
+            f = (_folder or "").strip()
+            if f and not os.path.exists(f):
+                errors.append(f"Папка BGM {_lab} не найдена: {f}")
         if self.intro_middle_outro_folder and not os.path.exists(self.intro_middle_outro_folder):
             errors.append(f"Папка Intro/Middle/Outro не найдена: {self.intro_middle_outro_folder}")
         if self.vertical_background and not os.path.exists(self.vertical_background):

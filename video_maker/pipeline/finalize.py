@@ -1,10 +1,10 @@
-# VideoMaker FIX | 2026.09.10-r43.1-place | 2026-09-10
+# VideoMaker FIX | 2026.09.16-r56-platform-bgm | 2026-09-16
 # CHANGED:
 #   r43-place: same filesystem → os.replace/move (мгновенно);
 #              разные диски → shutil.copy2; лог move|copy.
 # PREV: 2026.09.03-r26
 # REPLACE: video_maker/pipeline/finalize.py
-"""FinalizeStage — {series_dir}/wide|vertical|shorts/... (без series/series)."""
+"""FinalizeStage — {series_dir}/{youtube|tiktok|...}/wide|vertical|shorts/."""
 from __future__ import annotations
 
 import logging
@@ -76,106 +76,19 @@ class FinalizeStage(Stage):
         root, base_name = resolve_series_dir(
             ctx.output_folder, ctx.series_name or "", ctx.audio_path or ""
         )
-        wide_dir = os.path.join(root, "wide")
-        vert_dir = os.path.join(root, "vertical")
-        shorts_dir = os.path.join(root, "shorts")
-        os.makedirs(wide_dir, exist_ok=True)
-        os.makedirs(vert_dir, exist_ok=True)
-        os.makedirs(shorts_dir, exist_ok=True)
         ctx.log(f"[ФИНАЛ] series_dir={root} (output={ctx.output_folder}, series={base_name})")
 
-        from ..engines.audio import apply_loudnorm
+        platforms = list(getattr(ctx, "bgm_platforms", None) or [])
+        if not platforms:
+            # fallback: один «youtube» без отдельного BGM
+            platforms = [{"id": "youtube", "label": "YouTube", "folder": ""}]
 
-        # keep_temp → не вырезаем из _tmp; иначе move на одном диске
         prefer_copy = bool(getattr(ctx, "keep_temp_files", False))
-
-        def _place_video(src: str, dst: str, already_norm: bool, label: str) -> None:
-            """Уже loudnorm → place (move|copy); иначе two-pass loudnorm → place в dst."""
-            if not src or not os.path.exists(src):
-                return
-            if already_norm:
-                mode = _place_file(src, dst, log_fn=ctx.log, prefer_copy=prefer_copy)
-                if mode == "skip":
-                    ctx.log(f"[ФИНАЛ] {label}: уже на месте (без LUFS-measure)")
-                else:
-                    ctx.log(
-                        f"[ФИНАЛ] {label}: аудио уже ≈ target → {mode} "
-                        f"(без LUFS-measure)"
-                    )
-                return
-            ln = dst + ".loudnorm.mp4"
-            ctx.log(f"[ФИНАЛ] loudnorm → {label}")
-            apply_loudnorm(src, ln, target_lufs=ctx.target_lufs, log_fn=ctx.log)
-            mode = _place_file(ln, dst, log_fn=ctx.log, prefer_copy=False)
-            if mode == "copy" and os.path.isfile(ln):
-                try:
-                    os.remove(ln)
-                except OSError:
-                    pass
-            self._measure(dst, ctx)
-
-        if ctx.final_horizontal and os.path.exists(ctx.final_horizontal):
-            _place_video(
-                ctx.final_horizontal,
-                os.path.join(wide_dir, "final_16x9.mp4"),
-                bool(getattr(ctx, "horizontal_audio_normalized", False)),
-                "wide/final_16x9.mp4",
-            )
-        if ctx.master_horizontal and os.path.exists(ctx.master_horizontal):
-            mode = _place_file(
-                ctx.master_horizontal,
-                os.path.join(wide_dir, "master_16x9.mp4"),
-                log_fn=ctx.log,
-                prefer_copy=prefer_copy,
-            )
-            if mode != "skip":
-                ctx.log(f"[ФИНАЛ] wide/master_16x9.mp4 → {mode}")
-
-        if ctx.final_vertical and os.path.exists(ctx.final_vertical):
-            _place_video(
-                ctx.final_vertical,
-                os.path.join(vert_dir, "final_9x16.mp4"),
-                bool(getattr(ctx, "vertical_audio_normalized", False)),
-                "vertical/final_9x16.mp4",
-            )
-        if ctx.master_vertical and os.path.exists(ctx.master_vertical):
-            mode = _place_file(
-                ctx.master_vertical,
-                os.path.join(vert_dir, "master_9x16.mp4"),
-                log_fn=ctx.log,
-                prefer_copy=prefer_copy,
-            )
-            if mode != "skip":
-                ctx.log(f"[ФИНАЛ] vertical/master_9x16.mp4 → {mode}")
-
         clips = ctx.analysis.get("clips_for_shorts", []) if ctx.analysis else []
-        shorts_norm = bool(getattr(ctx, "shorts_audio_normalized", False))
-        for i, short_path in enumerate(ctx.shorts, 1):
-            if not os.path.exists(short_path):
-                continue
-            sdir = os.path.join(shorts_dir, f"short_{i:03d}")
-            os.makedirs(sdir, exist_ok=True)
-            final_path = os.path.join(sdir, f"short_{i:03d}.mp4")
-            # ShortsCutter уже пишет в series_dir/shorts — не копировать 4K лишний раз
-            if os.path.abspath(short_path) == os.path.abspath(final_path):
-                ctx.log(f"[ФИНАЛ] shorts/short_{i:03d}: already in place (no copy)")
-            else:
-                _place_video(short_path, final_path, shorts_norm, f"shorts/short_{i:03d}/")
-            clip = clips[i - 1] if i - 1 < len(clips) else {}
-            self._write_packaging_files(
-                dir_path=sdir,
-                base_name=f"short_{i:03d}",
-                title=str(clip.get("title") or ""),
-                description=str(clip.get("description") or ""),
-                hook=str(clip.get("hook") or (ctx.analysis.get("hook") or {}).get("text") or ""),
-                hashtags=str(clip.get("hashtags") or ""),
-                log_fn=ctx.log,
-            )
 
-        # Packaging полного видео: одинаково в wide/ и vertical/
+        # Packaging texts (shared)
         pkg_title = str(ctx.analysis.get("package_title") or "")
         pkg_desc = str(ctx.analysis.get("package_description") or "")
-        # r50/r51: guarantee playlist footer + hashtags (opts from GUI if any)
         try:
             from ..engines.analysis import _ensure_playlist_footer
             pkg_desc = _ensure_playlist_footer(
@@ -185,29 +98,144 @@ class FinalizeStage(Stage):
             )
         except Exception:
             pass
-        pkg_hook = str(ctx.analysis.get("package_hook") or (ctx.analysis.get("hook") or {}).get("text") or "")
+        pkg_hook = str(
+            ctx.analysis.get("package_hook")
+            or (ctx.analysis.get("hook") or {}).get("text")
+            or ""
+        )
         pkg_tags = str(ctx.analysis.get("package_hashtags") or "")
-        for d in (wide_dir, vert_dir):
-            self._write_packaging_files(
-                dir_path=d,
-                base_name=base_name,
-                title=pkg_title,
-                description=pkg_desc,
-                hook=pkg_hook,
-                hashtags=pkg_tags,
-                log_fn=ctx.log,
+
+        from ..engines.audio import mix_bgm
+
+        for plat in platforms:
+            pid = str(plat.get("id") or "youtube")
+            label = str(plat.get("label") or pid)
+            folder = str(plat.get("folder") or "").strip()
+            plat_root = os.path.join(root, pid)
+            wide_dir = os.path.join(plat_root, "wide")
+            vert_dir = os.path.join(plat_root, "vertical")
+            shorts_dir = os.path.join(plat_root, "shorts")
+            os.makedirs(wide_dir, exist_ok=True)
+            os.makedirs(vert_dir, exist_ok=True)
+            os.makedirs(shorts_dir, exist_ok=True)
+            ctx.log(
+                f"[ФИНАЛ] {label} → {plat_root}"
+                + (f" | BGM={folder}" if folder else " | BGM=нет (только голос)")
             )
 
-        self._write_root_meta(ctx, root)
-        self._copy_covers(ctx, wide_dir, vert_dir)
+            def _deliver(src: str, dst: str, tag: str) -> None:
+                if not src or not os.path.isfile(src):
+                    return
+                os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+                if folder and os.path.isdir(folder):
+                    try:
+                        mix_bgm(
+                            src, folder, dst,
+                            log_fn=ctx.log, loudnorm=True,
+                            target_lufs=getattr(ctx, "target_lufs", -14.0) or -14.0,
+                        )
+                        ctx.log(f"[ФИНАЛ] {label}/{tag}: BGM mix OK")
+                    except Exception as e:
+                        ctx.log(f"[ФИНАЛ] {label}/{tag}: BGM fail → copy voice: {e}")
+                        _place_file(src, dst, log_fn=ctx.log, prefer_copy=True)
+                else:
+                    mode = _place_file(src, dst, log_fn=ctx.log, prefer_copy=True)
+                    ctx.log(f"[ФИНАЛ] {label}/{tag}: voice {mode}")
 
+            # wide / vertical
+            if ctx.final_horizontal and os.path.isfile(ctx.final_horizontal):
+                _deliver(
+                    ctx.final_horizontal,
+                    os.path.join(wide_dir, "final_16x9.mp4"),
+                    "wide/final_16x9",
+                )
+            if ctx.master_horizontal and os.path.isfile(ctx.master_horizontal):
+                _place_file(
+                    ctx.master_horizontal,
+                    os.path.join(wide_dir, "master_16x9.mp4"),
+                    log_fn=ctx.log,
+                    prefer_copy=prefer_copy,
+                )
+            if ctx.final_vertical and os.path.isfile(ctx.final_vertical):
+                _deliver(
+                    ctx.final_vertical,
+                    os.path.join(vert_dir, "final_9x16.mp4"),
+                    "vertical/final_9x16",
+                )
+            if ctx.master_vertical and os.path.isfile(ctx.master_vertical):
+                _place_file(
+                    ctx.master_vertical,
+                    os.path.join(vert_dir, "master_9x16.mp4"),
+                    log_fn=ctx.log,
+                    prefer_copy=prefer_copy,
+                )
+
+            # shorts
+            for i, short_path in enumerate(ctx.shorts, 1):
+                if not short_path or not os.path.isfile(short_path):
+                    continue
+                sdir = os.path.join(shorts_dir, f"short_{i:03d}")
+                os.makedirs(sdir, exist_ok=True)
+                dst = os.path.join(sdir, f"short_{i:03d}.mp4")
+                _deliver(short_path, dst, f"shorts/short_{i:03d}")
+                # cover jpg рядом с исходным short (если есть) — копируем
+                src_dir = os.path.dirname(short_path)
+                for name in (
+                    f"short_{i:03d}_cover.jpg",
+                    f"short_{i:03d}_hook.txt",
+                    f"short_{i:03d}_title.txt",
+                    f"short_{i:03d}_description.txt",
+                    f"short_{i:03d}_hashtags.txt",
+                    f"short_{i:03d}_meta.txt",
+                ):
+                    sp = os.path.join(src_dir, name)
+                    if os.path.isfile(sp):
+                        try:
+                            shutil.copy2(sp, os.path.join(sdir, name))
+                        except OSError:
+                            pass
+                clip = clips[i - 1] if i - 1 < len(clips) else {}
+                self._write_packaging_files(
+                    dir_path=sdir,
+                    base_name=f"short_{i:03d}",
+                    title=str(clip.get("title") or ""),
+                    description=str(clip.get("description") or ""),
+                    hook=str(
+                        clip.get("hook")
+                        or (ctx.analysis.get("hook") or {}).get("text")
+                        or ""
+                    ),
+                    hashtags=str(clip.get("hashtags") or ""),
+                    log_fn=ctx.log,
+                )
+
+            for d in (wide_dir, vert_dir):
+                self._write_packaging_files(
+                    dir_path=d,
+                    base_name=base_name,
+                    title=pkg_title,
+                    description=pkg_desc,
+                    hook=pkg_hook,
+                    hashtags=pkg_tags,
+                    log_fn=ctx.log,
+                )
+            self._copy_covers(ctx, wide_dir, vert_dir)
+
+        self._write_root_meta(ctx, root)
+
+        # staging shorts в series/shorts (голос) — убрать если не keep_temp
         if not ctx.keep_temp_files:
+            staging = os.path.join(root, "shorts")
+            if os.path.isdir(staging):
+                # только если это staging, а не единственный выход (platforms always nested)
+                shutil.rmtree(staging, ignore_errors=True)
+                ctx.log("[ФИНАЛ] staging series/shorts удалён")
             tmp = os.path.join(ctx.output_folder, "_tmp")
             if os.path.exists(tmp):
                 shutil.rmtree(tmp, ignore_errors=True)
                 ctx.log("[ФИНАЛ] _tmp удалён")
 
-        ctx.log(f"[ФИНАЛ] Готово → {root}")
+        ctx.log(f"[ФИНАЛ] Готово → {root} | платформ: {len(platforms)}")
         ctx.progress = 100.0
         return ctx
 

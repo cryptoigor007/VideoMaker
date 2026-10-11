@@ -266,7 +266,8 @@ class ShortsCutter(Stage):
             current = final_path
 
         # BGM: только если long ещё без BGM — тоже во temp, потом в final
-        if ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
+        # r56: BGM deferred to Finalize (per platform)
+        if False and ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
             from ..engines.audio import mix_bgm
             bgm_out = os.path.join(tmp_dir, "bgm.mp4")
             try:
