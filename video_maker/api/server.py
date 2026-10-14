@@ -41,6 +41,7 @@ from .control import (
     apply_settings,
     cancel_pipeline,
     find_results,
+    get_settings_schema,
     read_settings,
     start_pipeline,
     sync_settings_from_gui,
@@ -788,6 +789,9 @@ def _make_handler(api: VideoMakerAPI):
                     lines = api.status.logbuf.tail(tail)
                     return self._send(200, {"ok": True, "seq": api.status.logbuf.count(),
                                             "entries": lines})
+                if path == "/api/settings/schema":
+                    # r57-api.26: схема формы настроек для пульта (без Tk — чистая).
+                    return self._send(200, {"ok": True, "schema": get_settings_schema()})
                 if path == "/api/settings":
                     data = api.bridge.call(lambda: read_settings(api.app), timeout=30)
                     return self._send(200, {"ok": True, "settings": data})

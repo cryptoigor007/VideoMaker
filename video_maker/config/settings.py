@@ -98,6 +98,11 @@ class Settings:
     speech_rate_coefficient: float = 1.0
     # r57-api.24: вырезать повторы/лишние слова (по тексту Gemini), по умолчанию выкл.
     cut_extra_words: bool = False
+    # r57-api.25: отдельные настройки шортов — скорость и вырезка независимо от длинного.
+    s_speech_rate_mode: str = "inherit"   # inherit | wpm | coefficient
+    s_speech_rate_target_wpm: float = 120.0
+    s_speech_rate_coefficient: float = 1.0
+    s_cut_extra_words: bool = False
 
     # Питание
     prevent_sleep: bool = True          # не засыпать во время обработки

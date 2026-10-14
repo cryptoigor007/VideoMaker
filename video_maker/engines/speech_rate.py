@@ -39,6 +39,13 @@ SPEED_MODE_LABELS = {
     SPEED_MODE_WPM: "По словам/мин",
     SPEED_MODE_COEFFICIENT: "По коэффициенту",
 }
+# r57-api.25: скорость шортов — третий режим «как на длинном» (по умолчанию).
+SPEED_MODE_INHERIT = "inherit"
+SHORT_SPEED_MODE_LABELS = {
+    SPEED_MODE_INHERIT: "Как на длинном",
+    SPEED_MODE_WPM: "По словам/мин",
+    SPEED_MODE_COEFFICIENT: "По коэффициенту",
+}
 
 LogFn = Callable[[str], Any]
 
@@ -243,6 +250,62 @@ def cut_intervals(
     return output_path
 
 
+def shift_time_after_removals(value: Any, intervals: list[tuple[float, float]]) -> float:
+    """Позиция на таймлайне после удаления интервалов (то же место в новом видео)."""
+    t = _safe_float(value, 0.0)
+    if t <= 0:
+        return max(0.0, t)
+    removed = 0.0
+    for start, end in intervals:
+        if t <= start:
+            break
+        removed += min(t, end) - start
+    return max(0.0, t - removed)
+
+
+def shift_analysis_times(analysis: Any, intervals: list[tuple[float, float]]) -> int:
+    """Сдвинуть тайминги анализа Gemini после вырезки интервалов из речи.
+
+    Клипы шортов, хуки, CTA, intro/middle/outro и сильные слова привязаны к
+    таймлайну речи. После вырезки повторов видео короче — тайминги обязаны
+    следовать, иначе шорты режутся не там, где выбрал Gemini. Возвращает число
+    изменённых записей.
+    """
+    if not isinstance(analysis, dict) or not intervals:
+        return 0
+    changed = 0
+
+    def _shift_node(node: Any) -> None:
+        nonlocal changed
+        if isinstance(node, dict):
+            hit = False
+            for key in ("start", "end", "timing"):
+                if key in node:
+                    node[key] = shift_time_after_removals(node[key], intervals)
+                    hit = True
+            if hit:
+                changed += 1
+        elif isinstance(node, list):
+            for item in node:
+                _shift_node(item)
+
+    for clip in analysis.get("clips_for_shorts") or []:
+        if isinstance(clip, dict):
+            hit = False
+            for key in ("start", "end", "hook_start", "hook_end", "cta_start", "cta_end"):
+                if key in clip:
+                    clip[key] = shift_time_after_removals(clip[key], intervals)
+                    hit = True
+            if hit:
+                changed += 1
+    for key in (
+        "hooks_wide", "hooks_vertical", "cta_wide", "cta_vertical",
+        "intro", "middle", "outro", "strong_words",
+    ):
+        _shift_node(analysis.get(key))
+    return changed
+
+
 def apply_extra_word_cuts(
     ctx: Any,
     corrected_text: str,
@@ -287,6 +350,9 @@ def apply_extra_word_cuts(
         ctx.audio_duration = new_duration
     except Exception:  # noqa: BLE001
         pass
+    shifted = shift_analysis_times(getattr(ctx, "analysis", None), intervals)
+    if shifted:
+        _log(f"[EXTRA WORDS] тайминги анализа Gemini пересчитаны: {shifted} записей")
     metrics = getattr(ctx, "speech_metrics", None)
     removed_seconds = sum(end - start for start, end in intervals)
     if isinstance(metrics, dict):
@@ -490,6 +556,157 @@ def normalize_speed_mode(value: Any) -> str:
 def speed_mode_label(value: Any) -> str:
     """Подпись режима скорости для GUI-комбобокса."""
     return SPEED_MODE_LABELS[normalize_speed_mode(value)]
+
+
+def normalize_short_speed_mode(value: Any) -> str:
+    """Канонический режим скорости шортов: 'inherit' | 'wpm' | 'coefficient'.
+
+    Принимает русские подписи из GUI и канонические значения. Неизвестное
+    значение = 'inherit' (безопасный no-op: шорт идёт как длинный).
+    """
+    text = str(value or "").strip().lower()
+    if text in ("coefficient", "коэффициент", "по коэффициенту"):
+        return SPEED_MODE_COEFFICIENT
+    if text in ("wpm", "слова/мин", "слов/мин", "по словам/мин"):
+        return SPEED_MODE_WPM
+    return SPEED_MODE_INHERIT
+
+
+def short_speed_mode_label(value: Any) -> str:
+    """Подпись режима скорости шортов для GUI-комбобокса."""
+    return SHORT_SPEED_MODE_LABELS[normalize_short_speed_mode(value)]
+
+
+def short_speed_ratio(
+    mode: Any,
+    target_wpm: Any = DEFAULT_TARGET_WPM,
+    coefficient: Any = 1.0,
+    *,
+    metrics: dict[str, Any] | None = None,
+    measured_wpm: float | None = None,
+) -> float:
+    """Во сколько раз ускорить/замедлить шорт относительно готового длинного.
+
+    'inherit' → 1.0 (шорт как длинный). 'wpm' → target / фактический wpm
+    длинного (final_wpm из метрик; при выключенном выравнивании — measured_wpm).
+    'coefficient' → целевой множитель / фактический множитель длинного.
+    Результат ограничен [0.5, 2.0]; разница меньше 1% считается no-op (1.0).
+    """
+    normalized = normalize_short_speed_mode(mode)
+    if normalized == SPEED_MODE_INHERIT:
+        return 1.0
+    data = metrics or {}
+    if normalized == SPEED_MODE_COEFFICIENT:
+        long_factor = _safe_float(data.get("tempo_factor", 1.0), 1.0)
+        if long_factor <= 0:
+            long_factor = 1.0
+        ratio = _safe_float(coefficient, 1.0) / long_factor
+    else:
+        current = data.get("final_wpm")
+        if not _is_finite_number(current):
+            current = measured_wpm
+        current = _safe_float(current, 0.0)
+        if current <= 0:
+            return 1.0
+        ratio = _safe_float(target_wpm, DEFAULT_TARGET_WPM) / current
+    ratio = min(2.0, max(0.5, ratio))
+    if abs(ratio - 1.0) < 0.01:
+        return 1.0
+    return ratio
+
+
+def map_intervals_to_window(
+    intervals: list[tuple[float, float]], window_start: float, window_end: float
+) -> list[tuple[float, float]]:
+    """Интервалы, переведённые в локальное окно [window_start, window_end].
+
+    Всё за пределами окна отбрасывается, края обрезаются по границам окна.
+    """
+    lo = float(window_start)
+    hi = float(window_end)
+    result: list[tuple[float, float]] = []
+    for raw_start, raw_end in intervals or []:
+        start = max(lo, float(raw_start))
+        end = min(hi, float(raw_end))
+        if end - start > 0.02:
+            result.append((start - lo, end - lo))
+    return result
+
+
+def scale_after_removals(
+    value: Any, intervals: list[tuple[float, float]], ratio: Any = 1.0
+) -> float:
+    """Время на таймлайне шорта: сдвиг после вырезанных интервалов, затем скорость."""
+    speed = _safe_float(ratio, 1.0)
+    if speed <= 0:
+        speed = 1.0
+    return shift_time_after_removals(value, intervals) / speed
+
+
+def adjust_short_clip_times(
+    clip: dict[str, Any],
+    *,
+    window_start: float,
+    intervals: list[tuple[float, float]],
+    ratio: Any = 1.0,
+) -> dict[str, Any]:
+    """Тайминги клипа (long-таймлайн) → таймлайн обработанного шорта.
+
+    ``intervals`` — уже локальные (от начала окна шорта, как их выдаёт
+    ``map_intervals_to_window``).
+    """
+    out = dict(clip)
+    for key in ("start", "end", "hook_start", "hook_end", "cta_start", "cta_end"):
+        if key in out and out[key] is not None:
+            local = _safe_float(out[key], 0.0) - float(window_start)
+            out[key] = scale_after_removals(local, intervals, ratio)
+    return out
+
+
+def plan_short_adjustments(
+    ctx: Any, *, window_start: float, window_end: float
+) -> dict[str, Any]:
+    """Что сделать с готовым шортом: скорость (ratio) и вырезания (локальные интервалы).
+
+    Учитывает отдельные настройки шортов: режим скорости («как на длинном» — no-op)
+    и галку вырезки. Если длинный уже вырезал повторы — шорт их наследует, ничего
+    дополнительно не режем.
+    """
+    metrics = getattr(ctx, "speech_metrics", None)
+    metrics = metrics if isinstance(metrics, dict) else {}
+    mode = getattr(ctx, "s_speech_rate_mode", SPEED_MODE_INHERIT)
+    measured_wpm: float | None = None
+    if normalize_short_speed_mode(mode) != SPEED_MODE_INHERIT and not _is_finite_number(
+        metrics.get("final_wpm")
+    ):
+        duration = _safe_float(getattr(ctx, "audio_duration", 0.0), 0.0)
+        if duration > 0:
+            word_count = count_words_in_window(
+                getattr(ctx, "transcription", None), 0.0, duration
+            )
+            if word_count > 0:
+                measured_wpm = effective_wpm(word_count, duration)
+    ratio = short_speed_ratio(
+        mode,
+        getattr(ctx, "s_speech_rate_target_wpm", DEFAULT_TARGET_WPM),
+        getattr(ctx, "s_speech_rate_coefficient", 1.0),
+        metrics=metrics,
+        measured_wpm=measured_wpm,
+    )
+    intervals: list[tuple[float, float]] = []
+    if bool(getattr(ctx, "s_cut_extra_words", False)) and not metrics.get(
+        "extra_words_applied"
+    ):
+        analysis = getattr(ctx, "analysis", None)
+        corrected = ""
+        if isinstance(analysis, dict):
+            corrected = str(analysis.get("corrected_text") or "")
+        if corrected:
+            raw = find_extra_word_intervals(
+                getattr(ctx, "transcription", None), corrected
+            )
+            intervals = map_intervals_to_window(raw, window_start, window_end)
+    return {"ratio": ratio, "intervals": intervals}
 
 
 def _safe_float(value: Any, default: float) -> float:

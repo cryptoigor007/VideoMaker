@@ -788,6 +788,110 @@ def cut_segment(
     return output_path
 
 
+def retime_video_segment(
+    video_path: str,
+    output_path: str,
+    *,
+    speed_ratio: float = 1.0,
+    remove_intervals: list[tuple[float, float]] | None = None,
+    log_fn=None,
+    fade_seconds: float = 0.015,
+) -> str:
+    """Один проход: вырезать интервалы и/или изменить скорость (видео+аудио вместе).
+
+    Для шортов с отдельными настройками: скорость/вырезка поверх готового
+    вертикального клипа. Видео и звук масштабируются вместе — прожжённые
+    субтитры остаются в синхроне. Если менять нечего — возвращает исходный путь.
+    """
+    _log = log_fn or log.info
+    try:
+        speed = float(speed_ratio)
+    except (TypeError, ValueError):
+        speed = 1.0
+    if not (speed > 0):
+        speed = 1.0
+    speed = min(2.0, max(0.5, speed))
+    intervals: list[tuple[float, float]] = []
+    for raw_start, raw_end in sorted(remove_intervals or []):
+        start = max(0.0, float(raw_start))
+        end = max(start, float(raw_end))
+        if end - start <= 0.02:
+            continue
+        if intervals and start <= intervals[-1][1] + 0.005:
+            intervals[-1] = (intervals[-1][0], max(intervals[-1][1], end))
+        else:
+            intervals.append((start, end))
+    if not intervals and abs(speed - 1.0) <= 1e-6:
+        return video_path
+
+    from .audio import probe_duration
+
+    duration = probe_duration(video_path)
+    if duration <= 0:
+        raise RuntimeError(f"Не удалось определить длительность для retime: {video_path}")
+
+    # Оставляем куски между вырезанными интервалами.
+    segments: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start, end in intervals:
+        start = min(start, duration)
+        end = min(end, duration)
+        if start > cursor + 0.02:
+            segments.append((cursor, start))
+        cursor = max(cursor, end)
+    if duration > cursor + 0.02:
+        segments.append((cursor, duration))
+    if not segments:
+        raise RuntimeError("После вырезаний не осталось видео")
+
+    fade = max(0.005, min(0.05, float(fade_seconds)))
+    filters: list[str] = []
+    count = len(segments)
+    for i, (start, end) in enumerate(segments):
+        seg_dur = end - start
+        filters.append(
+            f"[0:v]trim=start={start:.6f}:end={end:.6f},setpts=PTS-STARTPTS[v{i}]"
+        )
+        audio = f"[0:a]atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS"
+        if i > 0:
+            audio += f",afade=t=in:st=0:d={fade:.4f}"
+        if i < count - 1:
+            audio += f",afade=t=out:st={max(0.0, seg_dur - fade):.6f}:d={fade:.4f}"
+        filters.append(f"{audio}[a{i}]")
+    concat_in = "".join(f"[v{i}][a{i}]" for i in range(count))
+    filters.append(f"{concat_in}concat=n={count}:v=1:a=1[vc][ac]")
+
+    if abs(speed - 1.0) > 1e-6:
+        from .speech_rate import atempo_chain
+
+        atempo = ",".join(f"atempo={factor:.6f}" for factor in atempo_chain(speed))
+        filters.append(f"[vc]setpts=PTS/{speed:.6f}[v]")
+        filters.append(f"[ac]{atempo}[a]")
+        v_label, a_label = "[v]", "[a]"
+    else:
+        v_label, a_label = "[vc]", "[ac]"
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+    ffmpeg = _ffmpeg_bin()
+    cmd = [
+        ffmpeg, "-hide_banner", "-y",
+        "-i", video_path,
+        "-filter_complex", ";".join(filters),
+        "-map", v_label, "-map", a_label,
+        "-c:v", "h264_videotoolbox", "-b:v", "28M", "-allow_sw", "1",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-map_metadata", "-1",
+        output_path,
+    ]
+    _log(
+        f"[ШОРТ] Обработка: вырезаний={len(intervals)}, скорость=×{speed:.2f}, "
+        f"кусков={count}"
+    )
+    run_vt_encode(cmd, [video_path], output_path, log_fn=_log, stage_name="SHORT ADJUST")
+    return output_path
+
+
 def add_intro_outro_mid(
     video_path: str,
     intro_outro_folder: str,

@@ -165,7 +165,7 @@ class ShortsCutter(Stage):
         self, ctx: PipelineContext, clip: dict, index: int, output_dir: str
     ) -> str | None:
         from ..engines.audio import probe_duration
-        from ..engines.video import cut_segment
+        from ..engines.video import cut_segment, retime_video_segment
         from ..engines.subtitles import burn_subtitles
 
         start = float(clip.get("start", 0))
@@ -259,6 +259,34 @@ class ShortsCutter(Stage):
                 force_reencode=True,
             )
         current = cut_path
+
+        # r57-api.25: отдельные настройки шортов — скорость/вырезка поверх готового cut.
+        from ..engines.speech_rate import adjust_short_clip_times, plan_short_adjustments
+
+        plan = plan_short_adjustments(ctx, window_start=start, window_end=end)
+        if plan["ratio"] != 1.0 or plan["intervals"]:
+            adjusted_path = os.path.join(tmp_dir, "adjusted.mp4")
+            try:
+                current = retime_video_segment(
+                    current,
+                    adjusted_path,
+                    speed_ratio=plan["ratio"],
+                    remove_intervals=plan["intervals"],
+                    log_fn=ctx.log,
+                )
+                clip = adjust_short_clip_times(
+                    clip,
+                    window_start=start,
+                    intervals=plan["intervals"],
+                    ratio=plan["ratio"],
+                )
+                ctx.log(
+                    f"[SHORTS] #{index} отдельные настройки шортов: "
+                    f"скорость=×{plan['ratio']:.2f}, вырезаний={len(plan['intervals'])}"
+                )
+            except Exception as e:  # noqa: BLE001
+                ctx.log(f"[SHORTS] #{index} обработка шортов не удалась: {e}")
+                current = cut_path
 
         # intro/middle/outro shorts (если включены)
         if getattr(ctx, "s_enable_intro", False) or getattr(ctx, "s_enable_middle", False) or getattr(ctx, "s_enable_outro", False):

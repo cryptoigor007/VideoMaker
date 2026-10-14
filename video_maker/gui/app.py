@@ -85,17 +85,18 @@ OTHER_VARS = [
     "whisper_comp_var",
     "target_lufs_var",
     "h_intro_duration", "h_intro_position", "h_intro_custom_time",
-    "h_mid_position", "h_mid_custom_time",
+    "h_mid_duration", "h_mid_position", "h_mid_custom_time",
     "h_outro_duration", "h_outro_position", "h_outro_custom_time",
     "v_intro_duration", "v_intro_position", "v_intro_custom_time",
-    "v_mid_position", "v_mid_custom_time",
+    "v_mid_duration", "v_mid_position", "v_mid_custom_time",
     "v_outro_duration", "v_outro_position", "v_outro_custom_time",
     "s_intro_duration", "s_intro_position", "s_intro_custom_time",
-    "s_mid_position", "s_mid_custom_time",
+    "s_mid_duration", "s_mid_position", "s_mid_custom_time",
     "s_outro_duration", "s_outro_position", "s_outro_custom_time",
     "playlist_season_url_var", "playlist_block_url_var", "playlist_block_label_var",
     "required_hashtags_var", "shorts_desc_max_len_var",
     "speech_rate_mode_var", "speech_rate_target_wpm_var", "speech_rate_coefficient_var",
+    "s_speech_rate_mode_var", "s_speech_rate_target_wpm_var", "s_speech_rate_coefficient_var",
 ]
 
 BOOL_VARS = [
@@ -110,6 +111,7 @@ BOOL_VARS = [
     "remove_long_pauses_var",
     "align_speech_rate_var",
     "cut_extra_words_var",
+    "s_cut_extra_words_var",
 ]
 
 
@@ -187,6 +189,13 @@ def speech_rate_mode_display(value) -> str:
     from ..engines.speech_rate import speed_mode_label
 
     return speed_mode_label(value)
+
+
+def short_speech_rate_mode_display(value) -> str:
+    """Подпись режима скорости шортов («Как на длинном»/«По словам/мин»/«По коэффициенту»)."""
+    from ..engines.speech_rate import short_speed_mode_label
+
+    return short_speed_mode_label(value)
 
 
 def _float_setting(value, default: float) -> float:
@@ -294,12 +303,17 @@ def collect_settings_from_gui(app) -> None:
     app.settings.voice_enhance = app.voice_enhance_var.get()
     app.settings.remove_long_pauses = bool(app.remove_long_pauses_var.get())
     app.settings.align_speech_rate = bool(app.align_speech_rate_var.get())
-    from ..engines.speech_rate import normalize_speed_mode
+    from ..engines.speech_rate import normalize_short_speed_mode, normalize_speed_mode
 
     app.settings.speech_rate_mode = normalize_speed_mode(app.speech_rate_mode_var.get())
     app.settings.speech_rate_target_wpm = _float_setting(app.speech_rate_target_wpm_var.get(), 120.0)
     app.settings.speech_rate_coefficient = _float_setting(app.speech_rate_coefficient_var.get(), 1.0)
     app.settings.cut_extra_words = bool(app.cut_extra_words_var.get())
+    # r57-api.25: отдельные настройки шортов.
+    app.settings.s_speech_rate_mode = normalize_short_speed_mode(app.s_speech_rate_mode_var.get())
+    app.settings.s_speech_rate_target_wpm = _float_setting(app.s_speech_rate_target_wpm_var.get(), 120.0)
+    app.settings.s_speech_rate_coefficient = _float_setting(app.s_speech_rate_coefficient_var.get(), 1.0)
+    app.settings.s_cut_extra_words = bool(app.s_cut_extra_words_var.get())
     app.settings.add_bgm = any([
         app.settings.bgm_youtube_enable,
         app.settings.bgm_tiktok_enable,
@@ -1309,6 +1323,56 @@ class App:
         ttk.Label(
             audio_settings,
             text="По умолчанию выключено. Сравнивает итоговый текст Gemini с расшифровкой: вырезает только слова, которых Gemini не оставил (повторы, оговорки). Исправления распознавания не трогаются.",
+            wraplength=410,
+            justify="left",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", padx=(20, 0), pady=(0, 4))
+
+        # r57-api.25: отдельные настройки шортов — скорость и вырезка независимо от длинного.
+        ttk.Separator(audio_settings, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(6, 4))
+        ttk.Label(audio_settings, text="Шорты (отдельно от длинного):", style="Section.TLabel").pack(anchor="w")
+        self.s_speech_rate_mode_var = tk.StringVar(
+            value=short_speech_rate_mode_display(getattr(self.settings, "s_speech_rate_mode", "inherit"))
+        )
+        self.s_speech_rate_target_wpm_var = tk.DoubleVar(
+            value=_float_setting(getattr(self.settings, "s_speech_rate_target_wpm", 120.0), 120.0)
+        )
+        self.s_speech_rate_coefficient_var = tk.DoubleVar(
+            value=_float_setting(getattr(self.settings, "s_speech_rate_coefficient", 1.0), 1.0)
+        )
+        s_sr_row = ttk.Frame(audio_settings)
+        s_sr_row.pack(fill=tk.X, pady=(2, 0))
+        ttk.Label(s_sr_row, text="Скорость шортов:").pack(side=tk.LEFT)
+        self.s_speech_rate_mode_combo = ttk.Combobox(
+            s_sr_row,
+            textvariable=self.s_speech_rate_mode_var,
+            state="readonly",
+            width=18,
+            values=["Как на длинном", "По словам/мин", "По коэффициенту"],
+        )
+        self.s_speech_rate_mode_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.s_speech_rate_slider = tk.Scale(
+            audio_settings,
+            orient=tk.HORIZONTAL,
+            showvalue=False,
+            length=380,
+            from_=100, to=200, resolution=1,
+            variable=self.s_speech_rate_target_wpm_var,
+        )
+        self.s_speech_rate_slider.pack(fill=tk.X, padx=(20, 0), pady=(2, 0))
+        self.s_speech_rate_mode_combo.bind("<<ComboboxSelected>>", self._on_short_speech_mode_change)
+        self._on_short_speech_mode_change()
+        self.s_cut_extra_words_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "s_cut_extra_words", False))
+        )
+        ttk.Checkbutton(
+            audio_settings,
+            text="Вырезать повторы и лишние слова (на шортах)",
+            variable=self.s_cut_extra_words_var,
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            audio_settings,
+            text="Если вырезка включена на длинном — шорты её наследуют; галка добавляет вырезку на шортах, когда на длинном она выключена.",
             wraplength=410,
             justify="left",
             font=("SF Pro Text", 9),
@@ -2734,6 +2798,26 @@ class App:
             )
         self._update_speech_rate_hint()
 
+    def _on_short_speech_mode_change(self, *_args) -> None:
+        """Режим скорости шортов: «как на длинном» — ползунок выключен."""
+        if not hasattr(self, "s_speech_rate_slider"):
+            return
+        from ..engines.speech_rate import normalize_short_speed_mode
+
+        mode = normalize_short_speed_mode(self.s_speech_rate_mode_var.get())
+        if mode == "coefficient":
+            self.s_speech_rate_slider.configure(
+                variable=self.s_speech_rate_coefficient_var,
+                from_=1.0, to=1.5, resolution=0.01, state="normal",
+            )
+        elif mode == "wpm":
+            self.s_speech_rate_slider.configure(
+                variable=self.s_speech_rate_target_wpm_var,
+                from_=100, to=200, resolution=1, state="normal",
+            )
+        else:
+            self.s_speech_rate_slider.configure(state="disabled")
+
     def _update_speech_rate_hint(self) -> None:
         """Подсказка под ползунком: текущая цель + метрики прошлого прогона."""
         if not hasattr(self, "speech_rate_hint"):
@@ -3010,6 +3094,11 @@ class App:
                     speech_rate_target_wpm=pipeline_settings.speech_rate_target_wpm,
                     speech_rate_coefficient=pipeline_settings.speech_rate_coefficient,
                     cut_extra_words=pipeline_settings.cut_extra_words,
+                    # r57-api.25: отдельные настройки шортов — скорость и вырезка.
+                    s_speech_rate_mode=pipeline_settings.s_speech_rate_mode,
+                    s_speech_rate_target_wpm=pipeline_settings.s_speech_rate_target_wpm,
+                    s_speech_rate_coefficient=pipeline_settings.s_speech_rate_coefficient,
+                    s_cut_extra_words=pipeline_settings.s_cut_extra_words,
                     intro_gemini=pipeline_settings.intro_gemini,
                     keep_temp_files=pipeline_settings.keep_temp_files,
                     caption_style=caption_style,

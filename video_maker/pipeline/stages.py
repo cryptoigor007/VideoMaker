@@ -91,6 +91,11 @@ class PipelineContext:
     speech_rate_coefficient: float = 1.0
     # r57-api.24: вырезать повторы/лишние слова по тексту Gemini (corrected_text)
     cut_extra_words: bool = False
+    # r57-api.25: отдельные настройки шортов.
+    s_speech_rate_mode: str = "inherit"
+    s_speech_rate_target_wpm: float = 120.0
+    s_speech_rate_coefficient: float = 1.0
+    s_cut_extra_words: bool = False
     intro_gemini: bool = True
     keep_temp_files: bool = False
     target_lufs: float = -14.0

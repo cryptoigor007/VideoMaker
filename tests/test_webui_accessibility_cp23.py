@@ -6,13 +6,18 @@ from video_maker.api.webui import render
 
 def test_webui_has_responsive_layout_and_visible_keyboard_focus():
     html = render()
-    assert "@media(min-width:920px)" in html
+    assert "@media(min-width:720px)" in html
+    assert "@media(min-width:1024px)" in html
     assert "@media(max-width:480px)" in html
     assert "button:focus-visible" in html
     assert "input:focus-visible" in html
     assert "prefers-reduced-motion:reduce" in html
+    # Стекло (Apple Glass): прозрачность и её уважение к системным настройкам.
+    assert "backdrop-filter" in html
+    assert "prefers-reduced-transparency:reduce" in html
+    assert "prefers-contrast:more" in html
     assert "min-height:44px" in html
-    assert "--dim:#b0bdd1" in html
+    assert "--dim:#b9c5da" in html
     assert 'role="progressbar"' in html
     assert 'aria-label="Аудио: файл или папка"' in html
     assert 'aria-label="Папка вывода"' in html

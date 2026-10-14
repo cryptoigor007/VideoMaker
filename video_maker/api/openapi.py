@@ -78,6 +78,10 @@ _PATHS: dict = {
         "get": {"summary": "Живой поток логов (Server-Sent Events)",
                 "responses": {"200": {"description": "text/event-stream"}}}
     },
+    "/api/settings/schema": {
+        "get": {"summary": "Схема формы настроек для пульта (секции и поля)",
+                "responses": {"200": {"description": "Секции с полями: name/label/type/options"}}}
+    },
     "/api/settings": {
         "get": {"summary": "Текущие настройки (секреты замаскированы)",
                 "responses": {"200": {"description": "Настройки"}}},
