@@ -1,0 +1,34 @@
+CP28 final verification log — 2026-10-12
+
+Core regression:
+  python -m pytest -q
+  183 passed, 1 skipped, 23 subtests passed in 1.51s.
+
+Static policy:
+  32 direct subprocess.run/call/check_call/check_output calls; 0 missing timeout keyword.
+  0 shell=True calls.
+  0 disabled legacy BGM code blocks guarded by `if False` remain.
+  High-confidence secret scan patterns: 0 files matched.
+
+Compilation:
+  python -m compileall -q video_maker tests
+  PASS.
+
+GUI:
+  Xvfb 1024x768 layout test: 1 passed.
+  GUI settings mapping: 70 passed, 0 failures.
+  GUI/API panel: 35 passed, 0 failures.
+
+Browser:
+  Chromium desktop 1365x900 and mobile 390x844: PASS, no horizontal overflow.
+
+Synthetic media:
+  Speech FFmpeg smoke: PASS; final tempo 120 WPM; word timestamps preserved.
+  BGM FFmpeg smoke: PASS; H.264/AAC; full audio decode PASS.
+  Voice-enhancement benchmark: 8s synthetic signal; legacy 6 FFmpeg + 4 ffprobe calls vs shared 1 + 1; 0.000s duration drift. Not a full-episode runtime measurement.
+
+Live API:
+  72/72 previously passed on isolated loopback test setup; API server source unchanged in CP26–CP28.
+
+Packaging:
+  Final source manifest verified after extraction; CRC PASS; duplicate paths 0; local `.env` absent; compileall and tests rerun from extracted archive.

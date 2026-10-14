@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "checkpoint": "CP30",
+  "baseline_checkpoint": "CP29",
+  "status": [
+    {
+      "id": "CP29-01",
+      "state": "fixed",
+      "evidence": "VideoMakerAPI.start returns empty and never binds unless enabled is exactly True; runtime disable closes listening socket. tests/test_cp30_api_lifecycle.py::test_start_does_not_bind_when_disabled; ::test_config_disable_closes_listener_and_persists_disabled_state"
+    },
+    {
+      "id": "CP29-02",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Result discovery still marks metadata-backed series directory ready without requiring a video output."
+    },
+    {
+      "id": "CP29-03",
+      "state": "fixed",
+      "evidence": "do_run checks app.running after App._start; queue launch marks failed if start callback returns without setting running."
+    },
+    {
+      "id": "CP29-04",
+      "state": "open",
+      "next_checkpoint": "CP32",
+      "evidence": "Checkpoint required-artifact save failure must prevent stage completion."
+    },
+    {
+      "id": "CP29-05",
+      "state": "open",
+      "next_checkpoint": "CP32",
+      "evidence": "Source and stage-setting fingerprints are not yet fully implemented."
+    },
+    {
+      "id": "CP29-06",
+      "state": "open",
+      "next_checkpoint": "CP33",
+      "evidence": "TkBridge.call timeout cancellation not yet changed."
+    },
+    {
+      "id": "CP29-07",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Vertical B-roll preflight is not yet fully strict."
+    },
+    {
+      "id": "CP29-08",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Strict bool conversion across all Settings fields remains to do."
+    },
+    {
+      "id": "CP29-09",
+      "state": "fixed",
+      "evidence": "Config changes are staged; failed rebind restores previous configuration and attempts to restore the listener."
+    },
+    {
+      "id": "CP29-10",
+      "state": "partially_fixed",
+      "evidence": "API config loader rejects non-object JSON roots and fails closed; queue JSON root validation remains for CP31."
+    },
+    {
+      "id": "CP29-11",
+      "state": "open",
+      "next_checkpoint": "CP34",
+      "evidence": "Whisper GUI values are not all respected by the engine yet."
+    },
+    {
+      "id": "CP29-12",
+      "state": "open",
+      "next_checkpoint": "CP35",
+      "evidence": "Graceful shutdown/checkpoint behavior remains."
+    },
+    {
+      "id": "CP29-13",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Finalizer metadata timing remains."
+    },
+    {
+      "id": "CP29-14",
+      "state": "open",
+      "next_checkpoint": "CP36",
+      "evidence": "Interprocess series/output lock remains."
+    },
+    {
+      "id": "CP29-15",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Output writeability and disk-space preflight remains."
+    },
+    {
+      "id": "CP29-16",
+      "state": "open",
+      "next_checkpoint": "CP37",
+      "evidence": "Config file mode-before-replace remains."
+    },
+    {
+      "id": "CP29-17",
+      "state": "fixed",
+      "evidence": "README, VERSION, CHANGES, roadmap and index updated to CP30."
+    },
+    {
+      "id": "CP29-18",
+      "state": "open",
+      "next_checkpoint": "CP38",
+      "evidence": "Dead helpers/imports/dependency candidates await dependency-aware audit."
+    },
+    {
+      "id": "CP29-19",
+      "state": "open",
+      "next_checkpoint": "CP31",
+      "evidence": "Webhook/queue boolean parsing remains."
+    },
+    {
+      "id": "CP29-20",
+      "state": "open",
+      "next_checkpoint": "CP37",
+      "evidence": "TLS/rate limiting are deferred, with VPN-only recommendation retained."
+    }
+  ],
+  "tests": {
+    "pytest_passed": 190,
+    "pytest_skipped": 1,
+    "subtests_passed": 23,
+    "compileall": "PASS",
+    "static_audit": {
+      "python_files": 49,
+      "subprocess_calls": 36,
+      "missing_timeout": 0,
+      "shell_true": 0
+    }
+  },
+  "next_checkpoint": "CP31 — results readiness, vertical B-roll preflight, strict bools and malformed queue config"
+}

@@ -103,11 +103,17 @@ def shutdown_computer(delay_sec: int = 60, log_fn=None) -> bool:
             script = (
                 f'tell application "System Events" to shut down'
             )
-            # Даём пользователю время увидеть сообщение
-            _log(f"[POWER] Выключение через {delay_sec} сек (можно отменить в диалоге macOS)...")
-            # Используем shutdown с задержкой — можно отменить: sudo killall shutdown
-            # Более дружелюбно — osascript после паузы
-            time.sleep(min(5, delay_sec))  # короткая пауза чтобы лог успел записаться
+            # Даём пользователю полную заявленную задержку: он успевает отменить
+            # выключение через диалоги macOS. Раньше ожидание срезалось до 5 с.
+            total = max(0, min(int(delay_sec or 0), 600))
+            _log(f"[POWER] Выключение через {total} сек (можно отменить в диалоге macOS)...")
+            waited = 0
+            while waited < total:
+                step = min(10, total - waited)
+                time.sleep(step)
+                waited += step
+                if waited < total:
+                    _log(f"[POWER] до выключения {total - waited} сек")
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,

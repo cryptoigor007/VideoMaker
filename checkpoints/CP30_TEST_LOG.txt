@@ -1,0 +1,8 @@
+Full pytest on CP30 working tree:
+189 passed, 1 skipped, 23 subtests passed (before adding final queue launch regression).
+
+Latest full pytest after final queue launch regression:
+190 passed, 1 skipped, 23 subtests passed in 2.35s.
+
+Targeted CP30/API security/readiness tests:
+34 passed, 2 subtests passed.

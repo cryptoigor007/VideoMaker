@@ -20,24 +20,99 @@ log = logging.getLogger(__name__)
 REQUIRED_TAGS = ("#ТочкаНаблюдения", "#ТайныйКризисЧеловечества")
 
 
-def _ensure_hashtags(raw: str) -> str:
+def _required_hashtags(packaging_opts: dict | None = None) -> tuple[str, ...]:
+    """Return the configured required tags, falling back to the project defaults.
+
+    The analysis/description engine already honors ``required_hashtags``. Shorts
+    sidecars must use that same option instead of silently re-inserting hardcoded
+    brand tags after the analysis stage.
+    """
+    raw = str((packaging_opts or {}).get("required_hashtags") or "").replace(",", " ")
+    configured: list[str] = []
+    for part in raw.split():
+        tag = part.strip()
+        if not tag:
+            continue
+        if not tag.startswith("#"):
+            tag = "#" + tag.lstrip("#")
+        if tag not in configured:
+            configured.append(tag)
+    return tuple(configured) or REQUIRED_TAGS
+
+
+def _ensure_hashtags(raw: str, required_tags: tuple[str, ...] = REQUIRED_TAGS) -> str:
     tags: list[str] = []
     for part in (raw or "").replace(",", " ").split():
-        p = part.strip()
-        if not p:
+        tag = part.strip()
+        if not tag:
             continue
-        if not p.startswith("#"):
-            p = "#" + p.lstrip("#")
-        if p not in tags:
-            tags.append(p)
-    for req in REQUIRED_TAGS:
-        if req not in tags:
-            tags.insert(0, req)
+        if not tag.startswith("#"):
+            tag = "#" + tag.lstrip("#")
+        if tag not in tags:
+            tags.append(tag)
+    # Keep the configured required tags first, matching analysis.py's packaging rules.
+    for required in reversed(required_tags):
+        if required in tags:
+            tags.remove(required)
+        tags.insert(0, required)
     return " ".join(tags[:12])
 
 
 # Запас после последнего слова (сек), чтобы stream copy / Gemini end не съедали хвост речи.
 _SHORT_TAIL_PAD = 0.40
+
+
+def dedupe_short_clips(clips: list[dict], *, start_tolerance: float = 0.25,
+                       end_tolerance: float = 0.45, overlap_threshold: float = 0.96
+                       ) -> tuple[list[dict], list[dict]]:
+    """Drop near-identical timeline windows while preserving the first clip.
+
+    Duplicate Shorts waste the expensive cut/subtitle/cover stages. The test is
+    intentionally conservative: both boundaries must be close and at least 96%
+    of the shorter clip must overlap. Distinct clips from the same discussion
+    remain eligible when their actual windows differ materially.
+    """
+    unique: list[dict] = []
+    kept_windows: list[tuple[float, float, int]] = []
+    dropped: list[dict] = []
+    for original_index, clip in enumerate(clips, 1):
+        if not isinstance(clip, dict):
+            unique.append(clip)
+            continue
+        try:
+            start = float(clip.get("start", 0))
+            end = float(clip.get("end", 0))
+        except (TypeError, ValueError):
+            unique.append(clip)
+            continue
+        if end <= start:
+            unique.append(clip)
+            continue
+        duplicate_of = None
+        duration = end - start
+        for prev_start, prev_end, prev_index in kept_windows:
+            prev_duration = prev_end - prev_start
+            overlap = max(0.0, min(end, prev_end) - max(start, prev_start))
+            shorter = min(duration, prev_duration)
+            overlap_ratio = overlap / shorter if shorter > 0 else 0.0
+            if (abs(start - prev_start) <= start_tolerance
+                    and abs(end - prev_end) <= end_tolerance
+                    and overlap_ratio >= overlap_threshold):
+                duplicate_of = prev_index
+                break
+        if duplicate_of is not None:
+            dropped.append({
+                "dropped_index": original_index,
+                "kept_index": duplicate_of,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "title": str(clip.get("title") or ""),
+                "reason": "near-identical timeline window",
+            })
+            continue
+        unique.append(clip)
+        kept_windows.append((start, end, original_index))
+    return unique, dropped
 
 
 def _last_speech_end(
@@ -136,7 +211,8 @@ class ShortsCutter(Stage):
         clip = dict(clip)
         clip["end"] = end
         # r50: description already normalized in analysis (template + tags); do not append long blurb
-        clip["hashtags"] = _ensure_hashtags(str(clip.get("hashtags") or ""))
+        required_tags = _required_hashtags(getattr(ctx, "packaging_opts", None))
+        clip["hashtags"] = _ensure_hashtags(str(clip.get("hashtags") or ""), required_tags)
         clip["description"] = str(clip.get("description") or "").strip()
 
         short_dir = os.path.join(output_dir, f"short_{index:03d}")
@@ -145,8 +221,10 @@ class ShortsCutter(Stage):
         # r33: промежуточные только во temp — в папке шорта один mp4
         import tempfile
         tmp_dir = tempfile.mkdtemp(prefix=f"vm_short_{index:03d}_")
+        if not hasattr(self, "_clip_tmp_dirs"):
+            self._clip_tmp_dirs = []
+        self._clip_tmp_dirs.append(tmp_dir)
         cut_path = os.path.join(tmp_dir, "cut.mp4")
-        temps = [tmp_dir]
 
         ctx.log(
             f"[SHORTS] #{index} cut {start:.1f}-{end:.1f}s → burn Hook+CTA → "
@@ -164,9 +242,9 @@ class ShortsCutter(Stage):
             got = float(probe_duration(cut_path) or 0)
         except Exception:
             got = 0.0
-        if got > 0.2 and got < duration - 0.15:
+        if got > 0.2 and (got < duration - 0.15 or got > duration + 0.15):
             ctx.log(
-                f"[SHORTS] #{index} cut shortfall: got={got:.2f}s need={duration:.2f}s → VT re-trim"
+                f"[SHORTS] #{index} cut length mismatch: got={got:.2f}s need={duration:.2f}s → VT re-trim"
             )
             try:
                 os.remove(cut_path)
@@ -265,22 +343,9 @@ class ShortsCutter(Stage):
                 shutil.copy2(current, final_path)
             current = final_path
 
-        # BGM: только если long ещё без BGM — тоже во temp, потом в final
-        # r56: BGM deferred to Finalize (per platform)
-        if False and ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
-            from ..engines.audio import mix_bgm
-            bgm_out = os.path.join(tmp_dir, "bgm.mp4")
-            try:
-                mixed = mix_bgm(
-                    current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True
-                )
-                if os.path.abspath(mixed) != os.path.abspath(final_path):
-                    shutil.copy2(mixed, final_path)
-                current = final_path
-                ctx.log(f"[SHORTS] #{index} BGM mixed (long had no BGM) → final only")
-            except Exception as e:
-                ctx.log(f"[SHORTS] BGM skip: {e}")
-        elif getattr(ctx, "bgm_mixed", False):
+        # BGM is applied per finalized publication asset in FinalizeStage.
+        # If a legacy caller marks the master as already mixed, log it; never mix here.
+        if getattr(ctx, "bgm_mixed", False):
             ctx.log(f"[SHORTS] #{index} BGM already on long (no re-mix)")
 
         # если burn/bgm не оставили final — добить copy из current
@@ -300,13 +365,22 @@ class ShortsCutter(Stage):
                 except OSError as e:
                     ctx.log(f"[SHORTS] #{index} copy to final failed: {e}")
 
-        # чистим temp (cut/bgm)
+        # Honor the global diagnostic option: retained intermediates help debug a
+        # faulty cut/subtitle render. Normal production mode cleans only this unique
+        # per-Short temp directory and never touches neighbouring jobs.
+        if not bool(getattr(ctx, "keep_temp_files", False)):
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+        else:
+            ctx.log(f"[SHORTS] keep_temp_files=on; промежуточные файлы сохранены: {tmp_dir}")
         try:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
+            self._clip_tmp_dirs.remove(tmp_dir)
+        except (AttributeError, ValueError):
             pass
 
-        self._write_sidecar_files(clip, short_dir, index)
+        self._write_sidecar_files(clip, short_dir, index, required_tags=required_tags)
         # r53: обложка = фон + hook (отдельный jpg, short не падает при ошибке)
         try:
             cover_bg = (getattr(ctx, "shorts_cover_image", "") or "").strip()
@@ -335,24 +409,28 @@ class ShortsCutter(Stage):
         except Exception as e:
             ctx.log(f"[COVER] short #{index}: ошибка (short сохранён): {e}")
         self._write_metadata(
-            clip, ctx, os.path.join(short_dir, f"short_{index:03d}_meta.txt")
+            clip, ctx, os.path.join(short_dir, f"short_{index:03d}_meta.txt"),
+            required_tags=required_tags,
         )
         ctx.log(
             f"[SHORTS] #{index} готов → {final_path} | hashtags={clip.get('hashtags', '')}"
         )
         return final_path
 
-    def _write_sidecar_files(self, clip: dict, short_dir: str, index: int) -> None:
+    def _write_sidecar_files(
+        self, clip: dict, short_dir: str, index: int,
+        *, required_tags: tuple[str, ...] = REQUIRED_TAGS,
+    ) -> None:
         base = f"short_{index:03d}"
         fields = [
             ("title", str(clip.get("title") or "").strip()),
             ("description", str(clip.get("description") or "").strip()),
             ("hook", str(clip.get("hook") or "").strip()),
             ("cta", str(clip.get("cta") or "").strip()),
-            ("hashtags", _ensure_hashtags(str(clip.get("hashtags") or ""))),
+            ("hashtags", _ensure_hashtags(str(clip.get("hashtags") or ""), required_tags)),
         ]
         desc = str(clip.get("description") or "").strip()
-        tags = _ensure_hashtags(str(clip.get("hashtags") or ""))
+        tags = _ensure_hashtags(str(clip.get("hashtags") or ""), required_tags)
         # description уже может содержать хештеги (r50) — не дублировать в upload.txt
         upload_block = desc
         if tags:
@@ -372,12 +450,14 @@ class ShortsCutter(Stage):
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[SHORTS] cut from final_9x16 (stream copy) + burn only Hook+CTA...")
-        # Пишем сразу в финальную структуру series_dir/shorts (без лишнего copy в Finalize)
+        # Staging lives under _tmp, never beside publication-ready output folders.
+        # This prevents a second visible set of the same Shorts from being mistaken
+        # for additional deliverables when finalization fails or temp files are kept.
         from .finalize import resolve_series_dir
         series_dir, _ = resolve_series_dir(
             ctx.output_folder, ctx.series_name or "", ctx.audio_path or ""
         )
-        output_dir = os.path.join(series_dir, "shorts")
+        output_dir = os.path.join(series_dir, "_tmp", "shorts_staging")
         os.makedirs(output_dir, exist_ok=True)
         ctx.log(f"[SHORTS] series_dir={series_dir} → {output_dir}")
 
@@ -385,42 +465,75 @@ class ShortsCutter(Stage):
         if not clips:
             ctx.log("[SHORTS] Нет clips_for_shorts в analysis — пропуск")
             ctx.shorts = []
+            ctx.short_indices = []
             return ctx
 
+        clips, duplicates = dedupe_short_clips(clips)
+        if duplicates:
+            ctx.log(
+                f"[SHORTS][DEDUP] удалено повторяющихся окон: {len(duplicates)}; "
+                f"оставлено уникальных: {len(clips)}"
+            )
+            if ctx.analysis is not None:
+                ctx.analysis["clips_for_shorts"] = clips
+                ctx.analysis["shorts_deduplication"] = duplicates
+        else:
+            ctx.log(f"[SHORTS][DEDUP] повторов по тайм-окнам нет; клипов: {len(clips)}")
+
         results = []
-        for i, clip in enumerate(clips, 1):
-            if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
-                break
-            try:
-                path = self._create_short(ctx, clip, i, output_dir)
-                if path:
-                    results.append(path)
-            except Exception as e:
-                ctx.log(f"[SHORTS] Ошибка клипа {i}: {e}")
-                log.exception("Shorts clip %s failed", i)
+        result_indices = []
+        self._clip_tmp_dirs = []
+        try:
+            for i, clip in enumerate(clips, 1):
+                if getattr(ctx, "cancel_event", None) is not None and ctx.cancel_event.is_set():
+                    break
+                try:
+                    path = self._create_short(ctx, clip, i, output_dir)
+                    if path:
+                        results.append(path)
+                        result_indices.append(i)
+                except Exception as e:
+                    ctx.log(f"[SHORTS] Ошибка клипа {i}: {e}")
+                    log.exception("Shorts clip %s failed", i)
+        finally:
+            # Каталоги cut.mp4 в системном temp живут только до конца стадии,
+            # даже если клип упал посередине.
+            if not bool(getattr(ctx, "keep_temp_files", False)):
+                for tmp in list(getattr(self, "_clip_tmp_dirs", [])):
+                    shutil.rmtree(tmp, ignore_errors=True)
+            self._clip_tmp_dirs = []
 
         ctx.shorts = results
-        # BGM+loudnorm уже в каждом short
-        ctx.shorts_audio_normalized = bool(ctx.add_bgm and ctx.bgm_folder)
+        ctx.short_indices = result_indices
+        # Platform-specific BGM is applied later during finalization.
+        ctx.shorts_audio_normalized = False
         ctx.log(f"[SHORTS] Готово: {len(results)} шт → {output_dir}")
         ctx.progress = 90.0
         return ctx
 
-    def _write_metadata(self, clip: dict, ctx: PipelineContext, path: str) -> None:
+    def _write_metadata(
+        self, clip: dict, ctx: PipelineContext, path: str,
+        *, required_tags: tuple[str, ...] = REQUIRED_TAGS,
+    ) -> None:
         hook = clip.get("hook") or ""
         if isinstance(hook, dict):
             hook = hook.get("text", "")
-        hashtags = _ensure_hashtags(str(clip.get("hashtags") or ""))
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"Серия: {ctx.series_name or '—'}\n")
-            f.write(f"Хук (on-screen начало): {hook}\n")
-            f.write(f"CTA (on-screen конец): {clip.get('cta', '—')}\n")
-            f.write(f"Заголовок: {clip.get('title', '—')}\n")
-            f.write(f"Описание: {clip.get('description', '—')}\n")
-            f.write(f"Хештеги: {hashtags}\n")
-            f.write(
-                f"Тайминг: {float(clip.get('start', 0)):.1f} — "
-                f"{float(clip.get('end', 0)):.1f}\n"
-            )
-            f.write(f"hook_timing: {clip.get('hook_start')} — {clip.get('hook_end')}\n")
-            f.write(f"cta_timing: {clip.get('cta_start')} — {clip.get('cta_end')}\n")
+        hashtags = _ensure_hashtags(str(clip.get("hashtags") or ""), required_tags)
+        # Сбой записи сопроводительного текста не должен выбрасывать уже
+        # отрендеренный шорт: он остаётся в выдаче, в лог уходит предупреждение.
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"Серия: {ctx.series_name or '—'}\n")
+                f.write(f"Хук (on-screen начало): {hook}\n")
+                f.write(f"CTA (on-screen конец): {clip.get('cta', '—')}\n")
+                f.write(f"Заголовок: {clip.get('title', '—')}\n")
+                f.write(f"Описание: {clip.get('description', '—')}\n")
+                f.write(f"Хештеги: {hashtags}\n")
+                f.write(
+                    f"Тайминг: {float(clip.get('start', 0)):.1f} — "
+                    f"{float(clip.get('end', 0)):.1f}\n"
+                )
+                f.write(f"hook_timing: {clip.get('hook_start')} — {clip.get('hook_end')}\n")
+                f.write(f"cta_timing: {clip.get('cta_start')} — {clip.get('cta_end')}\n")
+        except OSError as exc:
+            ctx.log(f"[SHORTS] meta.txt не записан ({path}): {exc}")

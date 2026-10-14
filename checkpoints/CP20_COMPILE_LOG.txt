@@ -1,0 +1,1 @@
+PASS: python -m compileall -q video_maker tests

@@ -1,0 +1,9 @@
+usage: VideoMaker [-h] [--headless] [--api-port N] [--no-api]
+
+Автоматическое создание видео и Shorts из аудио и B-roll.
+
+options:
+  -h, --help    show this help message and exit
+  --headless    запуск без видимого окна (Tk-цикл остаётся активен)
+  --api-port N  порт HTTP-пульта (1..65535)
+  --no-api      не запускать HTTP-пульт

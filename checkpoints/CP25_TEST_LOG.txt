@@ -1,0 +1,48 @@
+CP25 verification log — 2026-10-12
+
+Core regression (fresh run on current CP25 source):
+  python -m pytest -q
+  174 passed, 1 skipped, 23 subtests passed in 1.13s.
+  The skip is a display-only GUI test when pytest runs without a display server.
+
+Compilation:
+  python -m compileall -q video_maker tests
+  PASS.
+
+Voice enhancement benchmark (fresh run):
+  python tests/synthetic_voice_enhance_smoke_cp25.py
+  PASS; synthetic 8.0s input.
+  Legacy two-branch workflow: 6 FFmpeg calls, 4 ffprobe calls, 2.736s.
+  Shared lossless workflow: 1 FFmpeg call, 1 ffprobe call, 0.161s.
+  Five FFmpeg calls saved (83.3% fewer for this subtask); WAV codec pcm_s16le at 48 kHz; duration drift 0.000s.
+  This is a synthetic micro-benchmark of voice enhancement only, not the runtime of a full episode.
+
+Synthetic speech FFmpeg smoke:
+  python tests/synthetic_ffmpeg_smoke.py
+  PASS; final target tempo 120.0 WPM; word-level subtitle timestamps preserved.
+
+Synthetic BGM FFmpeg smoke:
+  python tests/synthetic_bgm_mix_smoke.py
+  PASS; H.264/AAC; output duration 4.1s from 4.0s source; full audio decode PASS.
+
+GUI layout on 1024x768 display:
+  xvfb-run -a -s '-screen 0 1024x768x24' python -m pytest tests/test_gui_layout_cp22.py -q
+  PASS: 1 passed.
+
+GUI settings mapping:
+  xvfb-run -a -s '-screen 0 1024x768x24' python tests/verify_api_settings.py
+  PASS: 70 checks, 0 failures; 63 GUI-mapped fields exercised.
+
+Live GUI/API panel:
+  xvfb-run -a -s '-screen 0 1024x768x24' python tests/verify_app_gui.py
+  PASS: 35 checks, 0 failures.
+
+Responsive web control:
+  python tests/verify_webui_visual_cp23.py
+  PASS in Chromium at desktop 1365x900 and mobile 390x844; no horizontal overflow; action target 44x44 px.
+
+Live loopback API smoke:
+  tests/verify_api_live.py run against a temporary isolated HOME and test-only token.
+  PASS: 72/72 checks (authentication, settings, OpenAPI, queue/SSE, malformed requests and concurrent status calls).
+
+Note: synthetic signals do not assess subjective human voice timbre or whether background music is perceptually well-balanced. The shared filter reduces redundant work in the voice-enhancement subtask; a full-length benchmark on the user's Apple Silicon Mac/MLX was not run in this environment.

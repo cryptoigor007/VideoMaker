@@ -1,0 +1,637 @@
+{
+  "project": "VideoMaker",
+  "version": "r57-api.3",
+  "checkpoint": "CP16",
+  "created": "2026-10-12",
+  "package": "VideoMaker_FULL_R57_CP16_FINAL_SOURCE.zip",
+  "hash_algorithm": "SHA-256",
+  "self_hash_policy": "This manifest and its identical FINAL_SOURCE_MANIFEST alias are omitted to avoid recursive hashes.",
+  "file_count": 125,
+  "files": [
+    {
+      "path": ".env.example",
+      "size_bytes": 222,
+      "sha256": "ca27d476636e95c067ef6978f2f0d289cee7c4ea59163a78cd42967dfaed64a7"
+    },
+    {
+      "path": ".gitignore",
+      "size_bytes": 102,
+      "sha256": "9510d3beef8a013949a9d0d52cc9f574e420df12e7cf2b3c60a0306602d6751f"
+    },
+    {
+      "path": "AUDIT_DEEP_REVIEW.md",
+      "size_bytes": 12216,
+      "sha256": "3f7eff0ee6af311f39393ad3efaddb2de4ed771cb33d0449a1f71ea637cd019a"
+    },
+    {
+      "path": "AUDIT_R56_FIX_PLAN.md",
+      "size_bytes": 50693,
+      "sha256": "b34d3ad38f64ec296a767242307304d7fd833ece39989e60791ab51289189550"
+    },
+    {
+      "path": "BASELINE_MANIFEST.json",
+      "size_bytes": 11733,
+      "sha256": "5dd2c45cb4731564122385042741beb2e996dabeda25ddcd98a6591f413f0c87"
+    },
+    {
+      "path": "CHANGES.md",
+      "size_bytes": 24383,
+      "sha256": "14e3f503a2f2d59ccfd3e74e44a16e872c7834eb3c1e640fea033085cff09aad"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 12531,
+      "sha256": "f24c0e52c911b2e505eec193a373506da25d855364173808746b481fd36f2864"
+    },
+    {
+      "path": "VERSION.md",
+      "size_bytes": 11079,
+      "sha256": "ae4a5f457e34d902e3f54deb40c6c9d2c02a30b88fab860a1d863e70282eb8dc"
+    },
+    {
+      "path": "checkpoints/CP07_BASELINE_AND_SOURCE_INTEGRATION.md",
+      "size_bytes": 2027,
+      "sha256": "d6e36a438b3e1a309a8523ece40f3900fb682538edae8ce8b456f2518b7dd163"
+    },
+    {
+      "path": "checkpoints/CP08_COMPILE_LOG.txt",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP08_SHORTS_DEDUPLICATION.md",
+      "size_bytes": 3093,
+      "sha256": "470832089939a6c830ac73e7a2f574e4fbd73c57f5167ea4c20bc609cf6c1f28"
+    },
+    {
+      "path": "checkpoints/CP08_TEST_LOG.txt",
+      "size_bytes": 196,
+      "sha256": "da64b13421cbb12788e673ee76dec2421ca9461bf67d7f1920fc68c5a3e3ef9e"
+    },
+    {
+      "path": "checkpoints/CP09_COMPILE_LOG.txt",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP09_OPTIONAL_PAUSE_REDUCTION.md",
+      "size_bytes": 3417,
+      "sha256": "f3d5ea5d990d45d15ebfeb1e149166c51f902159b44fa67e89c6084892fe7c64"
+    },
+    {
+      "path": "checkpoints/CP09_TEST_LOG.txt",
+      "size_bytes": 196,
+      "sha256": "283ffab30b5578c82157ec2806fcc00418833580ab63117755e4afe35617964e"
+    },
+    {
+      "path": "checkpoints/CP10_COMPILE_LOG.txt",
+      "size_bytes": 16,
+      "sha256": "113a6c7cc7d48cf164a257520a571ca70460d50f789652dab1fd10a74f44187d"
+    },
+    {
+      "path": "checkpoints/CP10_GUI_API_SPEECH_SETTINGS.md",
+      "size_bytes": 1782,
+      "sha256": "46c44f6f6c759ce6bc128500e288868fc4502d47246e9b1e48f11a66c04a720e"
+    },
+    {
+      "path": "checkpoints/CP10_LIVE_GUI_VERIFICATION.txt",
+      "size_bytes": 3289,
+      "sha256": "40d65f677e992d9de28a134276ce51c40918eaae26938fc38589a64b3c341981"
+    },
+    {
+      "path": "checkpoints/CP10_LIVE_SETTINGS_VERIFICATION.txt",
+      "size_bytes": 6640,
+      "sha256": "4433274575668f386b95f3072c5cabb2e3ccab9fdac2609d8084838771515e35"
+    },
+    {
+      "path": "checkpoints/CP10_TEST_LOG.txt",
+      "size_bytes": 196,
+      "sha256": "4efd3957908e94df6064a4fc73654adde3487359c19ed110e0967c813c590c02"
+    },
+    {
+      "path": "checkpoints/CP11_API_LIVE_VERIFICATION.txt",
+      "size_bytes": 7518,
+      "sha256": "ac667b99b6dd8d95a464aef2eb7ec6657ee329b34c1d08b7671ed12596438809"
+    },
+    {
+      "path": "checkpoints/CP11_BGM_FFMPEG_SMOKE.json",
+      "size_bytes": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP11_COMPILE_LOG.txt",
+      "size_bytes": 16,
+      "sha256": "113a6c7cc7d48cf164a257520a571ca70460d50f789652dab1fd10a74f44187d"
+    },
+    {
+      "path": "checkpoints/CP11_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size_bytes": 2311,
+      "sha256": "06d07a8e479914419d936c95e3f25bad414c7abeeb7b303fbcff7ce5d6219648"
+    },
+    {
+      "path": "checkpoints/CP11_LIVE_GUI_VERIFICATION.txt",
+      "size_bytes": 3289,
+      "sha256": "c21612754cdc56ebd14c69e6ce0749ff8fc30a0b605cf23e64b6679cc0a1ef55"
+    },
+    {
+      "path": "checkpoints/CP11_LIVE_SETTINGS_VERIFICATION.txt",
+      "size_bytes": 6640,
+      "sha256": "4433274575668f386b95f3072c5cabb2e3ccab9fdac2609d8084838771515e35"
+    },
+    {
+      "path": "checkpoints/CP11_LOG_DEADLOCK_VERIFICATION.txt",
+      "size_bytes": 175,
+      "sha256": "0cf79a60911f31d3bfaaa6f93e7ebc3ff78e33cc67f9d982ce7baf9c63988467"
+    },
+    {
+      "path": "checkpoints/CP11_SOURCE_MANIFEST.json",
+      "size_bytes": 17784,
+      "sha256": "bc75560ac73e5c102aaef4777b0b1ae3ffce12f4058a8044df78983e0b843c3e"
+    },
+    {
+      "path": "checkpoints/CP11_SPEECH_FFMPEG_SMOKE.json",
+      "size_bytes": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP11_TEST_LOG.txt",
+      "size_bytes": 196,
+      "sha256": "73c4a96fd3a3e06d22766ef25bd2c5dc1f211355ca9a0cd406760a27927dbef5"
+    },
+    {
+      "path": "checkpoints/CP12_DEEP_AUDIT.md",
+      "size_bytes": 939,
+      "sha256": "2b4128474cd0c9ca359ef6b7b922f2ab390d19798a564c855730254b7cfc5d37"
+    },
+    {
+      "path": "checkpoints/CP12_TEST_LOG.txt",
+      "size_bytes": 215,
+      "sha256": "01295248ae5fd4a7f94ebcdd3fd57f89ee8f116a6eb7ba35d9a21eca8e045128"
+    },
+    {
+      "path": "checkpoints/CP13_DEEP_AUDIT.md",
+      "size_bytes": 947,
+      "sha256": "58f7c85941b329c7525c3563dfdb317023c69d98b4844815714ba9683c04844d"
+    },
+    {
+      "path": "checkpoints/CP13_TEST_LOG.txt",
+      "size_bytes": 215,
+      "sha256": "ac5caba45c1149de9b6ee622a2a8a7a0a8d211406935750a115a95768e153f4e"
+    },
+    {
+      "path": "checkpoints/CP14_DEEP_AUDIT.md",
+      "size_bytes": 930,
+      "sha256": "d77388f550ba02ed6c0666378fb95c01f52f454f345d3137df0243617c16fa3d"
+    },
+    {
+      "path": "checkpoints/CP14_TEST_LOG.txt",
+      "size_bytes": 215,
+      "sha256": "755d47f227ee07cdb5aab63bb16d389ad23d4893e6bcafb9176d3e1ef52acc11"
+    },
+    {
+      "path": "checkpoints/CP15_DEEP_AUDIT.md",
+      "size_bytes": 1038,
+      "sha256": "4d44d9615b7323d037ea42c73024543dc0f48016639ab3eff217f65154b15231"
+    },
+    {
+      "path": "checkpoints/CP15_SOURCE_MANIFEST.json",
+      "size_bytes": 19585,
+      "sha256": "56d3b98c11172308ab56d6c6e082a9c6ba2488586f93cce111a746cf12d6e512"
+    },
+    {
+      "path": "checkpoints/CP15_TEST_LOG.txt",
+      "size_bytes": 214,
+      "sha256": "58fd595e38870256ba4be76ba5ed36d349568cbb50de184c175fff5d098d9636"
+    },
+    {
+      "path": "checkpoints/CP16_BGM_FFMPEG_SMOKE.json",
+      "size_bytes": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP16_CLI_SMOKE_LOG.txt",
+      "size_bytes": 54,
+      "sha256": "87cd531fd23b79d4721b8f27d39477c4b53ad1af79be974e2ed01217849dd74b"
+    },
+    {
+      "path": "checkpoints/CP16_COMPILE_LOG.txt",
+      "size_bytes": 17,
+      "sha256": "f8ebc65bcf3d22d004eddde09612fcff2d08ea954cb441132209d74adf4b6451"
+    },
+    {
+      "path": "checkpoints/CP16_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size_bytes": 3358,
+      "sha256": "dcc822b293ad2df029cec4a7a9badb1881b1f1eff9079f49fd7ff4614824735d"
+    },
+    {
+      "path": "checkpoints/CP16_SHELL_SYNTAX_LOG.txt",
+      "size_bytes": 51,
+      "sha256": "87541cd48db55b20592fdca06694a9ecd5c50fb3a0e6cf9286a99b2f8042a13f"
+    },
+    {
+      "path": "checkpoints/CP16_SPEECH_FFMPEG_SMOKE.json",
+      "size_bytes": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP16_TEST_LOG.txt",
+      "size_bytes": 197,
+      "sha256": "a107ba9b2feb8de6f3a9168ac9419a73d8bfcc7c7e0863f28f6c0ef1a35f66d5"
+    },
+    {
+      "path": "checkpoints/INDEX.md",
+      "size_bytes": 2475,
+      "sha256": "b915d3df90eaafd24f7e2fe4d64c6c8e5daea7c040b5eecfe7334932ebe01990"
+    },
+    {
+      "path": "checkpoints/ROADMAP_STATUS.json",
+      "size_bytes": 3458,
+      "sha256": "a09ca79d2120d9f610f5c5621b76e5d371f4a737d26a70453507118569fc4085"
+    },
+    {
+      "path": "docs/API.md",
+      "size_bytes": 18554,
+      "sha256": "b50cb7fe33cc0dc8da88eb3bd183aa4e56dc0adeb6dbc6455f6e96a59be71228"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/PATCH_R47.txt",
+      "size_bytes": 996,
+      "sha256": "85461243d340d6304718a947107c8983be54386ec8d7978c4ed94ef027282a66"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README.md",
+      "size_bytes": 218,
+      "sha256": "6cb666f43695ddcda883399e398133af2955af9aaeaa21a44e2547a169f19293"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README_FIX.txt",
+      "size_bytes": 505,
+      "sha256": "484ce335c7daa342d81cd6472da47a9cb42494a7ac7cdd867fc58a798c847736"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README_REPLACE.txt",
+      "size_bytes": 841,
+      "sha256": "3d1c92e5f94335c93ee4443ca6a00788d05728066ee849c61e2a3a811a8ac43f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-26-videomeyker-design.md",
+      "size_bytes": 5692,
+      "sha256": "6bdcea7db527b747a0d2774ee35d2431d162f984e8d0acf28a8084e8741944ba"
+    },
+    {
+      "path": "requirements.txt",
+      "size_bytes": 277,
+      "sha256": "e18ad62040ef838a7a0657ccd806066a74f0c39aa3c0958eec1a791cd0de856a"
+    },
+    {
+      "path": "start-headless.command",
+      "size_bytes": 380,
+      "sha256": "dfb5efa0da6ea6111684ba00d860ce58897e268d81965204cac3da80ddf85c77"
+    },
+    {
+      "path": "start.command",
+      "size_bytes": 2374,
+      "sha256": "325289ae22a26842f55e42e012203e0d7f7900875060254edf138335337a1474"
+    },
+    {
+      "path": "tests/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/synthetic_bgm_mix_smoke.py",
+      "size_bytes": 4139,
+      "sha256": "80292bfa40f91906775e1ffd866aa978da8d6c120710ef15e05472fc6c515e3c"
+    },
+    {
+      "path": "tests/synthetic_ffmpeg_smoke.py",
+      "size_bytes": 3922,
+      "sha256": "8d9b2fdd9469449d1b47d5ac06be34a626592bbbbe62fe8325d3b2c9547178d1"
+    },
+    {
+      "path": "tests/test_audit_cp12.py",
+      "size_bytes": 2027,
+      "sha256": "e2fd05d69d71e6ab7488c8bc20f23ca3ee896cd93a1ff60d2b1f8111887855a4"
+    },
+    {
+      "path": "tests/test_bgm_policy.py",
+      "size_bytes": 6740,
+      "sha256": "a152d606141d7c0adf06ea9c79ee4d20c5ffbeb83526b16b1a7427e0495b049e"
+    },
+    {
+      "path": "tests/test_bgm_validation.py",
+      "size_bytes": 4385,
+      "sha256": "58b375afbfb3783843478b8fda5292f11f8eceeb5e18ccf0fc98fd269aa7c19b"
+    },
+    {
+      "path": "tests/test_cli.py",
+      "size_bytes": 2626,
+      "sha256": "60c12e34d91f32d04932c176408b4370a76dbdaf12060d3af449309cc65b0de5"
+    },
+    {
+      "path": "tests/test_pipeline.py",
+      "size_bytes": 11081,
+      "sha256": "7dcfe18ac2a01f7225589e3f13aa4bad4ca2172a64b911673a22e6c6264f2edf"
+    },
+    {
+      "path": "tests/test_settings_bgm_platforms.py",
+      "size_bytes": 2594,
+      "sha256": "62f34d924ed2699e46183742a9d82b0a6f13415d306224237e46d1efccc1e97b"
+    },
+    {
+      "path": "tests/test_shorts_deduplication.py",
+      "size_bytes": 11787,
+      "sha256": "1ded12c513b0a19712b540365ba4cffedc792dc05f6e15247d14401992ac741b"
+    },
+    {
+      "path": "tests/test_shorts_parity.py",
+      "size_bytes": 9891,
+      "sha256": "79bb9ff75a7b3c15a3da5326433b53cb97b4a9b188d4a97b46ddf809afcc9dce"
+    },
+    {
+      "path": "tests/test_speech_rate.py",
+      "size_bytes": 11569,
+      "sha256": "408b1f63dda74908736f9bba8fa2481c8d736756d9b52fe13ea80c6e5d9aedda"
+    },
+    {
+      "path": "tests/test_speech_settings.py",
+      "size_bytes": 3051,
+      "sha256": "4a21842beb31c09fa1b1f9e55691148d5676fa121ec198583bb43742c8744cf7"
+    },
+    {
+      "path": "tests/test_upload_readiness.py",
+      "size_bytes": 3848,
+      "sha256": "4fb9f275b4569957024f2f7dcf10285cf97adc52930d7ecb1a579db783ae5b86"
+    },
+    {
+      "path": "tests/verify_api_live.py",
+      "size_bytes": 19560,
+      "sha256": "942d993c9ee9d15ae59a4cf0397d48831188cdeed9fa801f29e427e51919c207"
+    },
+    {
+      "path": "tests/verify_api_settings.py",
+      "size_bytes": 7897,
+      "sha256": "9ea4306f19d1df061e680e7bde0710ea9d6ef3533b93103c11d29428a49d60cf"
+    },
+    {
+      "path": "tests/verify_app_gui.py",
+      "size_bytes": 11804,
+      "sha256": "fe4f1d183bfe0c41697d6375aaae209a03af53bc97440ab6702a54a79afa4800"
+    },
+    {
+      "path": "tests/verify_log_deadlock.py",
+      "size_bytes": 4562,
+      "sha256": "f44c333b845de18dc2a58234457a8ccdace18e078b173700e19996547a21cfbc"
+    },
+    {
+      "path": "video_maker/__init__.py",
+      "size_bytes": 129,
+      "sha256": "f9c84fac5796923db30a43323b686aea0918fe45d728574ee9463a4c8de49c9b"
+    },
+    {
+      "path": "video_maker/api/__init__.py",
+      "size_bytes": 4235,
+      "sha256": "38b99835b33502a289fe24841cdad523e2397ea594f15a20e302a0138b49a687"
+    },
+    {
+      "path": "video_maker/api/bridge.py",
+      "size_bytes": 14469,
+      "sha256": "997345388252ae94e9659218cd304ed8dcd02fb4e2e2bf3c6b3c141667bfbdb9"
+    },
+    {
+      "path": "video_maker/api/control.py",
+      "size_bytes": 12858,
+      "sha256": "81c0d8a66d606459da361e2cd032c56a9aac39ad89ce048d6f89aabd9a894072"
+    },
+    {
+      "path": "video_maker/api/openapi.py",
+      "size_bytes": 10888,
+      "sha256": "8e478051d384f58a1c3b87041396eea49e0d9df63000ec2c56d1328de5bdb431"
+    },
+    {
+      "path": "video_maker/api/queue.py",
+      "size_bytes": 15407,
+      "sha256": "fca39c0617f4d2378a5a0e0a6f06b120f02589e5490cfccfff57f8537c91d78f"
+    },
+    {
+      "path": "video_maker/api/server.py",
+      "size_bytes": 35197,
+      "sha256": "a536d59dbf31a404214820838b4a8bbd7dc88dfcd21cd9f7194da44f1dd92495"
+    },
+    {
+      "path": "video_maker/api/webui.py",
+      "size_bytes": 13710,
+      "sha256": "d20151e83faeef0a3d433c8ceca385370f4758b64a3be3230f075c602e455ed5"
+    },
+    {
+      "path": "video_maker/config/__init__.py",
+      "size_bytes": 131,
+      "sha256": "4efd825727ce9ded4dd4fc993db7f784e143b783c08f929276045fb56f3158c3"
+    },
+    {
+      "path": "video_maker/config/settings.py",
+      "size_bytes": 14816,
+      "sha256": "9e46e3adf7062864b29214a5f9515d19de5fad345c9ed8926e32161693a71e62"
+    },
+    {
+      "path": "video_maker/engines/__init__.py",
+      "size_bytes": 107,
+      "sha256": "dcbe0b57f7a1147f1b144ad4065c2f2492bb8e6d466cc91dbf3784769d68b0b0"
+    },
+    {
+      "path": "video_maker/engines/aisie_integration.py",
+      "size_bytes": 8521,
+      "sha256": "06a07decbb9a680ded47c75a04bb4f2d0fe0356d8a4a53dc94ed6a8a6a8845c0"
+    },
+    {
+      "path": "video_maker/engines/analysis.py",
+      "size_bytes": 55180,
+      "sha256": "497bbb746f0b71a03c7f68e9b117a058f0c56486a9b0302c9853b1c326c13cf5"
+    },
+    {
+      "path": "video_maker/engines/audio.py",
+      "size_bytes": 17518,
+      "sha256": "f41a4790134897eb98d284904763bad3505439f01d29faca274d4cafdf1f5784"
+    },
+    {
+      "path": "video_maker/engines/bgm_policy.py",
+      "size_bytes": 10341,
+      "sha256": "6212f1b0525eccf2815dfd0cec0ebaadc28786bb57a2794871f4f5ef79627af1"
+    },
+    {
+      "path": "video_maker/engines/bgm_validation.py",
+      "size_bytes": 6002,
+      "sha256": "326c6db1f5d0671762b712091a7174d9d0ca0b0e5e42065047a35e4be278725d"
+    },
+    {
+      "path": "video_maker/engines/colors.py",
+      "size_bytes": 1572,
+      "sha256": "529374602db48f467b96bba470c4dacacc8a3f745a264317a719c7418597cf11"
+    },
+    {
+      "path": "video_maker/engines/ffmpeg_resilient.py",
+      "size_bytes": 17540,
+      "sha256": "4d1b547b0c40847ec1ef0f2dddaab9ebd1606f7e3402cb69230f93f24f1b2451"
+    },
+    {
+      "path": "video_maker/engines/highlight_lexicon.py",
+      "size_bytes": 10832,
+      "sha256": "463878b8cd3cd790d153dc9569823291ca1040d1fd7e8135b0341a6ec87bc3a1"
+    },
+    {
+      "path": "video_maker/engines/power.py",
+      "size_bytes": 5767,
+      "sha256": "5cb7b861fdb808e31ebf034df855e18937141584806d585115039a97b8bc3dbd"
+    },
+    {
+      "path": "video_maker/engines/short_cover.py",
+      "size_bytes": 4753,
+      "sha256": "b834dd48b5bcf3c11cdadf10bd05573c51719c7b7226d70564d9e5e81abd8379"
+    },
+    {
+      "path": "video_maker/engines/speech_rate.py",
+      "size_bytes": 30975,
+      "sha256": "45b3eae6e5a56d3bf6e739b620329e4df562769d39cb67566926601e549c2d5a"
+    },
+    {
+      "path": "video_maker/engines/subtitles.py",
+      "size_bytes": 83628,
+      "sha256": "aca5c552d51edfdfea6d894cd6957f3228e2b9eb90ab25ef4cc8c1b0f5c86d14"
+    },
+    {
+      "path": "video_maker/engines/transcription.py",
+      "size_bytes": 5748,
+      "sha256": "b8d72d59e6cc90690a85d4a8125c79b2fa53de212e4428f7be2b20d49f383ba7"
+    },
+    {
+      "path": "video_maker/engines/upload_readiness.py",
+      "size_bytes": 3392,
+      "sha256": "5a86a840fbffdcab3972ff9f7c06ac90245955eb5ce5719da17b623944346328"
+    },
+    {
+      "path": "video_maker/engines/video.py",
+      "size_bytes": 50388,
+      "sha256": "a705569a688e3cbdb59ccc37ebbb02bb97c86726b6608256e6c767d26feb37a3"
+    },
+    {
+      "path": "video_maker/engines/whisperx_resolve.py",
+      "size_bytes": 1780,
+      "sha256": "2ac290f62f1a0802ea59d66838caa1420f593f2ca9e11cd0f423fa9367717dff"
+    },
+    {
+      "path": "video_maker/external/__init__.py",
+      "size_bytes": 89,
+      "sha256": "1899a66816c5faf2522112d447f15cb5c2ec076efb679e63f7171d0b223d1417"
+    },
+    {
+      "path": "video_maker/external/aisie/__init__.py",
+      "size_bytes": 606,
+      "sha256": "a1e42fc1763688c4070958ed856507f5a4ae86990a5c00d1cb9f8b75368cb1d6"
+    },
+    {
+      "path": "video_maker/external/aisie/classifier.py",
+      "size_bytes": 7689,
+      "sha256": "8357967ef42b0e03044c270005763e0e5314e855e70b84f4818f2acd4b1ababf"
+    },
+    {
+      "path": "video_maker/external/aisie/demo_plan.json",
+      "size_bytes": 4545,
+      "sha256": "243c6f39ff7d50ffd4e723d57f3d93f7035bd98ab9bb4658032dbaeb71a87303"
+    },
+    {
+      "path": "video_maker/external/aisie/pipeline.py",
+      "size_bytes": 11830,
+      "sha256": "351c5e68a21e5311f220a81f537bec7009d91e14f43d2be41e5d01bfb9486aff"
+    },
+    {
+      "path": "video_maker/external/aisie/placement.py",
+      "size_bytes": 8441,
+      "sha256": "cdf8e144ae0f815156472e71c9459eadb9a68657480027f0541246401a604b98"
+    },
+    {
+      "path": "video_maker/external/aisie/scoring.py",
+      "size_bytes": 13920,
+      "sha256": "b470eea65d04cd606a2a1300c0ad6528670f50109b303b178e520c68039e1d00"
+    },
+    {
+      "path": "video_maker/external/aisie/styles.py",
+      "size_bytes": 2432,
+      "sha256": "0063007dd91ff040ff01bc115bc1050278b43847592772901340675496e987e8"
+    },
+    {
+      "path": "video_maker/external/aisie/timing.py",
+      "size_bytes": 8878,
+      "sha256": "2144a638fcf09b7aec083016c80479679b5ae4356df37507bb4b480fa98d6099"
+    },
+    {
+      "path": "video_maker/external/aisie/validate.py",
+      "size_bytes": 9418,
+      "sha256": "4ea01559be497b83a45aceeaf97e06846c8f1463737faef5a70d3b7dd8d8ae41"
+    },
+    {
+      "path": "video_maker/external/utils.py",
+      "size_bytes": 905,
+      "sha256": "012066b6eb722c039866f8d1dc8e3f2c84a5c6135ec7a544f8c97117d0dcd7c7"
+    },
+    {
+      "path": "video_maker/gui/__init__.py",
+      "size_bytes": 42,
+      "sha256": "166f857a2ae5fe98dc37045dcf517f47ee1f66c4788364dfbfa6b082b7bb608c"
+    },
+    {
+      "path": "video_maker/gui/app.py",
+      "size_bytes": 134395,
+      "sha256": "2d5162778a46cd438e52134a76133da4258145770141190e305fbd03de506c18"
+    },
+    {
+      "path": "video_maker/icons/app_icon.png",
+      "size_bytes": 401168,
+      "sha256": "8678e9316cf6a71e45af3195c567697aaa4dba793555f06b6f85b6b0be44cb98"
+    },
+    {
+      "path": "video_maker/main.py",
+      "size_bytes": 9770,
+      "sha256": "14d1d1db107821711f8f5f36e817fe69eb557469545ee719cba6a5b9850f6de6"
+    },
+    {
+      "path": "video_maker/pipeline/__init__.py",
+      "size_bytes": 482,
+      "sha256": "43d5027fdc1286687fd1b7e423aa6e76141894dfa524e033625da5f06a0626a3"
+    },
+    {
+      "path": "video_maker/pipeline/branches.py",
+      "size_bytes": 17447,
+      "sha256": "6f6be6d6e7787318c6d467e3efdb524714aacd2e7ec997ec91cc91e38f9bcf4e"
+    },
+    {
+      "path": "video_maker/pipeline/checkpoint.py",
+      "size_bytes": 12907,
+      "sha256": "31111e82874ed7b40586dd1e4266f9745c409e13c1338ed57a68faec522693b1"
+    },
+    {
+      "path": "video_maker/pipeline/finalize.py",
+      "size_bytes": 34258,
+      "sha256": "0c7172502b2ca7ead081c3de7d7ac8b96c570ab080c22a0970574f5d1dd15d6c"
+    },
+    {
+      "path": "video_maker/pipeline/master.py",
+      "size_bytes": 3920,
+      "sha256": "a07688cfc2287b05539993fbb56ed1bf4e01606ce8708de459b15a848e640e58"
+    },
+    {
+      "path": "video_maker/pipeline/parallel_finals.py",
+      "size_bytes": 1178,
+      "sha256": "4119c5e785db39c7788f3446cc402b4180d53c57aab68536a7026bdf09432ba1"
+    },
+    {
+      "path": "video_maker/pipeline/shorts.py",
+      "size_bytes": 23384,
+      "sha256": "b1c044cde040dcd2ad565d28487541bc6c0ffc0267849cc4add22ade3d5a5729"
+    },
+    {
+      "path": "video_maker/pipeline/stages.py",
+      "size_bytes": 8812,
+      "sha256": "e01008014f3b76fc56e8b8857934977fee2d8d27743df0e97ba9718ac0a7f1be"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+# DEEP AUDIT CP12 (2026-10-12): CLI validation and truthful nonzero startup failure status.
 # VideoMaker | 2026.09.23-r57-api.1 | 2026-09-23
 # CHANGED:
 #   r57-api: запуск HTTP-пульта (video_maker/api) поверх приложения +
@@ -10,6 +11,7 @@
 # REPLACE: video_maker/main.py
 
 """Точка входа — main.py."""
+import argparse
 import logging
 import os
 import signal
@@ -38,7 +40,7 @@ def _bring_window_to_front(root: tk.Tk) -> None:
                 set frontmost of process "Python" to true
             end tell
             '''
-            subprocess.run(["osascript", "-e", script], capture_output=True, check=False)
+            subprocess.run(["osascript", "-e", script], capture_output=True, check=False, timeout=15)
             
             # Альтернативный способ через Tk
             root.wm_attributes('-topmost', 1)  # type: ignore[attr-defined]
@@ -95,42 +97,55 @@ sys.excepthook = _excepthook
 
 # Перехват SIGINT (Ctrl+C)
 def _sigint_handler(signum: int, frame: types.FrameType | None) -> None:
+    """Treat Ctrl+C as an interruption, not a successful completion."""
     log.warning("LIFECYCLE signal SIGINT")
-    sys.exit(0)
+    raise KeyboardInterrupt
 
 
 signal.signal(signal.SIGINT, _sigint_handler)
 
 # Перехват SIGTERM
 def _sigterm_handler(signum: int, frame: types.FrameType | None) -> None:
+    """Keep SIGTERM distinct from successful completion for supervisors."""
     log.warning("LIFECYCLE signal SIGTERM")
-    sys.exit(0)
+    raise SystemExit(143)
 
 signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
+def _api_port_arg(value: str) -> int:
+    """Validate a TCP port before any GUI or server resources are created."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("порт должен быть целым числом 1..65535") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("порт должен быть в диапазоне 1..65535")
+    return port
+
+
 def _parse_args(argv: list[str]) -> tuple[bool, int | None, bool]:
-    """Разобрать ключи: (headless, порт пульта, не поднимать пульт)."""
-    headless = "--headless" in argv
-    no_api = "--no-api" in argv
-    port: int | None = None
-    if "--api-port" in argv:
-        idx = argv.index("--api-port")
-        if idx + 1 < len(argv):
-            try:
-                port = int(argv[idx + 1])
-            except ValueError:
-                log.warning("Некорректный --api-port %r — беру порт по умолчанию", argv[idx + 1])
-    return headless, port, no_api
+    """Разобрать CLI: (headless, порт пульта, не поднимать пульт)."""
+    parser = argparse.ArgumentParser(
+        prog="VideoMaker",
+        description="Автоматическое создание видео и Shorts из аудио и B-roll.",
+        allow_abbrev=False,
+    )
+    parser.add_argument("--headless", action="store_true", help="запуск без видимого окна (Tk-цикл остаётся активен)")
+    parser.add_argument("--api-port", type=_api_port_arg, metavar="N", help="порт HTTP-пульта (1..65535)")
+    parser.add_argument("--no-api", action="store_true", help="не запускать HTTP-пульт")
+    args = parser.parse_args(argv)
+    return bool(args.headless), args.api_port, bool(args.no_api)
 
 
 def main() -> None:
-    """Запуск приложения."""
+    """Запуск приложения; failed startup must propagate a non-zero exit code."""
     headless, api_port, no_api = _parse_args(sys.argv[1:])
+    exit_code = 0
     log.info("LIFECYCLE start pid=%s cwd=%s python=%s headless=%s api=%s",
              os.getpid(), os.getcwd(), sys.version.split()[0], headless,
              "выключен" if no_api else "включён")
-    
+
     try:
         log.info("Создание корневого окна Tk()...")
         root = tk.Tk()
@@ -153,6 +168,10 @@ def main() -> None:
 
         if no_api:
             log.info("[API] пульт выключен ключом --no-api")
+            try:
+                app._show_api_info({"enabled": False, "local": "", "network": "", "lan": False})
+            except Exception:
+                pass
         else:
             try:
                 from .api import start_api
@@ -162,6 +181,13 @@ def main() -> None:
                     # держим ссылку: иначе пульт соберёт сборщик мусора
                     globals()["_API_RUNTIME"] = runtime
                     log.info("LIFECYCLE api_started")
+                else:
+                    # Пульт отключён настройкой или порт не поднялся: блок «Пульт»
+                    # должен явно показывать это, галочка сети — быть недоступной.
+                    try:
+                        app._show_api_info({"enabled": False, "local": "", "network": "", "lan": False})
+                    except Exception:
+                        pass
             except Exception:
                 log.exception("Не удалось поднять пульт")
 
@@ -180,13 +206,21 @@ def main() -> None:
 
     except KeyboardInterrupt:
         log.warning("KeyboardInterrupt — завершение")
-    except (RuntimeError, OSError, ValueError) as e:
-        log.error(f"Критическая ошибка: {type(e).__name__}: {e}")
+        exit_code = 130
+    except SystemExit as exc:
+        # SystemExit приходит из обработчика SIGTERM (143) и не должен
+        # записываться в журнал как успешный нулевой код.
+        exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+        raise
+    except Exception as e:  # noqa: BLE001 — any startup/runtime failure must be reported
+        log.error("Критическая ошибка: %s: %s", type(e).__name__, e)
         import traceback
         traceback.print_exc()
+        exit_code = 1
     finally:
-        log.info("LIFECYCLE process_end")
-        sys.exit(0)
+        log.info("LIFECYCLE process_end exit_code=%s", exit_code)
+    if exit_code:
+        raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

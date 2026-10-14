@@ -57,6 +57,13 @@ logging.getLogger().setLevel(logging.INFO)  # как в приложении (se
 root = tk.Tk()
 root.withdraw()
 app = App(root)
+root.deiconify()
+# The API is intentionally kept on its own visible tab so controls never get
+# clipped by the main creation view on short displays.
+if hasattr(app, "tab_monitor"):
+    app.notebook.select(app.tab_monitor)
+    root.update_idletasks()
+    root.update()
 
 print("=" * 74, flush=True)
 print("ПРОВЕРКА ПУЛЬТА СО СТОРОНЫ ОКНА (настоящий mainloop), порт",
@@ -111,6 +118,8 @@ def s1():
     check("виджет подписи существует", hasattr(app, "api_label"))
     check("галочка сети существует", hasattr(app, "api_lan_cb"))
     check("кнопка «Открыть пульт» существует", hasattr(app, "api_open_btn"))
+    check("API-кнопка видима на вкладке пульта", bool(app.api_open_btn.winfo_ismapped()))
+    check("галочка доступа видима на вкладке пульта", bool(app.api_lan_cb.winfo_ismapped()))
     label = app.api_label.cget("text")
     check("в подписи есть локальный адрес", f"127.0.0.1:{PORT}" in label,
           label.splitlines()[0][:60])

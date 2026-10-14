@@ -1,0 +1,7 @@
+CP32 bootstrap contract
+- bash -n: PASS for start.command, start-headless.command, setup.command, doctor.command
+- setup.command --help: PASS
+- simulated unsupported Linux start: exits 1 with explicit Apple Silicon/macOS requirement (expected in this test container)
+- compileall: PASS
+- pytest: 206 passed, 1 skipped (display-only GUI test without display), 23 subtests passed
+- Native macOS installation not runnable in this Linux validation environment; do not interpret static checks as a native Apple Silicon launch test.

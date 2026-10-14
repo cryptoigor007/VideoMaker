@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "checkpoint": "CP29",
+  "baseline": {
+    "archive": "VideoMaker_FULL_R57_CP28_FINAL_AUDITED.zip",
+    "sha256": "eaaccf9a58dfac1b6cfa5d12deb4c04226e5693d9411d4533cbd02feff2a341a",
+    "production_code_changed": false
+  },
+  "validation": {
+    "compileall": "PASS",
+    "pytest": {"passed": 183, "skipped": 1, "subtests_passed": 23},
+    "line_coverage_percent": 29,
+    "statements": 9334,
+    "missed_statements": 6420,
+    "branches": 3062,
+    "partial_branches": 298,
+    "third_party_linters": "ruff/vulture/pyflakes/bandit/mypy unavailable; pip install failed because network DNS unavailable"
+  },
+  "findings": [
+    {
+      "id": "CP29-01", "severity": "P1", "confidence": "confirmed_runtime",
+      "title": "API listener binds even when enabled=false",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "180-201"}, {"file": "video_maker/api/server.py", "lines": "321-350"}],
+      "evidence": "With conf.enabled=false, VideoMakerAPI.start() still bound a port and returned a URL; /api/health returned 200 and listener_alive=true. start_api() checks enabled, but the instance start/rebind path does not.",
+      "impact": "The API off switch is misleading; public routes remain reachable. If lan=true remains set, the listener may stay bound to 0.0.0.0.",
+      "recommendation": "Check enabled inside start(); disabled means no listener. Test disabling from runtime while LAN mode is currently enabled."
+    },
+    {
+      "id": "CP29-02", "severity": "P1", "confidence": "confirmed_runtime_plus_code_path",
+      "title": "Queue can mark an output DONE when only metadata exists",
+      "locations": [{"file": "video_maker/api/control.py", "lines": "252-325"}, {"file": "video_maker/api/queue.py", "lines": "267-280"}, {"file": "video_maker/pipeline/finalize.py", "lines": "497-510"}, {"file": "video_maker/pipeline/finalize.py", "lines": "654-678"}],
+      "evidence": "find_results() returned ready=true and total_bytes>0 for a series containing only info_metadata.txt (13 bytes in harness; no MP4). _finish() uses ready && total_bytes. FinalizeStage writes root metadata before later fail-closed checks.",
+      "impact": "Orchestrator/webhook can report success for a failed/incomplete release.",
+      "recommendation": "Use a success sentinel/validated manifest written only after final checks and validate required final MP4s by presence, size, duration/decode."
+    },
+    {
+      "id": "CP29-03", "severity": "P1", "confidence": "confirmed_runtime",
+      "title": "/api/run reports started=true when no pipeline actually started",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "228-280"}, {"file": "video_maker/gui/app.py", "lines": "2039-2069"}],
+      "evidence": "With an app whose _start() returns without starting a worker and validate() returns no errors, do_run() returned HTTP 200, started=true while status.running=false.",
+      "impact": "Schedulers may believe processing began, suppress retries, or misreport a job.",
+      "recommendation": "Return accepted job id and actual lifecycle state; require an explicit start acknowledgment/state transition, and propagate early GUI validation errors."
+    },
+    {
+      "id": "CP29-04", "severity": "P1", "confidence": "confirmed_fault_injection",
+      "title": "Checkpoint marks transcription/Gemini stages complete after required JSON save failed",
+      "locations": [{"file": "video_maker/pipeline/checkpoint.py", "lines": "84-100"}, {"file": "video_maker/pipeline/checkpoint.py", "lines": "126-127"}, {"file": "video_maker/pipeline/checkpoint.py", "lines": "196-224"}],
+      "evidence": "Injected OSError while writing checkpoint_transcription.json. Saved checkpoint retained TranscribeStage and GeminiStage in completed_stages with transcription_file empty. Restore produced transcription={} and next_stage=MasterBuilder.",
+      "impact": "Resume can skip analysis stages whose data was not saved, producing incomplete or incorrect outputs.",
+      "recommendation": "If required stage artifacts fail to persist, do not mark their stage complete and invalidate downstream stages; atomically commit a stage manifest with artifact hashes."
+    },
+    {
+      "id": "CP29-05", "severity": "P1", "confidence": "confirmed_runtime_and_static",
+      "title": "Checkpoint does not fingerprint the source or stage-affecting settings",
+      "locations": [{"file": "video_maker/gui/app.py", "lines": "2284-2291"}, {"file": "video_maker/pipeline/checkpoint.py", "lines": "102-128"}, {"file": "video_maker/pipeline/checkpoint.py", "lines": "178-195"}],
+      "evidence": "Resume checks only the exact audio_path string; the saved/compared setting is voice_enhance_requested. The checkpoint has no source stat/hash and no remove_long_pauses, whisper model/language, Gemini prompt/model, caption/hook styles, toggles, B-roll inventory or per-platform BGM fingerprint. A resume with remove_long_pauses=true but no saved pause setting retained completed TranscribeStage and GeminiStage.",
+      "impact": "Changing a source in place or changing render settings can silently reuse stale transcription, timestamps, analysis, masters and Shorts.",
+      "recommendation": "Use a versioned source+options fingerprint and a stage dependency map; invalidate only the first affected stage and all downstream stages."
+    },
+    {
+      "id": "CP29-06", "severity": "P1", "confidence": "confirmed_runtime",
+      "title": "TkBridge callback still executes after call() returns TimeoutError",
+      "locations": [{"file": "video_maker/api/bridge.py", "lines": "70-80"}],
+      "evidence": "A fake Tk root delayed its pump. call(fn, timeout=0.01) raised TimeoutError; when the queued pump later ran, it still executed fn and mutated state.",
+      "impact": "An API request can time out yet start a render later; a retry may duplicate work or the UI response can contradict actual work.",
+      "recommendation": "Use cancellable task envelopes with queued/running/cancelled/done states and idempotency keys. If already executing, report execution-unknown/in-progress rather than a normal failed start."
+    },
+    {
+      "id": "CP29-07", "severity": "P1", "confidence": "confirmed_runtime_plus_code_path",
+      "title": "Existing but empty vertical B-roll folder passes preflight",
+      "locations": [{"file": "video_maker/config/settings.py", "lines": "257-258, 300-318"}, {"file": "video_maker/gui/app.py", "lines": "2053-2068"}, {"file": "video_maker/pipeline/master.py", "lines": "27-40"}, {"file": "video_maker/pipeline/branches.py", "lines": "163-240"}],
+      "evidence": "With a real horizontal MP4 and an existing empty vertical directory, Settings.validate() returned []. The GUI logs the vertical count but does not reject 0. MasterBuilder delays VSTACK when a directory is configured but has no usable portrait clip; vertical finalization can then operate on an empty input after earlier stages.",
+      "impact": "The run may spend time on transcription/Gemini/horizontal master before failing to produce the requested vertical result.",
+      "recommendation": "Validate usable horizontal and vertical assets before the expensive stages; probe file readability/orientation. Skip branches only when explicitly disabled."
+    },
+    {
+      "id": "CP29-08", "severity": "P2", "confidence": "confirmed_runtime_and_static",
+      "title": "String booleans silently coerce to True and can desync GUI and Settings",
+      "locations": [{"file": "video_maker/api/control.py", "lines": "145-210"}, {"file": "video_maker/api/server.py", "lines": "438-455, 724-728"}],
+      "evidence": "apply_settings(remove_long_pauses='false') returned applied=[remove_long_pauses], Settings value True, fake GUI variable='false'. queue.pause and allow_duplicate also use bool(value), where bool('false') is True.",
+      "impact": "API callers can accidentally turn settings on, pause queue, or allow duplicates; UI and server disagree.",
+      "recommendation": "Strict field schema: booleans must be JSON bool; return 400 for strings/numbers instead of coercion."
+    },
+    {
+      "id": "CP29-09", "severity": "P2", "confidence": "confirmed_runtime",
+      "title": "Failed API port rebind closes the old listener and does not roll back config",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "321-350"}],
+      "evidence": "Requested an occupied port; config endpoint returned 500, old port no longer answered and self.conf pointed to the unavailable port.",
+      "impact": "The control panel can become unreachable until manual recovery/restart.",
+      "recommendation": "Bind new listener before committing config or restore previous config/listener atomically on failure."
+    },
+    {
+      "id": "CP29-10", "severity": "P2", "confidence": "confirmed_runtime",
+      "title": "Valid JSON with non-object root can crash API or queue setup",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "111-116"}, {"file": "video_maker/api/queue.py", "lines": "319-349"}],
+      "evidence": "api.json content '1' makes load_config() raise TypeError; queue.json content '1' makes SeriesQueue._load() raise TypeError. Only OSError/ValueError are caught.",
+      "impact": "A damaged but syntactically valid config/queue can prevent the API runtime from starting.",
+      "recommendation": "Check root/data schema before update/iteration; back up invalid files and load safe defaults with a clear warning."
+    },
+    {
+      "id": "CP29-11", "severity": "P2", "confidence": "confirmed_static",
+      "title": "Whisper model/device/compute UI values are ignored by the engine",
+      "locations": [{"file": "video_maker/gui/app.py", "lines": "739-742, 1510-1519, 1943-1947"}, {"file": "video_maker/engines/transcription.py", "lines": "24-26, 68-84, 120-127"}, {"file": "video_maker/config/settings.py", "lines": "297-298"}],
+      "evidence": "The GUI exposes multiple model/device/compute options; transcribe() always calls the hardcoded MLX_REPO constant and does not pass device/compute_type. Cache keys use MLX_REPO, not the selected model. whisperx_path is passed but ignored.",
+      "impact": "The UI reports settings that do not affect actual model selection; debugging speed/quality becomes misleading. Startup also searches for WhisperX even though the runtime transcription engine does not use it.",
+      "recommendation": "Either remove/disable unsupported choices or implement the subset supported by MLX; report the effective model/device and key cache by effective config."
+    },
+    {
+      "id": "CP29-12", "severity": "P2", "confidence": "confirmed_code_path",
+      "title": "Closing GUI hard-exits before worker/checkpoint cleanup completes",
+      "locations": [{"file": "video_maker/gui/app.py", "lines": "265-337"}],
+      "evidence": "When a pipeline is running, close sets cancel_event and kills FFmpeg children, destroys Tk, then invokes os._exit(0) without joining the worker or confirming that the next checkpoint has persisted.",
+      "impact": "Closing the window can lose the most recent recovery state and reports success exit code 0 for an interrupted run.",
+      "recommendation": "Coordinated graceful shutdown: cancel, wait for worker to checkpoint/exit, stop queue/API, then close Tk and use normal process exit."
+    },
+    {
+      "id": "CP29-13", "severity": "P2", "confidence": "confirmed_code_path",
+      "title": "Output metadata/report files exist before finalizer declares success",
+      "locations": [{"file": "video_maker/pipeline/finalize.py", "lines": "480-510, 650-678"}],
+      "evidence": "BGM report, root metadata, dedup report and upload checklist are written before finalizer may raise for requested BGM failures, missing source assets or missing Shorts.",
+      "impact": "External tools that test for the presence of sidecars can mistake a partial release for a complete one.",
+      "recommendation": "Keep diagnostics on failure but write a final status file only after all postconditions; mark manifest as incomplete/failed before raising."
+    },
+    {
+      "id": "CP29-14", "severity": "P2", "confidence": "static_confirmed_known_risk",
+      "title": "No interprocess lock for queue/output series",
+      "locations": [{"file": "video_maker/api/queue.py", "lines": "308-317"}, {"file": "VERSION.md", "lines": "75-76"}],
+      "evidence": "Queue uses a shared fixed queue.json.tmp and replacement, but no process-wide lock; existing VERSION.md already notes two app instances can render same series concurrently.",
+      "impact": "Two instances may clobber queue state, checkpoint JSON, shared _tmp files and same-named output MP4s.",
+      "recommendation": "Add process singleton lock and per-output-series lock, with stale-lock recovery and multi-instance regression tests."
+    },
+    {
+      "id": "CP29-15", "severity": "P2", "confidence": "static_confirmed",
+      "title": "Preflight does not test output writability or available disk space",
+      "locations": [{"file": "video_maker/config/settings.py", "lines": "238-262"}],
+      "evidence": "Validation verifies path exists but does not write a temporary probe file or check disk capacity/access to the target volume.",
+      "impact": "Permission/volume/disk-full failures can occur after expensive AI or media stages.",
+      "recommendation": "Test writable output and temporary directories before processing, check free space and produce a warning estimate where reliable."
+    },
+    {
+      "id": "CP29-16", "severity": "P3", "confidence": "static_confirmed",
+      "title": "Config file permissions are hardened after atomic replacement, not before",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "136-146"}],
+      "evidence": "api.json.tmp is created with default umask-derived permissions and chmod(0600) is applied only after os.replace().",
+      "impact": "A short window may expose the API token on multi-user machines with permissive umask.",
+      "recommendation": "Create the temporary file with mode 0600 (e.g., os.open with explicit mode), then write/fsync/replace."
+    },
+    {
+      "id": "CP29-17", "severity": "P3", "confidence": "static_confirmed",
+      "title": "Release documentation and checkpoint index point to stale revisions",
+      "locations": [{"file": "README.md", "lines": "145-169, 182-206"}, {"file": "VERSION.md", "lines": "63-81"}, {"file": "checkpoints/INDEX.md", "lines": "3, 15, 29-35"}],
+      "evidence": "README top line describes CP28 but later sections call CP20 manifest current and CP19/r57-api.6 latest; test-count comment is CP19; VERSION.md contains a stale current-build statement; INDEX says CP19 is latest and does not enumerate CP20-CP28.",
+      "impact": "Users may restore an old snapshot or follow outdated validation instructions.",
+      "recommendation": "Generate current-version/checkpoint index from one machine-readable source; add a documentation consistency test."
+    },
+    {
+      "id": "CP29-18", "severity": "P3", "confidence": "static_candidate",
+      "title": "Dead helpers/imports/dependency candidates remain",
+      "locations": [{"file": "video_maker/engines/video.py", "lines": "408-470"}, {"file": "video_maker/engines/audio.py", "lines": "4, 205-230, 386-410"}, {"file": "video_maker/engines/ffmpeg_resilient.py", "lines": "298-309"}, {"file": "video_maker/api/control.py", "lines": "242-249"}, {"file": "video_maker/external/utils.py", "lines": "8-10"}, {"file": "video_maker/engines/subtitles.py", "lines": "482-485, 919-940"}],
+      "evidence": "AST/grep found no production callers for probe_video_meta, measure_loudnorm_params, apply_loudnorm, vt_encode_args, collect_audio, tokenize_phrase, _word_ends_sentence, _group_words_one_line. save_video_meta_cache is called only by a test. numpy has no direct import in app/tests; hashlib in audio.py and os in power.py appear unused.",
+      "impact": "Maintenance burden; tests can validate a helper that production never calls; `requirements.txt` also includes pytest in runtime deps.",
+      "recommendation": "Review public/internal API expectations; delete or reconnect helpers as a unit, rewrite tests to exercise the production path, remove unused imports/deps and move pytest into development requirements."
+    },
+    {
+      "id": "CP29-19", "severity": "P2", "confidence": "confirmed_code_path",
+      "title": "Bool-like strings in webhook and queue pause can enable unintended behavior",
+      "locations": [{"file": "video_maker/api/server.py", "lines": "438-455, 724-728"}],
+      "evidence": "bool('false') evaluates True for allow_duplicate and queue pause, same root as CP29-08 but in HTTP route wrappers.",
+      "impact": "An orchestrator sending strings instead of JSON booleans can allow duplicate work or pause instead of resume.",
+      "recommendation": "Treat as part of the CP29-08 schema fix and add route-level tests for false/null/string/number inputs."
+    },
+    {
+      "id": "CP29-20", "severity": "P2", "confidence": "documented_known_limit",
+      "title": "API remains cleartext HTTP without request-rate limiting",
+      "locations": [{"file": "checkpoints/CP28_FINAL_AUDIT.md", "lines": "47-50"}],
+      "evidence": "CP28 explicitly documents no TLS and no rate limiting.",
+      "impact": "Credentials/status may be exposed on untrusted networks; endpoint may be abused by high request volumes if reachable.",
+      "recommendation": "Keep loopback-only by default; remote use via VPN/reverse proxy with TLS and rate limiting. Do not port-forward directly to the internet."
+    }
+  ],
+  "dead_code_candidates": [
+    {"symbol":"probe_video_meta", "location":"video_maker/engines/video.py:454", "confidence":"high", "production_references":0},
+    {"symbol":"save_video_meta_cache", "location":"video_maker/engines/video.py:427", "confidence":"high", "production_references":0, "test_references":1},
+    {"symbol":"measure_loudnorm_params", "location":"video_maker/engines/audio.py:205", "confidence":"high", "production_references":0},
+    {"symbol":"apply_loudnorm", "location":"video_maker/engines/audio.py:386", "confidence":"high", "production_references":0, "note":"test source-inspects its name, but no production call"},
+    {"symbol":"vt_encode_args", "location":"video_maker/engines/ffmpeg_resilient.py:298", "confidence":"high", "production_references":0},
+    {"symbol":"collect_audio", "location":"video_maker/api/control.py:242", "confidence":"high", "production_references":0},
+    {"symbol":"tokenize_phrase", "location":"video_maker/external/utils.py:8", "confidence":"high", "production_references":0},
+    {"symbol":"_word_ends_sentence", "location":"video_maker/engines/subtitles.py:482", "confidence":"high", "production_references":0},
+    {"symbol":"_group_words_one_line", "location":"video_maker/engines/subtitles.py:919", "confidence":"high", "production_references":0},
+    {"symbol":"import hashlib", "location":"video_maker/engines/audio.py:4", "confidence":"high", "note":"no use site found"},
+    {"symbol":"import os", "location":"video_maker/engines/power.py:5", "confidence":"high", "note":"no use site found"},
+    {"symbol":"numpy dependency", "location":"requirements.txt", "confidence":"medium", "note":"no direct import found in application or tests; check transitive/API requirements before removal"},
+    {"symbol":"pytest runtime dependency", "location":"requirements.txt", "confidence":"high", "note":"likely should move to development requirements"}
+  ]
+}

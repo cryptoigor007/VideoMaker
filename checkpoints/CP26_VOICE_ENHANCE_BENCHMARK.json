@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "input_seconds": 8,
+  "legacy_two_branch_voice_enhancement": {
+    "ffmpeg_commands": 6,
+    "ffprobe_commands": 4,
+    "wall_seconds": 2.689
+  },
+  "shared_lossless_voice_enhancement": {
+    "ffmpeg_commands": 1,
+    "ffprobe_commands": 1,
+    "wall_seconds": 0.169,
+    "stream": {
+      "codec_name": "pcm_s16le",
+      "sample_rate": "48000"
+    },
+    "duration_drift_seconds": 0.0
+  },
+  "ffmpeg_commands_saved": 5,
+  "ffmpeg_command_reduction_percent": 83.3,
+  "scope_limit": "Synthetic 8-second micro-benchmark for voice enhancement only; not a full-episode render benchmark."
+}

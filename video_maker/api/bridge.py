@@ -37,54 +37,141 @@ log = logging.getLogger(__name__)
 LOG_BUFFER_LINES = 1000
 
 
+class _BridgeRequest:
+    """One bridge call with an atomic pending→running/cancelled transition."""
+
+    def __init__(self, fn, *, synchronous: bool = True):
+        self.fn = fn
+        self.synchronous = synchronous
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        self.state = "pending"
+        self.result = None
+        self.error: BaseException | None = None
+
+    def try_start(self) -> bool:
+        with self.lock:
+            if self.state != "pending":
+                return False
+            self.state = "running"
+            return True
+
+    def cancel_if_pending(self, error: BaseException) -> bool:
+        with self.lock:
+            if self.state != "pending":
+                return False
+            self.state = "cancelled"
+            self.error = error
+            self.done.set()
+            return True
+
+    def finish(self, result=None, error: BaseException | None = None) -> None:
+        with self.lock:
+            self.result = result
+            self.error = error
+            self.state = "done"
+            self.done.set()
+
+    def outcome(self):
+        with self.lock:
+            error, result = self.error, self.result
+        if error is not None:
+            raise error
+        return result
+
+
 class TkBridge:
-    """Выполняет функции в главном потоке Tk."""
+    """Выполняет функции в главном потоке Tk и отменяет ожидающие timeout-вызовы."""
 
     def __init__(self, root, interval_ms: int = 40):
         self.root = root
         self._interval = interval_ms
-        self._q: queue.Queue = queue.Queue()
+        self._q: queue.Queue[_BridgeRequest] = queue.Queue()
         self._alive = True
+        self._lifecycle_lock = threading.Lock()
         self._pump()
 
     def _pump(self) -> None:
         while True:
             try:
-                fn, box = self._q.get_nowait()
+                request = self._q.get_nowait()
             except queue.Empty:
                 break
+            # Serialize start against stop(): a request removed from the queue
+            # just before shutdown must not slip through and execute afterwards.
+            with self._lifecycle_lock:
+                if not self._alive:
+                    request.cancel_if_pending(RuntimeError("TkBridge остановлен: окно закрывается"))
+                    should_start = False
+                else:
+                    should_start = request.try_start()
+            # If a caller timed out while pending, never execute its side effect
+            # later when Tk finally becomes responsive.
+            if not should_start:
+                continue
             try:
-                box["result"] = fn()
-                box["ok"] = True
-            except BaseException as exc:  # noqa: BLE001 — пробрасываем в вызывающий поток
-                box["error"] = exc
-                box["ok"] = False
-            finally:
-                box["done"].set()
-        if self._alive:
+                result = request.fn()
+                request.finish(result=result)
+            except BaseException as exc:  # noqa: BLE001 — propagate across threads
+                request.finish(error=exc)
+                if not request.synchronous:
+                    log.exception("Ошибка асинхронного callback в TkBridge")
+        with self._lifecycle_lock:
+            alive = self._alive
+        if alive:
             try:
                 self.root.after(self._interval, self._pump)
-            except (tk.TclError, RuntimeError):  # окно закрыто — мост больше не нужен
-                self._alive = False
+            except (tk.TclError, RuntimeError):
+                self.stop()
 
     def call(self, fn, timeout: float = 30.0):
-        """Выполнить fn() в главном потоке Tk и вернуть результат."""
-        if not self._alive:
-            raise RuntimeError("Tk-поток недоступен (окно закрыто)")
-        box: dict = {"done": threading.Event()}
-        self._q.put((fn, box))
-        if not box["done"].wait(timeout):
-            raise TimeoutError(f"Tk-поток не ответил за {timeout:.0f} с")
-        if not box["ok"]:
-            raise box["error"]
-        return box.get("result")
+        """Run `fn` in Tk thread. A timed-out pending callback is cancelled."""
+        request = _BridgeRequest(fn, synchronous=True)
+        with self._lifecycle_lock:
+            if not self._alive:
+                raise RuntimeError("Tk-поток недоступен (окно закрыто)")
+            self._q.put(request)
+        if not request.done.wait(max(0.0, timeout)):
+            timeout_error = TimeoutError(f"Tk-поток не ответил за {timeout:.2f} с")
+            if request.cancel_if_pending(timeout_error):
+                raise timeout_error
+            # If the main thread already began this short bridge callback, give
+            # it a small grace period to report the real result instead of
+            # incorrectly claiming it was cancelled after side effects began.
+            if request.done.wait(min(2.0, max(0.1, timeout * 0.1))):
+                return request.outcome()
+            with request.lock:
+                state = request.state
+            if state == "running":
+                raise TimeoutError(
+                    f"Tk callback уже начат, но не завершился за {timeout:.2f} с; "
+                    "отменить выполняющийся callback безопасно нельзя"
+                )
+            # Completed concurrently with the timeout path.
+            return request.outcome()
+        return request.outcome()
 
     def call_async(self, fn) -> None:
-        """Поставить в очередь, не дожидаясь результата."""
-        self._q.put((fn, {"done": threading.Event()}))
+        """Queue a best-effort callback without waiting for its result."""
+        request = _BridgeRequest(fn, synchronous=False)
+        with self._lifecycle_lock:
+            if not self._alive:
+                raise RuntimeError("Tk-поток недоступен (окно закрыто)")
+            self._q.put(request)
 
     def stop(self) -> None:
-        self._alive = False
+        """Stop pumping and reject all callbacks that have not started."""
+        with self._lifecycle_lock:
+            if not self._alive:
+                return
+            self._alive = False
+        error = RuntimeError("TkBridge остановлен: окно закрывается")
+        while True:
+            try:
+                request = self._q.get_nowait()
+            except queue.Empty:
+                break
+            request.cancel_if_pending(error)
 
 
 class LogBuffer:

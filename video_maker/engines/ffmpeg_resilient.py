@@ -417,8 +417,18 @@ def run_ffmpeg(
 
 
 def atomic_replace(tmp_path: str, final_path: str) -> None:
+    """Атомарно заменить final_path содержимым tmp_path.
+
+    os.replace не работает через границу файловых систем (внутренний диск →
+    сетевой/external том, «Cross-device link»), поэтому при такой ошибке файл
+    переносится копированием. Это защищает все вызывающие места от сбоя.
+    """
     os.makedirs(os.path.dirname(os.path.abspath(final_path)) or ".", exist_ok=True)
-    os.replace(tmp_path, final_path)
+    try:
+        os.replace(tmp_path, final_path)
+    except OSError:
+        import shutil
+        shutil.move(tmp_path, final_path)
 
 
 def run_vt_encode(

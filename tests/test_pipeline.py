@@ -24,6 +24,7 @@ class TestSettings(unittest.TestCase):
         assert s.h_enable_hooks is True
         assert s.v_enable_subtitles is True
         assert s.s_enable_intro is False
+        assert s.remove_long_pauses is False
 
     def test_settings_validate_missing_audio(self):
         """Валидация: нет аудио → ошибка."""
@@ -53,6 +54,7 @@ class TestSettings(unittest.TestCase):
                 audio_path=audio_path,
                 broll_horizontal=broll_h,
                 output_folder=out_dir,
+                bgm_youtube_enable=False,  # this test validates a deliberate voice-only configuration
                 v_enable_intro=False,
                 v_enable_middle=False,
                 v_enable_outro=False,

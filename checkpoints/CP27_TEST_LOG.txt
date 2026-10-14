@@ -1,0 +1,36 @@
+CP27 verification log — 2026-10-12
+
+Core regression:
+  python -m pytest -q
+  180 passed, 1 skipped, 23 subtests passed in 1.18s. The skip is a display-dependent GUI test in headless mode.
+
+BGM probe cache tests:
+  tests/test_bgm_validation.py
+  PASS: repeated output validation reuses source metadata while probing each output; changed file size invalidates cache.
+
+Compilation:
+  python -m compileall -q video_maker tests
+  PASS.
+
+Synthetic voice-enhancement benchmark:
+  PASS; 8-second sample, 6→1 FFmpeg calls, 4→1 ffprobe calls, 0.000s duration drift for the voice-enhancement subtask.
+
+Synthetic speech FFmpeg smoke:
+  PASS; final 120 WPM; word-level timestamps preserved.
+
+Synthetic BGM FFmpeg smoke:
+  PASS; H.264/AAC; complete audio decode PASS.
+
+GUI layout:
+  Xvfb 1024x768; 1 passed.
+
+GUI settings mapping:
+  PASS: 70 checks, 0 failures.
+
+Live GUI/API panel:
+  PASS: 35 checks, 0 failures.
+
+Responsive web panel:
+  PASS in Chromium at 1365x900 desktop and 390x844 mobile; no horizontal overflow.
+
+Full-episode runtime on Apple Silicon/MLX was not measured in this environment. CP27 only reduces repeated metadata process launches; it does not claim a particular percentage improvement in total episode time.

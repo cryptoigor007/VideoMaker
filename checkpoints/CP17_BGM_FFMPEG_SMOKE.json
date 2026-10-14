@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "test": "synthetic voice + BGM FFmpeg render",
+  "source_duration_seconds": 4.0,
+  "output_duration_seconds": 4.1,
+  "output_size_bytes": 68277,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_stream_present": true,
+  "full_audio_decode": "PASS",
+  "limitation": "synthetic tones only; does not measure subjective music audibility or voice timbre"
+}

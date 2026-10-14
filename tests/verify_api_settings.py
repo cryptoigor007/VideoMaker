@@ -73,7 +73,7 @@ for field, var_name in sorted(SETTINGS_VAR_MAP.items()):
     if isinstance(current, bool):
         want = not current
     elif isinstance(current, float):
-        want = 1.5
+        want = -15.5  # valid target LUFS for BGM mix; voice-only is not normalized separately
     elif isinstance(current, int):
         want = 123
     else:
@@ -119,6 +119,9 @@ ok = app.series_entry.get("1.0", "end").strip() == "" and settings.series_name =
 (OK if ok else BAD).append("серия очищается")
 print(f"{'  ok  ' if ok else ' ПЛОХО'} серия очищается")
 
+# Задаём синтетический секрет: пустой ключ корректно маскируется как пустая
+# строка, поэтому для проверки именно маскировки нужен непустой тестовый ключ.
+apply_settings(app, {"gemini_api_key": "unit-test-secret-must-never-be-returned"})
 data = read_settings(app)
 secret_mask = all(str(v) in ("***", "") for k, v in data.items()
                   if any(h in k.lower() for h in ("key", "token", "secret", "password")))

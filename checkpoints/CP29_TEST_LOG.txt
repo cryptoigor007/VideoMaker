@@ -1,0 +1,15 @@
+CP29 baseline verification (production source unchanged)
+compileall exit: 0
+stdout: 
+stderr: 
+
+pytest exit: 0
+stdout:
+......................................................s.................................................................... [ 66%]
+.............................................................          [100%]
+183 passed, 1 skipped, 23 subtests passed in 1.47s
+
+stderr:
+
+
+Reproductions exit: 0

@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import logging
+import math
 import os
 import time
 
@@ -57,6 +58,12 @@ SETTINGS_VAR_MAP: dict[str, str] = {
     "whisper_device": "whisper_dev_var",
     "whisper_compute_type": "whisper_comp_var",
     "keep_temp_files": "keep_temp_var",
+    "remove_long_pauses": "remove_long_pauses_var",
+    "align_speech_rate": "align_speech_rate_var",
+    "speech_rate_mode": "speech_rate_mode_var",
+    "speech_rate_target_wpm": "speech_rate_target_wpm_var",
+    "speech_rate_coefficient": "speech_rate_coefficient_var",
+    "cut_extra_words": "cut_extra_words_var",
     "prevent_sleep": "prevent_sleep_var",
     "shutdown_when_done": "shutdown_when_done_var",
     "target_lufs": "target_lufs_var",
@@ -144,6 +151,18 @@ def apply_settings(app, data: dict) -> tuple[list[str], list[str]]:
         return applied, list(data.keys())
 
     for field, value in (data or {}).items():
+        if field == "target_lufs":
+            try:
+                numeric_lufs = float(value)
+            except (TypeError, ValueError):
+                log.warning("[API] отклонён target_lufs=%r: ожидается число [-36, -5]", value)
+                unknown.append(field)
+                continue
+            if not math.isfinite(numeric_lufs) or not -36.0 <= numeric_lufs <= -5.0:
+                log.warning("[API] отклонён target_lufs=%r: вне диапазона [-36, -5]", value)
+                unknown.append(field)
+                continue
+            value = numeric_lufs
         if field == "series_name":
             set_series(app, str(value))  # виджет + переменная + настройки
             applied.append(field)
@@ -156,26 +175,39 @@ def apply_settings(app, data: dict) -> tuple[list[str], list[str]]:
             unknown.append(field)
             continue
 
+        # Reject string/number booleans rather than relying on bool("false").
+        # API JSON values for boolean settings must be true/false literals.
+        current = getattr(settings, field) if known else None
+        var_current = None
         if var is not None:
             try:
-                if isinstance(value, bool):
-                    var.set(bool(value))
-                else:
-                    var.set("" if value is None else str(value))
+                var_current = var.get()
+            except Exception:
+                pass
+        expects_bool = isinstance(current, bool) or isinstance(var_current, bool)
+        if expects_bool and type(value) is not bool:
+            log.warning("[API] настройка %s отклонена: ожидается boolean, получено %r", field, value)
+            unknown.append(field)
+            continue
+
+        if var is not None:
+            try:
+                var.set(value if expects_bool else ("" if value is None else str(value)))
             except Exception as exc:  # noqa: BLE001
                 log.warning("[API] переменная %s не приняла %r: %s", var_name, value, exc)
+                unknown.append(field)
+                continue
         if known:
             try:
-                current = getattr(settings, field)
-                if isinstance(current, bool):
-                    value = bool(value)
-                elif isinstance(current, float) and not isinstance(value, bool):
+                if isinstance(current, float) and not isinstance(value, bool):
                     value = float(value)
-                elif isinstance(current, int) and not isinstance(value, bool):
+                elif isinstance(current, int) and not isinstance(current, bool) and not isinstance(value, bool):
                     value = int(value)
                 setattr(settings, field, value)
             except Exception as exc:  # noqa: BLE001
                 log.warning("[API] настройка %s не приняла %r: %s", field, value, exc)
+                unknown.append(field)
+                continue
         if field in DERIVED_FIELDS:
             log.info("[API] поле %s приложение пересчитывает само (bgm_*_enable) — "
                      "значение будет перезаписано при старте", field)
@@ -185,6 +217,25 @@ def apply_settings(app, data: dict) -> tuple[list[str], list[str]]:
         if hasattr(app, "_update_style_desc"):
             app._update_style_desc()
     return applied, unknown
+
+
+def sync_settings_from_gui(app) -> None:
+    """app.settings ← поля GUI (то же, что делает App._start перед валидацией).
+
+    API-запуск обязан синхронизировать настройки ДО validate(): иначе app.settings
+    содержит дефолты, пока в GUI не нажимали «Создать видео», и запуск отклоняется
+    («Не выбрана папка B-roll горизонтальный» и т.п.), хотя поля заполнены.
+    """
+    try:
+        from ..gui.app import collect_settings_from_gui
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[API] sync_settings_from_gui: %s", exc)
+        return
+    try:
+        collect_settings_from_gui(app)
+    except AttributeError as exc:
+        # Урезанный/тестовый app без GUI-полей — синхронизировать нечего.
+        log.debug("[API] sync_settings_from_gui: %s", exc)
 
 
 def read_settings(app, mask_secrets: bool = True) -> dict:
@@ -209,7 +260,15 @@ def read_settings(app, mask_secrets: bool = True) -> dict:
 def validate(app) -> list[str]:
     """Проверка настроек до старта — чтобы не поймать модальное окно в headless."""
     try:
-        return list(app.settings.validate())
+        errors = list(app.settings.validate())
+        if (errors and hasattr(app, "_wake_network_paths")
+                and any("/Volumes/" in e for e in errors)):
+            # Сетевой том мог ещё не подключиться: будим и ждём до 10 секунд,
+            # затем честно повторяем проверку.
+            log.info("[API] жду подключения сетевых папок перед стартом…")
+            app._wake_network_paths(wait_seconds=10.0, try_open=True)
+            errors = list(app.settings.validate())
+        return errors
     except Exception as exc:  # noqa: BLE001
         log.warning("[API] validate() упал: %s", exc)
         return [f"Не удалось проверить настройки: {exc}"]
@@ -272,7 +331,9 @@ def find_results(output: str, series: str = "", since: float = 0.0) -> dict:
         "output_folder": output,
         "series": series,
         "series_dir": series_dir,
-        "ready": bool(series_dir),
+        # A directory or metadata sidecar alone is not a completed video.
+        "ready": False,
+        "video_files": [],
         "files": [],
         "metadata": "",
         "total_bytes": 0,
@@ -297,12 +358,12 @@ def find_results(output: str, series: str = "", since: float = 0.0) -> dict:
             if st.st_mtime < limit:
                 continue
             rel = os.path.relpath(full, series_dir)
-            result["files"].append({
-                "path": full,
-                "rel": rel,
-                "size": st.st_size,
-                "mtime": st.st_mtime,
-            })
+            entry = {"path": full, "rel": rel, "size": st.st_size, "mtime": st.st_mtime}
+            result["files"].append(entry)
             result["total_bytes"] += st.st_size
+            if st.st_size >= 1024 and fn.lower().endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")):
+                result["video_files"].append(entry)
     result["files"].sort(key=lambda f: f["rel"])
+    result["video_files"].sort(key=lambda f: f["rel"])
+    result["ready"] = bool(result["video_files"])
     return result

@@ -17,25 +17,56 @@ log = logging.getLogger(__name__)
 
 # --- Gemini Key / Model manager ---
 # 429 → сразу следующий ключ (без минутного backoff на том же ключе)
-# 503 → максимум 2 коротких retry (2с, 4с), затем следующий ключ
+# 503 / таймаут сети → 1 короткий retry, затем СЛЕДУЮЩАЯ МОДЕЛЬ:
+#   503 — это перегрузка модели на стороне Google, ротация ключей тут не помогает.
 # Запоминаем последний успешный ключ и модель в ~/video_maker/cache/gemini_state.json
 
 # Каталог моделей для GUI (порядок = рекомендуемый fallback).
-# Выбор пользователя в настройках всегда первый в цепочке; остальные — только если выбранная недоступна (404/etc).
+# Выбор пользователя в настройках всегда первый в цепочке; остальные — только если выбранная недоступна (404/503).
 AVAILABLE_GEMINI_MODELS: tuple[str, ...] = (
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",   # was invalid "gemini-3.6-flash-lite"
+    "gemini-3.6-flash",        # текущий основной: качество
+    "gemini-3.5-flash-lite",   # живучие lite — первыми в запасе (реже попадают под перегрузку)
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-flash-latest",     # алиас актуальной стабильной flash
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",        # у новых ключей может быть 404 — быстрый скип
 )
 
 # Fallback-цепочка = тот же каталог (без дублей). Не «прибита» к одной модели.
 
 DEFAULT_MODEL_CHAIN: tuple[str, ...] = AVAILABLE_GEMINI_MODELS
+
+
+def _redact_secret(text: str, secret: str) -> str:
+    """Remove raw and URL-encoded API key values from exception/log text."""
+    if not secret:
+        return str(text)
+    value = str(text)
+    try:
+        from urllib.parse import quote, quote_plus
+        variants = {secret, quote(secret, safe=""), quote_plus(secret, safe="")}
+    except Exception:
+        variants = {secret}
+    for variant in sorted((v for v in variants if v), key=len, reverse=True):
+        value = value.replace(variant, "[REDACTED]")
+    return value
+
+
+_TRANSIENT_ERROR_MARKERS = (
+    "503", "unavailable", "high demand", "overloaded", "temporarily",
+    "500", "internal", "timed out", "timeout", "connect", "reset",
+)
+
+
+def _is_transient_gemini_error(exc: Exception) -> bool:
+    """True для временных сбоев (503/500/таймаут/обрыв сети): виновата модель/сеть, не ключ."""
+    name = type(exc).__name__.lower()
+    if any(marker in name for marker in ("timeout", "connect", "remoteprotocol")):
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 def list_available_gemini_models(
@@ -92,7 +123,8 @@ def list_available_gemini_models(
                 return names
             last_err = "SDK empty"
         except Exception as e:
-            last_err = f"SDK: {e}"
+            # SDK exceptions occasionally embed request URLs or credentials.
+            last_err = f"SDK: {_redact_secret(str(e), key)}"
 
         # --- REST ---
         try:
@@ -125,7 +157,7 @@ def list_available_gemini_models(
                 return names
             last_err = "REST empty"
         except Exception as e:
-            last_err = f"REST: {e}"
+            last_err = f"REST: {_redact_secret(str(e), key)}"
             _log(f"[GEMINI] list models: {last_err}")
 
     _log(f"[GEMINI] list models fallback ({last_err})")
@@ -357,11 +389,16 @@ def _analysis_cache_key(
 ) -> str:
     """Gemini cache key = hash(audio) + model + schema (+ intro/series + text + packaging)."""
     audio_fp = _audio_fingerprint(audio_path)
-    text = ""
+    # Include the complete transcript in the cache identity. Using only the first
+    # 50 segments allowed two transcripts that diverged later to share a Gemini result.
+    text_digest = hashlib.sha256()
     if transcription:
-        segs = transcription.get("segments") or []
-        text = " ".join((s.get("text") or "") for s in segs[:50])
-    text_fp = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        for segment in transcription.get("segments") or []:
+            text = str(segment.get("text") or "") if isinstance(segment, dict) else ""
+            encoded = text.encode("utf-8", errors="ignore")
+            text_digest.update(len(encoded).to_bytes(8, "big"))
+            text_digest.update(encoded)
+    text_fp = text_digest.hexdigest()[:16]
     pkg = _packaging_defaults(packaging_opts)
     pkg_fp = hashlib.sha256(
         repr(sorted(pkg.items())).encode("utf-8", errors="ignore")
@@ -396,7 +433,7 @@ def _analysis_cache_put(key: str, analysis: dict, log_fn=None) -> None:
     try:
         ANALYSIS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         path = ANALYSIS_CACHE_DIR / f"{key}.json"
-        tmp = str(path) + ".tmp"
+        tmp = f"{path}.{os.getpid()}.{time.time_ns()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(analysis, f, ensure_ascii=False, indent=0)
             f.flush()
@@ -787,12 +824,12 @@ def analyze(
     km = GeminiKeyManager(keys, preferred_model=model_name, log_fn=_log)
     _log(f"[GEMINI] Анализ | ключей={km.n} | модель={km.current_model} | cache_key={cache_key[:12]}…")
 
-    # лимиты: на один ключ для 503 — не больше 2 коротких retry
-    max_503_per_key = 2
-    consecutive_503 = 0
+    # лимиты: на одну МОДЕЛЬ для 503/таймаута — не больше 1 короткого retry
+    max_transient_per_model = 1
+    consecutive_transient = 0
     json_retries = 0
-    # общий потолок попыток = ключи × модели × (1 + 503 retries) — без бесконечного цикла
-    max_attempts = max(km.n * len(km.model_chain) * 3, 6)
+    # общий потолок попыток — без бесконечного цикла (модели × retry-запасы + ключи)
+    max_attempts = max(len(km.model_chain) * 5 + km.n * 3, 8)
     attempt = 0
 
     while attempt < max_attempts:
@@ -830,7 +867,7 @@ def analyze(
 
             # --- 429 / quota: сразу следующий ключ, без sleep ---
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                consecutive_503 = 0
+                consecutive_transient = 0
                 if not km.rotate_key("429 quota"):
                     if km.next_model():
                         km.exhausted.clear()  # новая модель — новые квоты
@@ -842,36 +879,31 @@ def analyze(
                 time.sleep(0.5)
                 continue
 
-            # --- 503 / UNAVAILABLE: 2 коротких retry, потом ключ ---
-            if (
-                "503" in err_str
-                or "UNAVAILABLE" in err_str
-                or "high demand" in err_str.lower()
-                or "overloaded" in err_str.lower()
-            ):
-                consecutive_503 += 1
-                if consecutive_503 <= max_503_per_key:
-                    wait = 2.0 * consecutive_503  # 2с, 4с — НЕ 10/20/40/80/120
+            # --- 503 / UNAVAILABLE / таймаут сети: 1 короткий retry, затем следующая МОДЕЛЬ ---
+            # 503 у Google — свойство модели (все ключи получают одно и то же), поэтому
+            # ключи не ротируем: ротация только жгла ключи и растягивала прогон на минуты.
+            if _is_transient_gemini_error(e):
+                consecutive_transient += 1
+                if consecutive_transient <= max_transient_per_model:
+                    wait = 2.0 * consecutive_transient  # 2с — НЕ 10/20/40/80/120
                     _log(
-                        f"[GEMINI] 503 temporary — короткий retry {consecutive_503}/"
-                        f"{max_503_per_key} через {wait:.0f}с"
+                        f"[GEMINI] Перегрузка/сбой сети — короткий retry "
+                        f"{consecutive_transient}/{max_transient_per_model} через {wait:.0f}с"
                     )
                     time.sleep(wait)
                     continue
-                consecutive_503 = 0
-                if not km.rotate_key("503 after short retries"):
-                    if km.next_model():
-                        km.exhausted.clear()
-                        continue
-                    raise RuntimeError(
-                        "Gemini временно недоступен (503) на всех ключах. Попробуйте позже."
-                    ) from e
-                time.sleep(0.5)
-                continue
+                consecutive_transient = 0
+                if km.next_model():
+                    km.exhausted.clear()
+                    continue
+                raise RuntimeError(
+                    "Gemini временно недоступен (перегрузка 503 / сеть) на всех моделях. "
+                    "Попробуйте позже."
+                ) from e
 
             # --- invalid key ---
             if "API_KEY_INVALID" in err_str or "API key not valid" in err_str:
-                consecutive_503 = 0
+                consecutive_transient = 0
                 if not km.rotate_key("invalid key"):
                     raise RuntimeError(
                         "Недействительный Gemini API ключ (все ключи)."
@@ -880,7 +912,7 @@ def analyze(
 
             # --- model not found → следующая модель ---
             if "NOT_FOUND" in err_str and "model" in err_str.lower():
-                consecutive_503 = 0
+                consecutive_transient = 0
                 _log(f"[GEMINI] Модель {model} недоступна")
                 if km.next_model():
                     continue
@@ -906,7 +938,7 @@ def analyze(
                     time.sleep(1.0)
                     continue
                 # после sanitize + retries — пробуем следующую модель
-                consecutive_503 = 0
+                consecutive_transient = 0
                 if km.next_model():
                     json_retries = 0
                     _log(f"[GEMINI] JSON всё ещё битый → модель {km.current_model}")
@@ -1153,6 +1185,29 @@ def _normalize_analysis(data: dict, segments: list[dict], packaging_opts: dict |
         }
         clips.append(item)
 
+    def _norm_middle(raw):
+        """Валидировать middle: только словари с числовым start.
+
+        Невалидные элементы (строки, числа, текстовые тайминги) раньше падали
+        в float() уже во время рендера — отбрасываем их здесь.
+        """
+        out = []
+        for item in raw or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = float(item.get("start"))
+            except (TypeError, ValueError):
+                continue
+            entry = dict(item)
+            entry["start"] = start
+            try:
+                entry["end"] = float(item.get("end"))
+            except (TypeError, ValueError):
+                entry.pop("end", None)
+            out.append(entry)
+        return out
+
     def _str_field(*keys, default=""):
         for k in keys:
             v = data.get(k)
@@ -1202,7 +1257,7 @@ def _normalize_analysis(data: dict, segments: list[dict], packaging_opts: dict |
         "package_hook": package_hook,
         "package_hashtags": package_hashtags,
         "intro": data.get("intro", {"start": 0, "end": 0}),
-        "middle": data.get("middle", []),
+        "middle": _norm_middle(data.get("middle")),
         "outro": data.get("outro", {"start": 0, "end": 0}),
         "strong_words": data.get("strong_words", []),
         "subtitles": subtitles,

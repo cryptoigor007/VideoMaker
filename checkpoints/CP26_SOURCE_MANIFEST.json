@@ -1,0 +1,1018 @@
+{
+  "checkpoint": "CP26",
+  "generated": "2026-10-12",
+  "description": "Full source manifest; excludes manifest itself and package verification note. Runtime caches, generated media and local secrets are excluded.",
+  "file_count": 202,
+  "files": [
+    {
+      "path": ".env.example",
+      "size": 222,
+      "sha256": "ca27d476636e95c067ef6978f2f0d289cee7c4ea59163a78cd42967dfaed64a7"
+    },
+    {
+      "path": ".gitignore",
+      "size": 102,
+      "sha256": "9510d3beef8a013949a9d0d52cc9f574e420df12e7cf2b3c60a0306602d6751f"
+    },
+    {
+      "path": "AUDIT_DEEP_REVIEW.md",
+      "size": 28435,
+      "sha256": "69dbd4c52a4554fba5f22a7b8c653114124c9e6a11af11c2f343a5d531e5ed52"
+    },
+    {
+      "path": "AUDIT_R56_FIX_PLAN.md",
+      "size": 50693,
+      "sha256": "b34d3ad38f64ec296a767242307304d7fd833ece39989e60791ab51289189550"
+    },
+    {
+      "path": "BASELINE_MANIFEST.json",
+      "size": 11733,
+      "sha256": "5dd2c45cb4731564122385042741beb2e996dabeda25ddcd98a6591f413f0c87"
+    },
+    {
+      "path": "CHANGES.md",
+      "size": 36792,
+      "sha256": "f39cc0aca69a5b1d0c365723dfa3e929613454cd1c8c9d09636e904fd7dbf42e"
+    },
+    {
+      "path": "README.md",
+      "size": 22969,
+      "sha256": "83decf8ecc21475dbc30d87abc685916dc72a612704af88628bef287e56cc9e6"
+    },
+    {
+      "path": "VERSION.md",
+      "size": 27721,
+      "sha256": "59a00703636a8e0ec89442ce7441e0d0f321ca2b12d820546e15c22d8e0c2b86"
+    },
+    {
+      "path": "checkpoints/CP07_BASELINE_AND_SOURCE_INTEGRATION.md",
+      "size": 2027,
+      "sha256": "d6e36a438b3e1a309a8523ece40f3900fb682538edae8ce8b456f2518b7dd163"
+    },
+    {
+      "path": "checkpoints/CP08_COMPILE_LOG.txt",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP08_SHORTS_DEDUPLICATION.md",
+      "size": 3093,
+      "sha256": "470832089939a6c830ac73e7a2f574e4fbd73c57f5167ea4c20bc609cf6c1f28"
+    },
+    {
+      "path": "checkpoints/CP08_TEST_LOG.txt",
+      "size": 196,
+      "sha256": "da64b13421cbb12788e673ee76dec2421ca9461bf67d7f1920fc68c5a3e3ef9e"
+    },
+    {
+      "path": "checkpoints/CP09_COMPILE_LOG.txt",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP09_OPTIONAL_PAUSE_REDUCTION.md",
+      "size": 3417,
+      "sha256": "f3d5ea5d990d45d15ebfeb1e149166c51f902159b44fa67e89c6084892fe7c64"
+    },
+    {
+      "path": "checkpoints/CP09_TEST_LOG.txt",
+      "size": 196,
+      "sha256": "283ffab30b5578c82157ec2806fcc00418833580ab63117755e4afe35617964e"
+    },
+    {
+      "path": "checkpoints/CP10_COMPILE_LOG.txt",
+      "size": 16,
+      "sha256": "113a6c7cc7d48cf164a257520a571ca70460d50f789652dab1fd10a74f44187d"
+    },
+    {
+      "path": "checkpoints/CP10_GUI_API_SPEECH_SETTINGS.md",
+      "size": 1782,
+      "sha256": "46c44f6f6c759ce6bc128500e288868fc4502d47246e9b1e48f11a66c04a720e"
+    },
+    {
+      "path": "checkpoints/CP10_LIVE_GUI_VERIFICATION.txt",
+      "size": 3289,
+      "sha256": "40d65f677e992d9de28a134276ce51c40918eaae26938fc38589a64b3c341981"
+    },
+    {
+      "path": "checkpoints/CP10_LIVE_SETTINGS_VERIFICATION.txt",
+      "size": 6640,
+      "sha256": "4433274575668f386b95f3072c5cabb2e3ccab9fdac2609d8084838771515e35"
+    },
+    {
+      "path": "checkpoints/CP10_TEST_LOG.txt",
+      "size": 196,
+      "sha256": "4efd3957908e94df6064a4fc73654adde3487359c19ed110e0967c813c590c02"
+    },
+    {
+      "path": "checkpoints/CP11_API_LIVE_VERIFICATION.txt",
+      "size": 7518,
+      "sha256": "ac667b99b6dd8d95a464aef2eb7ec6657ee329b34c1d08b7671ed12596438809"
+    },
+    {
+      "path": "checkpoints/CP11_BGM_FFMPEG_SMOKE.json",
+      "size": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP11_COMPILE_LOG.txt",
+      "size": 16,
+      "sha256": "113a6c7cc7d48cf164a257520a571ca70460d50f789652dab1fd10a74f44187d"
+    },
+    {
+      "path": "checkpoints/CP11_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size": 2311,
+      "sha256": "06d07a8e479914419d936c95e3f25bad414c7abeeb7b303fbcff7ce5d6219648"
+    },
+    {
+      "path": "checkpoints/CP11_LIVE_GUI_VERIFICATION.txt",
+      "size": 3289,
+      "sha256": "c21612754cdc56ebd14c69e6ce0749ff8fc30a0b605cf23e64b6679cc0a1ef55"
+    },
+    {
+      "path": "checkpoints/CP11_LIVE_SETTINGS_VERIFICATION.txt",
+      "size": 6640,
+      "sha256": "4433274575668f386b95f3072c5cabb2e3ccab9fdac2609d8084838771515e35"
+    },
+    {
+      "path": "checkpoints/CP11_LOG_DEADLOCK_VERIFICATION.txt",
+      "size": 175,
+      "sha256": "0cf79a60911f31d3bfaaa6f93e7ebc3ff78e33cc67f9d982ce7baf9c63988467"
+    },
+    {
+      "path": "checkpoints/CP11_SOURCE_MANIFEST.json",
+      "size": 17784,
+      "sha256": "bc75560ac73e5c102aaef4777b0b1ae3ffce12f4058a8044df78983e0b843c3e"
+    },
+    {
+      "path": "checkpoints/CP11_SPEECH_FFMPEG_SMOKE.json",
+      "size": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP11_TEST_LOG.txt",
+      "size": 196,
+      "sha256": "73c4a96fd3a3e06d22766ef25bd2c5dc1f211355ca9a0cd406760a27927dbef5"
+    },
+    {
+      "path": "checkpoints/CP12_DEEP_AUDIT.md",
+      "size": 939,
+      "sha256": "2b4128474cd0c9ca359ef6b7b922f2ab390d19798a564c855730254b7cfc5d37"
+    },
+    {
+      "path": "checkpoints/CP12_TEST_LOG.txt",
+      "size": 215,
+      "sha256": "01295248ae5fd4a7f94ebcdd3fd57f89ee8f116a6eb7ba35d9a21eca8e045128"
+    },
+    {
+      "path": "checkpoints/CP13_DEEP_AUDIT.md",
+      "size": 947,
+      "sha256": "58f7c85941b329c7525c3563dfdb317023c69d98b4844815714ba9683c04844d"
+    },
+    {
+      "path": "checkpoints/CP13_TEST_LOG.txt",
+      "size": 215,
+      "sha256": "ac5caba45c1149de9b6ee622a2a8a7a0a8d211406935750a115a95768e153f4e"
+    },
+    {
+      "path": "checkpoints/CP14_DEEP_AUDIT.md",
+      "size": 930,
+      "sha256": "d77388f550ba02ed6c0666378fb95c01f52f454f345d3137df0243617c16fa3d"
+    },
+    {
+      "path": "checkpoints/CP14_TEST_LOG.txt",
+      "size": 215,
+      "sha256": "755d47f227ee07cdb5aab63bb16d389ad23d4893e6bcafb9176d3e1ef52acc11"
+    },
+    {
+      "path": "checkpoints/CP15_DEEP_AUDIT.md",
+      "size": 1038,
+      "sha256": "4d44d9615b7323d037ea42c73024543dc0f48016639ab3eff217f65154b15231"
+    },
+    {
+      "path": "checkpoints/CP15_SOURCE_MANIFEST.json",
+      "size": 19585,
+      "sha256": "56d3b98c11172308ab56d6c6e082a9c6ba2488586f93cce111a746cf12d6e512"
+    },
+    {
+      "path": "checkpoints/CP15_TEST_LOG.txt",
+      "size": 214,
+      "sha256": "58fd595e38870256ba4be76ba5ed36d349568cbb50de184c175fff5d098d9636"
+    },
+    {
+      "path": "checkpoints/CP16_BGM_FFMPEG_SMOKE.json",
+      "size": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP16_CLI_SMOKE_LOG.txt",
+      "size": 54,
+      "sha256": "87cd531fd23b79d4721b8f27d39477c4b53ad1af79be974e2ed01217849dd74b"
+    },
+    {
+      "path": "checkpoints/CP16_COMPILE_LOG.txt",
+      "size": 17,
+      "sha256": "f8ebc65bcf3d22d004eddde09612fcff2d08ea954cb441132209d74adf4b6451"
+    },
+    {
+      "path": "checkpoints/CP16_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size": 3358,
+      "sha256": "dcc822b293ad2df029cec4a7a9badb1881b1f1eff9079f49fd7ff4614824735d"
+    },
+    {
+      "path": "checkpoints/CP16_SHELL_SYNTAX_LOG.txt",
+      "size": 51,
+      "sha256": "87541cd48db55b20592fdca06694a9ecd5c50fb3a0e6cf9286a99b2f8042a13f"
+    },
+    {
+      "path": "checkpoints/CP16_SOURCE_MANIFEST.json",
+      "size": 21769,
+      "sha256": "399cf93ee8119d10c304434e0933fcbdfa351aa106de94b4c41a51052ec6044d"
+    },
+    {
+      "path": "checkpoints/CP16_SPEECH_FFMPEG_SMOKE.json",
+      "size": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP16_TEST_LOG.txt",
+      "size": 197,
+      "sha256": "a107ba9b2feb8de6f3a9168ac9419a73d8bfcc7c7e0863f28f6c0ef1a35f66d5"
+    },
+    {
+      "path": "checkpoints/CP17_BGM_FFMPEG_SMOKE.json",
+      "size": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP17_CLI_HELP.txt",
+      "size": 433,
+      "sha256": "5ef2ea12ad88fb9733d6892ad331a0173bcc61730e2104ce5eb7945ecbb32d89"
+    },
+    {
+      "path": "checkpoints/CP17_COMPILE_LOG.txt",
+      "size": 16,
+      "sha256": "113a6c7cc7d48cf164a257520a571ca70460d50f789652dab1fd10a74f44187d"
+    },
+    {
+      "path": "checkpoints/CP17_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size": 2433,
+      "sha256": "a03eb75534b5626632c58ef2a8e3284655e1deba156c6fc96ef0e3f467a0254f"
+    },
+    {
+      "path": "checkpoints/CP17_SHELL_SYNTAX_LOG.txt",
+      "size": 51,
+      "sha256": "87541cd48db55b20592fdca06694a9ecd5c50fb3a0e6cf9286a99b2f8042a13f"
+    },
+    {
+      "path": "checkpoints/CP17_SOURCE_MANIFEST.json",
+      "size": 23873,
+      "sha256": "459ce99086bb4d98a003f9bd6a1caf5c7a288bacd95ce14c90a3fb9befb96f92"
+    },
+    {
+      "path": "checkpoints/CP17_SPEECH_FFMPEG_SMOKE.json",
+      "size": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP17_SUBPROCESS_TIMEOUT_AUDIT.txt",
+      "size": 76,
+      "sha256": "54c99077654a2b4768288a1223c4201b723e87fea0d67916ccd212dbc3f7521f"
+    },
+    {
+      "path": "checkpoints/CP17_TEST_LOG.txt",
+      "size": 192,
+      "sha256": "7e1ee378ddaff41b9769d4f363f85f1c53c6b64cd38b1f6704dd2042b096bf84"
+    },
+    {
+      "path": "checkpoints/CP17_TIMEOUT_POLICY.md",
+      "size": 2587,
+      "sha256": "63305ed47949532384b09024f2fa55cff132e13f344f4d27a7009a041c78ad52"
+    },
+    {
+      "path": "checkpoints/CP18_BGM_FFMPEG_SMOKE.json",
+      "size": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP18_BGM_FFMPEG_SMOKE_TIME.txt",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP18_CLI_HELP.txt",
+      "size": 433,
+      "sha256": "5ef2ea12ad88fb9733d6892ad331a0173bcc61730e2104ce5eb7945ecbb32d89"
+    },
+    {
+      "path": "checkpoints/CP18_COMPILE_LOG.txt",
+      "size": 5,
+      "sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431"
+    },
+    {
+      "path": "checkpoints/CP18_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size": 2405,
+      "sha256": "204928a5d7231786dd8e11142ca1e89ba89b69f4f86ca0bf06c8cafcb190916a"
+    },
+    {
+      "path": "checkpoints/CP18_GUI_SETTINGS_VERIFICATION.txt",
+      "size": 6642,
+      "sha256": "07e34aa5207fde85507fb86123b16fd1a8bbaaf10e8170cb5878fac46a757306"
+    },
+    {
+      "path": "checkpoints/CP18_LIVE_GUI_VERIFICATION.txt",
+      "size": 3289,
+      "sha256": "4b394c658b35b9117377c5497f371475c897ceccb9ed0a8ed6a2179049ec2a85"
+    },
+    {
+      "path": "checkpoints/CP18_LUFS_SCOPE.md",
+      "size": 3200,
+      "sha256": "78ca08bff5476cedae2e5839d1be5cc6f235fab5f3167609b9e19d75b7bf8650"
+    },
+    {
+      "path": "checkpoints/CP18_SOURCE_MANIFEST.json",
+      "size": 25057,
+      "sha256": "2b49c140de5dc9073aa86b6d33ece21672072109b3c68e28bdc81f05f105a01e"
+    },
+    {
+      "path": "checkpoints/CP18_SPEECH_FFMPEG_SMOKE.json",
+      "size": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP18_TEST_LOG.txt",
+      "size": 257,
+      "sha256": "96bdaab25b3727a3858295f065886402a3393d2f90638fed5f6c8f74c1c0f497"
+    },
+    {
+      "path": "checkpoints/CP19_API_SECURITY.md",
+      "size": 5156,
+      "sha256": "08f17cc072775177dcbbb9bc207a8e51436d9f17d0e968c8ca18ab1a617f6e97"
+    },
+    {
+      "path": "checkpoints/CP19_API_SECURITY_TEST_LOG.txt",
+      "size": 99,
+      "sha256": "3164293340f05df777a16ff6a6d93c653ecf459579bcc20442444859d1220177"
+    },
+    {
+      "path": "checkpoints/CP19_COMPILE_LOG.txt",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "checkpoints/CP19_FINAL_REGRESSION_AND_PACKAGE.md",
+      "size": 1945,
+      "sha256": "0bb7f0c19025f0a38cd6ce0cf7532f0e5bfdd9f247f3ef6c2bc0ca8090285484"
+    },
+    {
+      "path": "checkpoints/CP19_GUI_SETTINGS_VERIFICATION.txt",
+      "size": 6642,
+      "sha256": "07e34aa5207fde85507fb86123b16fd1a8bbaaf10e8170cb5878fac46a757306"
+    },
+    {
+      "path": "checkpoints/CP19_LIVE_GUI_VERIFICATION.txt",
+      "size": 3289,
+      "sha256": "e3cc8a0157daccd4c7afab1c65b8d68882de548c5692e6593bbbf74f73d2e1f3"
+    },
+    {
+      "path": "checkpoints/CP19_SOURCE_MANIFEST.json",
+      "size": 26597,
+      "sha256": "152214f651081c0660408a2e7788d057b4f9bf27dda8033ad88097c2426c8883"
+    },
+    {
+      "path": "checkpoints/CP19_TEST_LOG.txt",
+      "size": 249,
+      "sha256": "d96e4f20c2c51f40ef188fae2d519a2000a457ad5689e9a91db6757c47915e48"
+    },
+    {
+      "path": "checkpoints/CP20_API_SECURITY_TEST_LOG.txt",
+      "size": 99,
+      "sha256": "10b1887826527f24a26fc048379adc173e8eb25da6336a7eb2a9490d34683757"
+    },
+    {
+      "path": "checkpoints/CP20_BGM_FFMPEG_SMOKE.json",
+      "size": 384,
+      "sha256": "ac142be156f63ca788422a982983f2bcaa8decdfe99ff660aa5bce87719167cd"
+    },
+    {
+      "path": "checkpoints/CP20_COMPILE_LOG.txt",
+      "size": 48,
+      "sha256": "f799727d1c309752a29525bafcf34c0b2c4bf76af71a004ba709c1bec559f6ce"
+    },
+    {
+      "path": "checkpoints/CP20_FFMPEG_SMOKE.json",
+      "size": 579,
+      "sha256": "e104e61ab8ffb196f11491236398735c279c25deedfb7feea1e2e65497ea7074"
+    },
+    {
+      "path": "checkpoints/CP20_GUI_API_PANEL_VERIFICATION.txt",
+      "size": 3227,
+      "sha256": "0dfbb3f80d8a72296e40327fc4fe81fed934b5aa77c1344c3297da48e90b8a04"
+    },
+    {
+      "path": "checkpoints/CP20_GUI_SETTINGS_VERIFICATION.txt",
+      "size": 6642,
+      "sha256": "07e34aa5207fde85507fb86123b16fd1a8bbaaf10e8170cb5878fac46a757306"
+    },
+    {
+      "path": "checkpoints/CP20_PACKAGE_VERIFICATION.md",
+      "size": 1730,
+      "sha256": "eaa98a937883ad7f2895b4312b48141b8ee4f4de93f9c3174e9106df3aea6b09"
+    },
+    {
+      "path": "checkpoints/CP20_PATH_CACHE_SAFETY.md",
+      "size": 2293,
+      "sha256": "0640c1a7d05142f573ae63b12d5cc3b0bc4064b08cc4b81a93520b72c6557a16"
+    },
+    {
+      "path": "checkpoints/CP20_SOURCE_MANIFEST.json",
+      "size": 30142,
+      "sha256": "998cc9fe6c6813bc292a980ba58653d19122a20adb1bfc70da9d2667012c8242"
+    },
+    {
+      "path": "checkpoints/CP20_SPEECH_FFMPEG_SMOKE.json",
+      "size": 445,
+      "sha256": "760c6963d63ff4e1aa43a67ee96877b033f4c3b1de367cab04a1c80696f38837"
+    },
+    {
+      "path": "checkpoints/CP20_STATIC_AUDIT.json",
+      "size": 971,
+      "sha256": "1838f9c16b9ef2e2142501d2b8ef7f8280aba9969c7a2f9507b20c72029d167e"
+    },
+    {
+      "path": "checkpoints/CP20_TEST_LOG.txt",
+      "size": 249,
+      "sha256": "91a050c6b35c073db32de3e8a15de7bdff664b7d15a8a9a6bd76e276a517093d"
+    },
+    {
+      "path": "checkpoints/CP22_MAIN_1024x768.png",
+      "size": 52461,
+      "sha256": "9040223fd7871acf032eb1f74cb5cae574e99ffbc32a74df9ea6dc4b12d25a09"
+    },
+    {
+      "path": "checkpoints/CP22_MONITOR_1024x768.png",
+      "size": 29981,
+      "sha256": "d2ff294e56ad48f27f8d7469bff9edc0c632355471456a1406359c5154a7fe77"
+    },
+    {
+      "path": "checkpoints/CP22_SETTINGS_1024x768.png",
+      "size": 56194,
+      "sha256": "7584369c95baf3b8d65d02a7ceb6656639b1b74ea3031b7e146c9ac59ed28cb2"
+    },
+    {
+      "path": "checkpoints/CP22_SETTINGS_DETAILS_1024x768.png",
+      "size": 79838,
+      "sha256": "eedc1ed4ef364e4d5b979ab0fa1352688c46f84c9f05f38481ea82a4cc1a44a2"
+    },
+    {
+      "path": "checkpoints/CP22_SOURCE_MANIFEST.json",
+      "size": 31103,
+      "sha256": "f3f50b5a32791592a65167dc754aad87751234656ade7ab6baef1ff9d0d1e1db"
+    },
+    {
+      "path": "checkpoints/CP22_UI_LAYOUT.md",
+      "size": 1811,
+      "sha256": "34009fa624c2db26d69f682b6d6c0a065dd23d8fddf65d390a16715bf3138d3d"
+    },
+    {
+      "path": "checkpoints/CP23_SOURCE_MANIFEST.json",
+      "size": 32166,
+      "sha256": "308443f55d911866b9704561051e2d1d65c0d7dba2c0e950b4273763d368e132"
+    },
+    {
+      "path": "checkpoints/CP23_WEBUI_DESKTOP_1365x900.png",
+      "size": 77387,
+      "sha256": "5c34f76870f6b64ffa9fb17ce78ca32be82715bd5e936219938a271925fdddcf"
+    },
+    {
+      "path": "checkpoints/CP23_WEBUI_LAYOUT.md",
+      "size": 1579,
+      "sha256": "f223aa628415e056c6226fcf8a851d5814e442695b0f3dba44c9202563cd2499"
+    },
+    {
+      "path": "checkpoints/CP23_WEBUI_MOBILE_390x844.png",
+      "size": 66986,
+      "sha256": "928dcff8175c2746933241870583757c8f82fa117aa52a128c032b299712623d"
+    },
+    {
+      "path": "checkpoints/CP24_PACKAGE_VERIFICATION.md",
+      "size": 679,
+      "sha256": "7f340c633e61598bf5c97fa713e412a8188a947877afb764c28de8754371a5b1"
+    },
+    {
+      "path": "checkpoints/CP24_RENDER_PASS_MAP.json",
+      "size": 1693,
+      "sha256": "bc487f51643a0d70910684a6c9e01fb3b6fa66dc31ae277407f5e1e6c83a77c6"
+    },
+    {
+      "path": "checkpoints/CP24_RENDER_PASS_MAP.md",
+      "size": 7254,
+      "sha256": "940e60a440415aebdefd4e6a93cdb5d90ae72bd1bd408e73dfc58152aa46fcf5"
+    },
+    {
+      "path": "checkpoints/CP24_SOURCE_MANIFEST.json",
+      "size": 31828,
+      "sha256": "9c09d9abfa66f51344a2dfdfdbd699dea01671bdf1dc25c533756c75bbbf6e32"
+    },
+    {
+      "path": "checkpoints/CP25_PACKAGE_VERIFICATION.md",
+      "size": 1365,
+      "sha256": "50b9fe4f61feebed4764985de081827a55e48b9d86d2bbf54eae7ff6fc51230d"
+    },
+    {
+      "path": "checkpoints/CP25_SOURCE_MANIFEST.json",
+      "size": 33058,
+      "sha256": "4ab19439cd728923a08a0be4ddee6fc7596f8fd65806eaeb73d1f8cfb9870cf7"
+    },
+    {
+      "path": "checkpoints/CP25_TEST_LOG.txt",
+      "size": 2223,
+      "sha256": "efd67f777eeefb5dfa78eb6810bd0002f1064bf2da949f58d5bdd33f4c44e6f1"
+    },
+    {
+      "path": "checkpoints/CP25_VOICE_ENHANCEMENT_SINGLE_PASS.md",
+      "size": 2577,
+      "sha256": "c123fa8bcc2aa0bbf37be36839cd311750048263e964215c23979b3bb09b16f4"
+    },
+    {
+      "path": "checkpoints/CP25_VOICE_ENHANCE_SYNTHETIC_BENCHMARK.json",
+      "size": 611,
+      "sha256": "3b54728450ef26877c4f6ab76866475392f6fac1afa883f3822ebfce35dffc29"
+    },
+    {
+      "path": "checkpoints/CP26_MASTER_PARITY.md",
+      "size": 1805,
+      "sha256": "ec77ef06f1197fcd3fcf4cb5f4f580e8bffb6b041c842d078e31b349b8e20dfd"
+    },
+    {
+      "path": "checkpoints/CP26_TEST_LOG.txt",
+      "size": 1100,
+      "sha256": "dd5254694a1bdc80c5e7cf1c07efc066253e79c81c888f61856d572a51877fc8"
+    },
+    {
+      "path": "checkpoints/CP26_VOICE_ENHANCE_BENCHMARK.json",
+      "size": 611,
+      "sha256": "a8197a8b44e54a29e8c3fa0b9e464e1457897628664b87df7f3157cc6daae058"
+    },
+    {
+      "path": "checkpoints/FINAL_SOURCE_MANIFEST.json",
+      "size": 21769,
+      "sha256": "399cf93ee8119d10c304434e0933fcbdfa351aa106de94b4c41a51052ec6044d"
+    },
+    {
+      "path": "checkpoints/INDEX.md",
+      "size": 3165,
+      "sha256": "b505f5b91a930ffc7fe91c8bf666d6095a05771f570e9a5cd1a40839a382aa74"
+    },
+    {
+      "path": "checkpoints/ROADMAP_STATUS.json",
+      "size": 7912,
+      "sha256": "d36e86e51a533da758fde01782e429e329ad68b06efecb500b5705365bff0c99"
+    },
+    {
+      "path": "docs/API.md",
+      "size": 21936,
+      "sha256": "e2da87d27998af266d501c37f42ffc5bb490bd17fdecdf80e1c63ee761d43464"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/PATCH_R47.txt",
+      "size": 996,
+      "sha256": "85461243d340d6304718a947107c8983be54386ec8d7978c4ed94ef027282a66"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README.md",
+      "size": 218,
+      "sha256": "6cb666f43695ddcda883399e398133af2955af9aaeaa21a44e2547a169f19293"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README_FIX.txt",
+      "size": 505,
+      "sha256": "484ce335c7daa342d81cd6472da47a9cb42494a7ac7cdd867fc58a798c847736"
+    },
+    {
+      "path": "docs/archive/legacy-build-notes/README_REPLACE.txt",
+      "size": 841,
+      "sha256": "3d1c92e5f94335c93ee4443ca6a00788d05728066ee849c61e2a3a811a8ac43f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-26-videomeyker-design.md",
+      "size": 5692,
+      "sha256": "6bdcea7db527b747a0d2774ee35d2431d162f984e8d0acf28a8084e8741944ba"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 277,
+      "sha256": "e18ad62040ef838a7a0657ccd806066a74f0c39aa3c0958eec1a791cd0de856a"
+    },
+    {
+      "path": "start-headless.command",
+      "size": 380,
+      "sha256": "dfb5efa0da6ea6111684ba00d860ce58897e268d81965204cac3da80ddf85c77"
+    },
+    {
+      "path": "start.command",
+      "size": 2374,
+      "sha256": "325289ae22a26842f55e42e012203e0d7f7900875060254edf138335337a1474"
+    },
+    {
+      "path": "tests/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/synthetic_bgm_mix_smoke.py",
+      "size": 4139,
+      "sha256": "80292bfa40f91906775e1ffd866aa978da8d6c120710ef15e05472fc6c515e3c"
+    },
+    {
+      "path": "tests/synthetic_ffmpeg_smoke.py",
+      "size": 3922,
+      "sha256": "8d9b2fdd9469449d1b47d5ac06be34a626592bbbbe62fe8325d3b2c9547178d1"
+    },
+    {
+      "path": "tests/synthetic_voice_enhance_smoke_cp25.py",
+      "size": 5689,
+      "sha256": "485f2614a40cbb680fa15aaaeff648dd0733000cc0d77b9ae12351e7e0224235"
+    },
+    {
+      "path": "tests/test_api_security_cp19.py",
+      "size": 8733,
+      "sha256": "2ae65b697cbba51c2cc1cb26cf872f4708d042198c3ab37d6fc964a13710889b"
+    },
+    {
+      "path": "tests/test_audit_cp12.py",
+      "size": 2027,
+      "sha256": "e2fd05d69d71e6ab7488c8bc20f23ca3ee896cd93a1ff60d2b1f8111887855a4"
+    },
+    {
+      "path": "tests/test_bgm_policy.py",
+      "size": 6740,
+      "sha256": "a152d606141d7c0adf06ea9c79ee4d20c5ffbeb83526b16b1a7427e0495b049e"
+    },
+    {
+      "path": "tests/test_bgm_validation.py",
+      "size": 4385,
+      "sha256": "58b375afbfb3783843478b8fda5292f11f8eceeb5e18ccf0fc98fd269aa7c19b"
+    },
+    {
+      "path": "tests/test_cli.py",
+      "size": 2626,
+      "sha256": "60c12e34d91f32d04932c176408b4370a76dbdaf12060d3af449309cc65b0de5"
+    },
+    {
+      "path": "tests/test_gui_layout_cp22.py",
+      "size": 4228,
+      "sha256": "944aa2296efc6b644ae23cd3b650be23f58fed9801c5a412c07a9bd4d750cf17"
+    },
+    {
+      "path": "tests/test_lufs_scope.py",
+      "size": 2977,
+      "sha256": "90d5679c951c98dd9f412b37c3d49960a333f55617084e699842367bd6dda28b"
+    },
+    {
+      "path": "tests/test_master_voice_sharing_cp26.py",
+      "size": 4179,
+      "sha256": "e439be49c973553c206a9e6638269638905d9147a6ab5e8306444fccfaeb145f"
+    },
+    {
+      "path": "tests/test_media_process.py",
+      "size": 4036,
+      "sha256": "15b596af06958ff171b0966b857b9ee3d8a2e6f560e9cb31db0384a1a9513d7a"
+    },
+    {
+      "path": "tests/test_path_cache_safety_cp20.py",
+      "size": 8604,
+      "sha256": "c6bd9cdb6506e15194a00bcd3fed79aaf60d9f5d515d68bb9f0dce40134f7b62"
+    },
+    {
+      "path": "tests/test_pipeline.py",
+      "size": 11081,
+      "sha256": "7dcfe18ac2a01f7225589e3f13aa4bad4ca2172a64b911673a22e6c6264f2edf"
+    },
+    {
+      "path": "tests/test_render_pass_map_cp24.py",
+      "size": 1108,
+      "sha256": "e7ef4d9eb2a1ab21f79e69922a94eb115b0db52b2074a4e9c75f8c22da511d13"
+    },
+    {
+      "path": "tests/test_settings_bgm_platforms.py",
+      "size": 2594,
+      "sha256": "62f34d924ed2699e46183742a9d82b0a6f13415d306224237e46d1efccc1e97b"
+    },
+    {
+      "path": "tests/test_shorts_deduplication.py",
+      "size": 11787,
+      "sha256": "1ded12c513b0a19712b540365ba4cffedc792dc05f6e15247d14401992ac741b"
+    },
+    {
+      "path": "tests/test_shorts_parity.py",
+      "size": 9891,
+      "sha256": "79bb9ff75a7b3c15a3da5326433b53cb97b4a9b188d4a97b46ddf809afcc9dce"
+    },
+    {
+      "path": "tests/test_speech_rate.py",
+      "size": 11569,
+      "sha256": "408b1f63dda74908736f9bba8fa2481c8d736756d9b52fe13ea80c6e5d9aedda"
+    },
+    {
+      "path": "tests/test_speech_settings.py",
+      "size": 3084,
+      "sha256": "fe4a715b4c16e022b330e90f4d0ce1af5028e5760792e6315ff1a457c35e9454"
+    },
+    {
+      "path": "tests/test_upload_readiness.py",
+      "size": 3848,
+      "sha256": "4fb9f275b4569957024f2f7dcf10285cf97adc52930d7ecb1a579db783ae5b86"
+    },
+    {
+      "path": "tests/test_voice_enhance_pass_cp25.py",
+      "size": 7565,
+      "sha256": "a87107b64d75a6c6c93421e620d62c4b4fb2517b8e28e0fcc41b346ac610cee7"
+    },
+    {
+      "path": "tests/test_webui_accessibility_cp23.py",
+      "size": 1368,
+      "sha256": "e3c6584e68e67c2a56ead50e1dfd238adf2a63aeefa5231b4fe831debd6b42cd"
+    },
+    {
+      "path": "tests/verify_api_live.py",
+      "size": 19560,
+      "sha256": "942d993c9ee9d15ae59a4cf0397d48831188cdeed9fa801f29e427e51919c207"
+    },
+    {
+      "path": "tests/verify_api_settings.py",
+      "size": 7973,
+      "sha256": "4f3e296a49fe9c21a3ea2ef29f1a53b28b395b398026001558fbcea678f1ee0d"
+    },
+    {
+      "path": "tests/verify_app_gui.py",
+      "size": 12317,
+      "sha256": "e4f473718063d44dc941d38562ff66dcbd4f39b625958c5ce4c5b6a46511f476"
+    },
+    {
+      "path": "tests/verify_log_deadlock.py",
+      "size": 4562,
+      "sha256": "f44c333b845de18dc2a58234457a8ccdace18e078b173700e19996547a21cfbc"
+    },
+    {
+      "path": "tests/verify_webui_visual_cp23.py",
+      "size": 5585,
+      "sha256": "e6a3b1050ac0cf3158b38b1983a08040d844c48bb50d613097e79a85a08ec707"
+    },
+    {
+      "path": "video_maker/__init__.py",
+      "size": 129,
+      "sha256": "f9c84fac5796923db30a43323b686aea0918fe45d728574ee9463a4c8de49c9b"
+    },
+    {
+      "path": "video_maker/api/__init__.py",
+      "size": 4235,
+      "sha256": "38b99835b33502a289fe24841cdad523e2397ea594f15a20e302a0138b49a687"
+    },
+    {
+      "path": "video_maker/api/bridge.py",
+      "size": 14469,
+      "sha256": "997345388252ae94e9659218cd304ed8dcd02fb4e2e2bf3c6b3c141667bfbdb9"
+    },
+    {
+      "path": "video_maker/api/control.py",
+      "size": 13484,
+      "sha256": "55c074fa0390e7c53d4eb94d9c2ca9d8f7dea1f3f69b5fc321555f455d076747"
+    },
+    {
+      "path": "video_maker/api/openapi.py",
+      "size": 12213,
+      "sha256": "801001357d9c66afdc965226fb384d1cd4f875a713359c0f9ac8bfc5a20820a4"
+    },
+    {
+      "path": "video_maker/api/queue.py",
+      "size": 15407,
+      "sha256": "fca39c0617f4d2378a5a0e0a6f06b120f02589e5490cfccfff57f8537c91d78f"
+    },
+    {
+      "path": "video_maker/api/server.py",
+      "size": 39642,
+      "sha256": "674c941c64ed6cdbc3091c493219a93f6d80d464e4387623892c68c773458e44"
+    },
+    {
+      "path": "video_maker/api/webui.py",
+      "size": 18089,
+      "sha256": "e9a02bf0d34464f54327b67ac1bc38f81caf82e7fc76f1ccf8d263541b341eaf"
+    },
+    {
+      "path": "video_maker/config/__init__.py",
+      "size": 131,
+      "sha256": "4efd825727ce9ded4dd4fc993db7f784e143b783c08f929276045fb56f3158c3"
+    },
+    {
+      "path": "video_maker/config/settings.py",
+      "size": 15340,
+      "sha256": "75f84a0b44a563dbbfba879e7f6b0be5ea62e70ab2f94c570bd81b7f7efadd9b"
+    },
+    {
+      "path": "video_maker/engines/__init__.py",
+      "size": 107,
+      "sha256": "dcbe0b57f7a1147f1b144ad4065c2f2492bb8e6d466cc91dbf3784769d68b0b0"
+    },
+    {
+      "path": "video_maker/engines/aisie_integration.py",
+      "size": 8521,
+      "sha256": "06a07decbb9a680ded47c75a04bb4f2d0fe0356d8a4a53dc94ed6a8a6a8845c0"
+    },
+    {
+      "path": "video_maker/engines/analysis.py",
+      "size": 56187,
+      "sha256": "22bd75d33ab7747086a66b0c09674451c76b4646041f8021451095fbb1e40a6e"
+    },
+    {
+      "path": "video_maker/engines/audio.py",
+      "size": 19520,
+      "sha256": "06e435b595e911fb7f99cd31c37751f3aede51d3c3930f16f006e15a06fa39e3"
+    },
+    {
+      "path": "video_maker/engines/bgm_policy.py",
+      "size": 10341,
+      "sha256": "6212f1b0525eccf2815dfd0cec0ebaadc28786bb57a2794871f4f5ef79627af1"
+    },
+    {
+      "path": "video_maker/engines/bgm_validation.py",
+      "size": 6002,
+      "sha256": "326c6db1f5d0671762b712091a7174d9d0ca0b0e5e42065047a35e4be278725d"
+    },
+    {
+      "path": "video_maker/engines/colors.py",
+      "size": 1572,
+      "sha256": "529374602db48f467b96bba470c4dacacc8a3f745a264317a719c7418597cf11"
+    },
+    {
+      "path": "video_maker/engines/ffmpeg_resilient.py",
+      "size": 17540,
+      "sha256": "4d1b547b0c40847ec1ef0f2dddaab9ebd1606f7e3402cb69230f93f24f1b2451"
+    },
+    {
+      "path": "video_maker/engines/highlight_lexicon.py",
+      "size": 10832,
+      "sha256": "463878b8cd3cd790d153dc9569823291ca1040d1fd7e8135b0341a6ec87bc3a1"
+    },
+    {
+      "path": "video_maker/engines/media_process.py",
+      "size": 3777,
+      "sha256": "1fb51b6d227b710f6400698b569078e6e71b2b399bf617893bc237acd51895ac"
+    },
+    {
+      "path": "video_maker/engines/power.py",
+      "size": 5767,
+      "sha256": "5cb7b861fdb808e31ebf034df855e18937141584806d585115039a97b8bc3dbd"
+    },
+    {
+      "path": "video_maker/engines/short_cover.py",
+      "size": 4753,
+      "sha256": "b834dd48b5bcf3c11cdadf10bd05573c51719c7b7226d70564d9e5e81abd8379"
+    },
+    {
+      "path": "video_maker/engines/speech_rate.py",
+      "size": 30975,
+      "sha256": "45b3eae6e5a56d3bf6e739b620329e4df562769d39cb67566926601e549c2d5a"
+    },
+    {
+      "path": "video_maker/engines/subtitles.py",
+      "size": 83652,
+      "sha256": "e54b0e0088133dbf0259746c903070c027d52d2914ae3981dab8a2153e3f18a9"
+    },
+    {
+      "path": "video_maker/engines/transcription.py",
+      "size": 6139,
+      "sha256": "d6f0d1adee5f442c1e8021303b68a0512193521d57ec65bb89e0564b6bb01aea"
+    },
+    {
+      "path": "video_maker/engines/upload_readiness.py",
+      "size": 3392,
+      "sha256": "5a86a840fbffdcab3972ff9f7c06ac90245955eb5ce5719da17b623944346328"
+    },
+    {
+      "path": "video_maker/engines/video.py",
+      "size": 54685,
+      "sha256": "903f2dc1a16deaae94b40be28be2b9c67f2df4ec52db152ebcb2225e09e1e6c1"
+    },
+    {
+      "path": "video_maker/engines/whisperx_resolve.py",
+      "size": 1780,
+      "sha256": "2ac290f62f1a0802ea59d66838caa1420f593f2ca9e11cd0f423fa9367717dff"
+    },
+    {
+      "path": "video_maker/external/__init__.py",
+      "size": 89,
+      "sha256": "1899a66816c5faf2522112d447f15cb5c2ec076efb679e63f7171d0b223d1417"
+    },
+    {
+      "path": "video_maker/external/aisie/__init__.py",
+      "size": 606,
+      "sha256": "a1e42fc1763688c4070958ed856507f5a4ae86990a5c00d1cb9f8b75368cb1d6"
+    },
+    {
+      "path": "video_maker/external/aisie/classifier.py",
+      "size": 7689,
+      "sha256": "8357967ef42b0e03044c270005763e0e5314e855e70b84f4818f2acd4b1ababf"
+    },
+    {
+      "path": "video_maker/external/aisie/demo_plan.json",
+      "size": 4545,
+      "sha256": "243c6f39ff7d50ffd4e723d57f3d93f7035bd98ab9bb4658032dbaeb71a87303"
+    },
+    {
+      "path": "video_maker/external/aisie/pipeline.py",
+      "size": 11830,
+      "sha256": "351c5e68a21e5311f220a81f537bec7009d91e14f43d2be41e5d01bfb9486aff"
+    },
+    {
+      "path": "video_maker/external/aisie/placement.py",
+      "size": 8441,
+      "sha256": "cdf8e144ae0f815156472e71c9459eadb9a68657480027f0541246401a604b98"
+    },
+    {
+      "path": "video_maker/external/aisie/scoring.py",
+      "size": 13920,
+      "sha256": "b470eea65d04cd606a2a1300c0ad6528670f50109b303b178e520c68039e1d00"
+    },
+    {
+      "path": "video_maker/external/aisie/styles.py",
+      "size": 2432,
+      "sha256": "0063007dd91ff040ff01bc115bc1050278b43847592772901340675496e987e8"
+    },
+    {
+      "path": "video_maker/external/aisie/timing.py",
+      "size": 8878,
+      "sha256": "2144a638fcf09b7aec083016c80479679b5ae4356df37507bb4b480fa98d6099"
+    },
+    {
+      "path": "video_maker/external/aisie/validate.py",
+      "size": 9418,
+      "sha256": "4ea01559be497b83a45aceeaf97e06846c8f1463737faef5a70d3b7dd8d8ae41"
+    },
+    {
+      "path": "video_maker/external/utils.py",
+      "size": 905,
+      "sha256": "012066b6eb722c039866f8d1dc8e3f2c84a5c6135ec7a544f8c97117d0dcd7c7"
+    },
+    {
+      "path": "video_maker/gui/__init__.py",
+      "size": 42,
+      "sha256": "166f857a2ae5fe98dc37045dcf517f47ee1f66c4788364dfbfa6b082b7bb608c"
+    },
+    {
+      "path": "video_maker/gui/app.py",
+      "size": 146103,
+      "sha256": "4f4fc344b144dfabe9f8fa4b08f2ce4df1c71c4d45b4aae92d02e5d5d67f2b02"
+    },
+    {
+      "path": "video_maker/icons/app_icon.png",
+      "size": 401168,
+      "sha256": "8678e9316cf6a71e45af3195c567697aaa4dba793555f06b6f85b6b0be44cb98"
+    },
+    {
+      "path": "video_maker/main.py",
+      "size": 9782,
+      "sha256": "efcb13fe07b24c4a869a92d5d8222a9c4f108e0746321b5ee23422a1003488e8"
+    },
+    {
+      "path": "video_maker/pipeline/__init__.py",
+      "size": 482,
+      "sha256": "43d5027fdc1286687fd1b7e423aa6e76141894dfa524e033625da5f06a0626a3"
+    },
+    {
+      "path": "video_maker/pipeline/branches.py",
+      "size": 18560,
+      "sha256": "daed1adee4b5ed68c4d66cfca267c51bb58a47f57c18bab72391d3ab0d004b60"
+    },
+    {
+      "path": "video_maker/pipeline/checkpoint.py",
+      "size": 14044,
+      "sha256": "7d1d1093a376b7d227e3678f87e0770249cd6a0f618764b8916298aa5a6e47c7"
+    },
+    {
+      "path": "video_maker/pipeline/finalize.py",
+      "size": 37807,
+      "sha256": "affc8c366d9be5365319b930d72c968deb470d723768a0d6604405d3b17627bc"
+    },
+    {
+      "path": "video_maker/pipeline/master.py",
+      "size": 3920,
+      "sha256": "a07688cfc2287b05539993fbb56ed1bf4e01606ce8708de459b15a848e640e58"
+    },
+    {
+      "path": "video_maker/pipeline/parallel_finals.py",
+      "size": 1178,
+      "sha256": "4119c5e785db39c7788f3446cc402b4180d53c57aab68536a7026bdf09432ba1"
+    },
+    {
+      "path": "video_maker/pipeline/shorts.py",
+      "size": 23797,
+      "sha256": "8cb34295b463bbf758eaad65622f63f8ee2027986a5718a01e241453632619f9"
+    },
+    {
+      "path": "video_maker/pipeline/stages.py",
+      "size": 11074,
+      "sha256": "fe80deedc1f3e6d93f8d51c50c1db3e2c2b6a1831b48dca77a8fcff15d44659d"
+    }
+  ]
+}

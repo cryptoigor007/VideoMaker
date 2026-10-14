@@ -1,0 +1,9 @@
+CP33 checkpoint integrity / first-run readiness
+- compileall: PASS
+- pytest (headless): 214 passed, 1 skipped (display-only), 23 subtests passed
+- pytest under Xvfb 1024x768: 215 passed, 23 subtests passed
+- CP33 targeted tests: 8 passed
+- bash syntax: start/setup/doctor/start-headless PASS
+- setup.command --help: PASS
+- start.command --headless on Linux: exits 1 with explicit macOS Apple Silicon requirement (expected platform guard)
+- Native Apple Silicon/macOS installation and MLX model download: NOT executed in this Linux container; requires verification on target Mac.

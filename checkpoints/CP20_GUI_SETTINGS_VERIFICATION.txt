@@ -1,0 +1,89 @@
+[WHISPER] Not found
+==========================================================================
+КАРТА НАСТРОЙКИ → ПЕРЕМЕННАЯ ОКНА (всего 63 полей)
+==========================================================================
+  ok   все переменные карты существуют в окне
+
+==========================================================================
+ПРИМЕНЕНИЕ ЗНАЧЕНИЙ (переменная окна И объект настроек)
+==========================================================================
+  ok   append_playlist_footer       → append_playlist_footer_var = False
+  ok   audio_path                   → audio_var                  = ПРОВЕРКА-123
+  ok   bgm_facebook_enable          → bgm_facebook_enable_var    = True
+  ok   bgm_facebook_folder          → bgm_facebook_folder_var    = ПРОВЕРКА-123
+  ok   bgm_instagram_enable         → bgm_instagram_enable_var   = True
+  ok   bgm_instagram_folder         → bgm_instagram_folder_var   = ПРОВЕРКА-123
+  ok   bgm_other_enable             → bgm_other_enable_var       = True
+  ok   bgm_other_folder             → bgm_other_folder_var       = ПРОВЕРКА-123
+  ok   bgm_rutube_enable            → bgm_rutube_enable_var      = True
+  ok   bgm_rutube_folder            → bgm_rutube_folder_var      = ПРОВЕРКА-123
+  ok   bgm_tiktok_enable            → bgm_tiktok_enable_var      = True
+  ok   bgm_tiktok_folder            → bgm_tiktok_folder_var      = ПРОВЕРКА-123
+  ok   bgm_vk_enable                → bgm_vk_enable_var          = True
+  ok   bgm_vk_folder                → bgm_vk_folder_var          = ПРОВЕРКА-123
+  ok   bgm_youtube_enable           → bgm_youtube_enable_var     = False
+  ok   bgm_youtube_folder           → bgm_youtube_folder_var     = ПРОВЕРКА-123
+  ok   broll_horizontal             → broll_h_var                = ПРОВЕРКА-123
+  ok   broll_vertical               → broll_v_var                = ПРОВЕРКА-123
+  ok   cover_horizontal             → cover_h_var                = ПРОВЕРКА-123
+  ok   cover_vertical               → cover_v_var                = ПРОВЕРКА-123
+  ok   gemini_model                 → model_var                  = ПРОВЕРКА-123
+  ok   h_enable_hooks               → h_hooks                    = False
+  ok   h_enable_intro               → h_intro                    = True
+  ok   h_enable_middle              → h_middle                   = True
+  ok   h_enable_outro               → h_outro                    = True
+  ok   h_enable_strong_words        → h_strong                   = False
+  ok   h_enable_subtitles           → h_subs                     = False
+  ok   intro_gemini                 → intro_gemini_var           = False
+  ok   intro_middle_outro_folder    → imo_folder_var             = ПРОВЕРКА-123
+  ok   keep_temp_files              → keep_temp_var              = True
+  ok   output_folder                → output_var                 = ПРОВЕРКА-123
+  ok   playlist_block_label         → playlist_block_label_var   = ПРОВЕРКА-123
+  ok   playlist_block_url           → playlist_block_url_var     = ПРОВЕРКА-123
+  ok   playlist_season_url          → playlist_season_url_var    = ПРОВЕРКА-123
+  ok   prevent_sleep                → prevent_sleep_var          = False
+  ok   remove_long_pauses           → remove_long_pauses_var     = True
+  ok   required_hashtags            → required_hashtags_var      = ПРОВЕРКА-123
+  ok   s_enable_hooks               → s_hooks                    = False
+  ok   s_enable_intro               → s_intro                    = True
+  ok   s_enable_middle              → s_middle                   = True
+  ok   s_enable_outro               → s_outro                    = True
+  ok   s_enable_strong_words        → s_strong                   = True
+  ok   s_enable_subtitles           → s_subs                     = True
+  ok   shorts_cover_image           → shorts_cover_var           = ПРОВЕРКА-123
+  ok   shorts_desc_max_len          → shorts_desc_max_len_var    = 123
+  ok   shorts_use_template          → shorts_use_template_var    = False
+  ok   shutdown_when_done           → shutdown_when_done_var     = True
+  ok   target_lufs                  → target_lufs_var            = -15.5
+  ok   v_enable_hooks               → v_hooks                    = False
+  ok   v_enable_intro               → v_intro                    = True
+  ok   v_enable_middle              → v_middle                   = True
+  ok   v_enable_outro               → v_outro                    = True
+  ok   v_enable_strong_words        → v_strong                   = False
+  ok   v_enable_subtitles           → v_subs                     = False
+  ok   vertical_background          → bg_var                     = ПРОВЕРКА-123
+  ok   voice_enhance                → voice_enhance_var          = False
+  ok   whisper_compute_type         → whisper_comp_var           = ПРОВЕРКА-123
+  ok   whisper_device               → whisper_dev_var            = ПРОВЕРКА-123
+  ok   whisper_language             → whisper_lang_var           = ПРОВЕРКА-123
+  ok   whisper_model                → whisper_model_var          = ПРОВЕРКА-123
+  ok   whisperx_path                → whisperx_path_var          = ПРОВЕРКА-123
+
+==========================================================================
+ОСОБЫЕ СЛУЧАИ
+==========================================================================
+  ok   неизвестное поле отбито: ['поля_нет']
+  ok   серия в Text-виджете: 'Серия-77'
+  ok   серия в настройках: 'Серия-77'
+  ok   серия очищается
+  ok   секреты замаскированы: gemini_api_key='***'
+  ok   output_folder в переменной окна: '/tmp/вывод-проверка'
+  ok   галочки IMO: h_intro=False s_subs=False
+  ok   упаковка: hashtags='#проверка' max_len='123'
+
+полей Settings: 69 | связаны с окном: 63 | только в настройках: 8
+    add_bgm, bgm_folder, gemini_api_key, gemini_api_keys, prompt_body, prompt_extra, series_name, vstack_top_ratio
+
+==========================================================================
+ИТОГ: успешно 70, провалено 0
+==========================================================================

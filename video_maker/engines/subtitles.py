@@ -124,7 +124,7 @@ def _probe_video_resolution(video_path: str) -> tuple[int, int]:
     import json
     cmd = ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
            "-show_entries", "stream=width,height", "-of", "json", video_path]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
     stream = json.loads(result.stdout)["streams"][0]
     return int(stream["width"]), int(stream["height"])
 
@@ -1389,7 +1389,7 @@ def _probe_video_duration(video_path: str) -> float:
             "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
             "-of", "json", video_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
         return float(json.loads(result.stdout)["format"]["duration"])
     except Exception:
         return 0.0
@@ -1550,7 +1550,7 @@ def _build_hook_events(
             "idx": idx,
         })
 
-    if prepared and cta_t is not None:
+    if prepared and cta_t is not None and not clip:
         last = prepared[-1]
         # overlap или слишком близко к CTA
         if last["end"] > cta_t or (cta_t - last["start"]) < MIN_GAP_BEFORE_CTA:
@@ -1958,7 +1958,7 @@ def burn_subtitles(
                 pass
         # CTA start заранее, чтобы отфильтровать последний хук
         cta_start_guess = max(0.0, float(vid_dur) - CTA_DUR) if vid_dur > 3 else None
-        if clip and (clip.get("cta") or "").strip():
+        if clip:
             try:
                 c_end = float(clip.get("end", 0) or 0)
                 cta_start_guess = max(

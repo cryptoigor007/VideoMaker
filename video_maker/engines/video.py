@@ -433,9 +433,20 @@ def save_video_meta_cache() -> None:
         import json as _json
 
         os.makedirs(os.path.dirname(_VIDEO_META_FILE), exist_ok=True)
-        with open(_VIDEO_META_FILE, "w", encoding="utf-8") as f:
-            _json.dump(_VIDEO_META_CACHE, f, ensure_ascii=False)
-        _VIDEO_META_DIRTY = False
+        tmp_path = f"{_VIDEO_META_FILE}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                _json.dump(_VIDEO_META_CACHE, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, _VIDEO_META_FILE)
+            _VIDEO_META_DIRTY = False
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
     except Exception:
         pass
 
@@ -467,34 +478,112 @@ def probe_video_meta(path: str) -> dict:
 
 
 def _cached_bg_half(background_path: str, target_w: int, half_h: int, log_fn=None) -> str:
-    """Один раз отскейлить фон до 2160x1920 и кэшировать (статика)."""
+    """Один раз отскейлить фон и кэшировать только полностью записанный PNG."""
     _log = log_fn or log.info
     import hashlib
-    st = os.stat(background_path)
+    try:
+        st = os.stat(background_path)
+    except OSError:
+        return background_path
     key = hashlib.sha256(
         f"{os.path.abspath(background_path)}|{st.st_mtime_ns}|{st.st_size}|"
         f"{getattr(st, 'st_ino', 0)}|{getattr(st, 'st_ctime_ns', 0)}|{target_w}x{half_h}".encode()
     ).hexdigest()[:20]
     cache_dir = os.path.join(os.path.expanduser("~"), "video_maker", "cache", "bg")
-    os.makedirs(cache_dir, exist_ok=True)
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError as e:
+        _log(f"[ВИДЕО] bg cache directory unavailable ({e}) — используем исходник")
+        return background_path
     out = os.path.join(cache_dir, f"{key}.png")
-    if os.path.isfile(out) and os.path.getsize(out) > 1000:
-        return out
 
+    def _valid_png(path: str) -> bool:
+        try:
+            from PIL import Image
+            with Image.open(path) as image:
+                if image.format != "PNG" or image.size != (target_w, half_h):
+                    return False
+                image.verify()
+            return True
+        except Exception:
+            return False
+
+    if os.path.isfile(out):
+        if _valid_png(out):
+            return out
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+
+    # Same-directory temporary path ensures os.replace remains atomic. Keep the
+    # .png extension because FFmpeg infers its image muxer from the suffix.
+    temp_out = os.path.join(cache_dir, f".{key}.{os.getpid()}.{uuid.uuid4().hex}.tmp.png")
     ffmpeg = _ffmpeg_bin()
     cmd = [
         ffmpeg, "-y", "-i", background_path,
         "-vf", f"scale={target_w}:{half_h}:force_original_aspect_ratio=increase,"
                f"crop={target_w}:{half_h},setsar=1,format=rgb24",
         "-frames:v", "1",
-        out,
+        temp_out,
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0 or not os.path.isfile(out):
-        _log("[ВИДЕО] bg cache fail — используем исходник")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        _log("[ВИДЕО] bg cache timed out after 120s — используем исходник")
+        try:
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+        except OSError:
+            pass
         return background_path
-    _log(f"[ВИДЕО] bg cache → {out}")
-    return out
+    except OSError as e:
+        _log(f"[ВИДЕО] bg cache could not start ffmpeg ({e}) — используем исходник")
+        try:
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+        except OSError:
+            pass
+        return background_path
+    try:
+        if res.returncode != 0 or not _valid_png(temp_out):
+            _log("[ВИДЕО] bg cache fail/invalid PNG — используем исходник")
+            return background_path
+        os.replace(temp_out, out)
+        _log(f"[ВИДЕО] bg cache → {out}")
+        return out
+    except OSError as e:
+        _log(f"[ВИДЕО] bg cache write fail ({e}) — используем исходник")
+        return background_path
+    finally:
+        try:
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+        except OSError:
+            pass
+
+
+def _publish_work_file(source: str, destination: str, log_fn=None) -> None:
+    """Опубликовать локальный временный файл по целевому пути.
+
+    os.replace не работает через границу файловых систем (внутренний диск →
+    сетевой том, EXDEV «Cross-device link»), поэтому при такой ошибке
+    используется обычный перенос с копированием. Временный файл убирается
+    в любом случае.
+    """
+    _log = log_fn or log.info
+    try:
+        atomic_replace(source, destination)
+    except OSError as exc:
+        _log(f"[ВИДЕО] перенос через границу файловых систем: {exc}")
+        import shutil
+        shutil.move(source, destination)
+    finally:
+        if os.path.exists(source):
+            try:
+                os.remove(source)
+            except OSError:
+                pass
 
 
 def vstack_video_image(
@@ -545,6 +634,11 @@ def vstack_video_image(
         )
 
     dur = probe_duration(video_path)
+    if not dur or float(dur) <= 0.05:
+        raise RuntimeError(
+            f"VSTACK: не удалось определить длительность исходника ({video_path!r}); "
+            "рендер отменён, чтобы не опубликовать пустой вертикальный файл"
+        )
     local_dir = _work_tmp_dir(os.path.dirname(output_path) or ".")
     local_out = os.path.join(local_dir, f"vstack_{os.getpid()}_{uuid.uuid4().hex[:8]}.mp4")
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -568,7 +662,19 @@ def vstack_video_image(
             local_out,
         ]
         _log(f"[ВИДЕО 4K] geometry cmd hw={use_hw} bitrate={bitrate} ass={has_ass}")
-        return subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            return subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=max(600.0, min(6 * 60 * 60, float(dur or 0.0) * 8.0)),
+            )
+        except subprocess.TimeoutExpired:
+            _log("[ВИДЕО 4K] encode timeout — запускаю fallback/повтор")
+            try:
+                if os.path.isfile(local_out):
+                    os.remove(local_out)
+            except OSError:
+                pass
+            return subprocess.CompletedProcess(cmd, 124, "", "FFmpeg timed out")
 
     res = _run(True)
     if res.returncode != 0:
@@ -607,8 +713,9 @@ def vstack_video_image(
         _log(f"[ВИДЕО] geometry ошибка: {err}")
         raise RuntimeError(f"VSTACK geometry failed: {err}")
 
-    import shutil
-    shutil.move(local_out, output_path)
+    if not os.path.isfile(local_out) or not verify_mp4(local_out, log_fn=_log):
+        raise RuntimeError("VSTACK: результат не прошёл проверку; файл не опубликован")
+    _publish_work_file(local_out, output_path, log_fn=_log)
     _log(
         f"[ВИДЕО 4K] geometry{'+ASS' if has_ass else ''} OK за "
         f"{time.time()-t0:.1f}s → {os.path.basename(output_path)}"
@@ -645,7 +752,19 @@ def cut_segment(
             "-avoid_negative_ts", "make_zero",
             output_path,
         ]
-        res = subprocess.run(cmd_copy, capture_output=True, text=True)
+        try:
+            res = subprocess.run(
+                cmd_copy, capture_output=True, text=True,
+                timeout=max(120.0, min(6 * 60 * 60, float(duration or 0.0) * 8.0)),
+            )
+        except subprocess.TimeoutExpired:
+            _log("[ВИДЕО] stream-copy trim timed out — retry VideoToolbox")
+            res = subprocess.CompletedProcess(cmd_copy, 124, "", "FFmpeg timed out")
+            try:
+                if os.path.isfile(output_path):
+                    os.remove(output_path)
+            except OSError:
+                pass
         if res.returncode == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
             _log("[ВИДЕО] Обрезка: stream copy OK")
             return output_path
@@ -1022,25 +1141,27 @@ def add_intro_outro_mid(
             cache_path = os.path.join(
                 cache_dir, f"{label}_{_imo_cache_key(src, label, dur)}.mp4"
             )
-            if (
-                cache_path
-                and os.path.isfile(cache_path)
-                and os.path.getsize(cache_path) > 1000
-            ):
-                # Copy into work_dir so concat stays local / race-safe
-                out = os.path.join(
-                    work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4"
-                )
-                try:
-                    import shutil
-                    shutil.copy2(cache_path, out)
-                    if os.path.isfile(out) and os.path.getsize(out) > 1000:
-                        _log(
-                            f"[IMO_{label.upper()}] cache HIT → {cache_path}"
-                        )
-                        return out
-                except OSError as e:
-                    _log(f"[IMO_{label.upper()}] cache HIT copy fail: {e}")
+            if cache_path and os.path.isfile(cache_path):
+                # Size alone is not proof of a valid MP4: a previous crash may have
+                # left a large but truncated cache entry. Validate once before use.
+                if os.path.getsize(cache_path) > 1000 and verify_mp4(cache_path, log_fn=_log):
+                    out = os.path.join(
+                        work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4"
+                    )
+                    try:
+                        import shutil
+                        shutil.copy2(cache_path, out)
+                        if os.path.isfile(out) and os.path.getsize(out) > 1000:
+                            _log(f"[IMO_{label.upper()}] cache HIT → {cache_path}")
+                            return out
+                    except OSError as e:
+                        _log(f"[IMO_{label.upper()}] cache HIT copy fail: {e}")
+                else:
+                    _log(f"[IMO_{label.upper()}] invalid cache entry; regenerate")
+                    try:
+                        os.remove(cache_path)
+                    except OSError:
+                        pass
 
         out = os.path.join(work_dir, f"imo_{label}_{uuid.uuid4().hex[:8]}.mp4")
         vf = (
@@ -1064,13 +1185,28 @@ def add_intro_outro_mid(
             and cache_path
             and os.path.isfile(out)
             and os.path.getsize(out) > 1000
+            and verify_mp4(out, log_fn=_log)
         ):
+            cache_tmp = os.path.join(
+                os.path.dirname(cache_path),
+                f".{os.path.basename(cache_path)}.{os.getpid()}.{uuid.uuid4().hex}.tmp.mp4",
+            )
             try:
                 import shutil
-                shutil.copy2(out, cache_path)
-                _log(f"[IMO_{label.upper()}] cache STORE → {cache_path}")
+                shutil.copy2(out, cache_tmp)
+                if verify_mp4(cache_tmp, log_fn=_log):
+                    os.replace(cache_tmp, cache_path)
+                    _log(f"[IMO_{label.upper()}] cache STORE → {cache_path}")
+                else:
+                    _log(f"[IMO_{label.upper()}] cache temp verification failed; not stored")
             except OSError as e:
                 _log(f"[IMO_{label.upper()}] cache STORE fail: {e}")
+            finally:
+                try:
+                    if os.path.exists(cache_tmp):
+                        os.remove(cache_tmp)
+                except OSError:
+                    pass
         return out
 
     def _copy_trim(src: str, t0: float, t1: float, label: str) -> str:

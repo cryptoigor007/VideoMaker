@@ -1,0 +1,304 @@
+{
+  "project": "VideoMaker FULL R57 API",
+  "updated": "2026-10-12",
+  "current_checkpoint": "CP34",
+  "complete": false,
+  "roadmap": [
+    {
+      "id": 1,
+      "task": "Assemble full source tree and repair missing speech-rate module",
+      "status": "done",
+      "checkpoint": "CP07"
+    },
+    {
+      "id": 2,
+      "task": "Deduplicate repeated Shorts and remove stale staging copies",
+      "status": "done",
+      "checkpoint": "CP08"
+    },
+    {
+      "id": 3,
+      "task": "Optional long-pause compression with timestamp remapping",
+      "status": "done",
+      "checkpoint": "CP09"
+    },
+    {
+      "id": 4,
+      "task": "GUI/settings/API toggle and unified 120 WPM target default",
+      "status": "done",
+      "checkpoint": "CP10 + CP11"
+    },
+    {
+      "id": 5,
+      "task": "Original roadmap regression pass and package",
+      "status": "done",
+      "checkpoint": "CP11"
+    }
+  ],
+  "deep_audit": {
+    "status": "in_progress",
+    "completed_phases": 18,
+    "total_phases": 20,
+    "percent": 90,
+    "current_phase": "CP34 complete; CP35 transcription settings consistency",
+    "latest_phase_summary": "CP34 gives TkBridge timeout calls explicit cancellation before callback start and makes GUI shutdown wait for pipeline/checkpoint completion. Headless 219 passed + 1 GUI display-only skip + 23 subtests; Xvfb 220 passed + 23 subtests.",
+    "phases": [
+      {
+        "id": 17,
+        "task": "Bound external media subprocess waits and make key audio writes atomic",
+        "checkpoint": "CP17",
+        "status": "done"
+      },
+      {
+        "id": 18,
+        "task": "Clarify LUFS semantics and avoid hidden extra processing passes",
+        "checkpoint": "CP18",
+        "status": "done"
+      },
+      {
+        "id": 19,
+        "task": "Deep API authentication, token-in-URL exposure, and local/LAN boundaries",
+        "checkpoint": "CP19",
+        "status": "done"
+      },
+      {
+        "id": 20,
+        "task": "Path safety, cache/temp cleanup, and output collision/overwrite cases",
+        "checkpoint": "CP20",
+        "status": "done",
+        "summary": "Path/cache/temp/output collision safety; full regression and cache-integrity checks passed."
+      },
+      {
+        "id": 21,
+        "task": "Final full regression, fresh API/GUI/audio smoke, source manifest and recovery archive",
+        "checkpoint": "CP21",
+        "status": "done"
+      },
+      {
+        "id": 22,
+        "task": "Desktop GUI responsiveness, visible actions and scrollable settings",
+        "checkpoint": "CP22",
+        "status": "done"
+      },
+      {
+        "id": 23,
+        "task": "Responsive accessible browser control",
+        "checkpoint": "CP23",
+        "status": "done"
+      },
+      {
+        "id": 24,
+        "task": "Map rendering passes and identify redundant voice enhancement",
+        "checkpoint": "CP24",
+        "status": "done"
+      },
+      {
+        "id": 25,
+        "task": "Single shared lossless voice enhancement before masters",
+        "checkpoint": "CP25",
+        "status": "done"
+      },
+      {
+        "id": 26,
+        "task": "H/V audio parity and avoid legacy post-render calls",
+        "checkpoint": "CP26",
+        "status": "done"
+      },
+      {
+        "id": 27,
+        "task": "BGM repeated source ffprobe metadata cache and pass-budget regression",
+        "checkpoint": "CP27",
+        "status": "done"
+      },
+      {
+        "id": 28,
+        "task": "Final full-source audit/package and restore verification",
+        "checkpoint": "CP28",
+        "status": "done"
+      },
+      {
+        "id": 29,
+        "task": "Deep audit source and reproduce critical API/queue/checkpoint/settings defects",
+        "checkpoint": "CP29",
+        "status": "done"
+      },
+      {
+        "id": 30,
+        "task": "API disabled lifecycle, listener rollback and truthful run acceptance",
+        "checkpoint": "CP30",
+        "status": "done"
+      },
+      {
+        "id": 31,
+        "task": "Output readiness, vertical B-roll preflight and strict JSON boolean/config types",
+        "checkpoint": "CP31",
+        "status": "done"
+      },
+      {
+        "id": 32,
+        "task": "First-run bootstrap, runtime dependency install and system FFmpeg/ffprobe validation",
+        "checkpoint": "CP32",
+        "status": "done"
+      },
+      {
+        "id": 33,
+        "task": "Atomic checkpoint sidecars/main commit and fingerprint-based resume invalidation",
+        "checkpoint": "CP33",
+        "status": "done"
+      },
+      {
+        "id": 34,
+        "task": "Cancel pending TkBridge calls after timeout and gracefully stop GUI/services",
+        "checkpoint": "CP34",
+        "status": "done"
+      }
+    ]
+  },
+  "checks": {
+    "pytest": "161 passed, 23 subtests passed",
+    "compileall": "PASS",
+    "cp20_path_cache_suite": "12 passed",
+    "api_security_suite": "18 passed; redaction, malformed-body rejection, body limit and loopback auth PASS",
+    "settings_gui_mapping": "70 successful, 0 failed; 63 GUI-mapped fields audited",
+    "live_gui_api_panel": "35 successful, 0 failed; panel remains visible on dedicated tab, LAN-toggle and live HTTP checks passed",
+    "synthetic_speech_ffmpeg": "PASS; final WPM 120.0; word-level timestamps preserved",
+    "synthetic_bgm_ffmpeg": "PASS; H.264/AAC; full audio decode PASS",
+    "target_lufs_validation": "PASS; valid range -36..-5; NaN/Infinity/non-numeric/out-of-range rejected",
+    "path_safety": "PASS; dot traversal, platform ids, symlink dirs and cleanup parents tested",
+    "atomic_cache": "PASS; forced replace failure preserves prior metadata cache; temp removed",
+    "final_archive": "PASS after final extraction: ZIP CRC PASS; all source-manifest size/SHA-256 checks match; no duplicate ZIP paths; no local .env; extracted compileall and pytest pass.",
+    "manifest": "checkpoints/CP20_SOURCE_MANIFEST.json; self-excluded; lists all source/documentation/test-log files in this CP20 tree; manifest record count is authoritative.",
+    "pytest_headless": "161 passed, 1 skipped (Tk GUI layout check skipped without display), 23 subtests passed",
+    "pytest_xvfb_1024x768": "164 passed, 23 subtests passed",
+    "gui_layout_cp22": "PASS at normal Xvfb and explicit 1024x768; create/cancel/progress visible; B-roll rows separate; prompt/settings save visible",
+    "cp22_processing_regression": "No pipeline/engine source files changed in CP22; no added transcription, analysis, normalization or encode pass.",
+    "webui_static_accessibility": "2 passed; preserved existing data-act operations and embed status node",
+    "webui_browser_smoke": "PASS using Chromium; desktop 1365x900 and mobile 390x844; no horizontal overflow; action hit targets >=44x44",
+    "api_security_plus_webui": "20 passed",
+    "cp23_render_performance": "Pipeline and engine code unchanged vs CP22; no new media-processing passes.",
+    "cp24_baseline": "compileall PASS; 163 passed, 1 skipped, 23 subtests passed; tests/test_render_pass_map_cp24.py added for sequential H/V, BGM video stream copy and Shorts trim strategy.",
+    "pytest_cp25": "174 passed, 1 skipped (display-only GUI test on headless run), 23 subtests passed",
+    "voice_enhance_cp25": "PASS; 8-second synthetic micro-benchmark; 6→1 FFmpeg, 4→1 ffprobe, 0.000s duration drift; not a whole-video benchmark",
+    "pytest_cp26": "178 passed, 1 skipped, 23 subtests passed",
+    "voice_enhance_parity_cp26": "PASS; H/V share same lossless narration; final branches do not re-enhance; BGM-only legacy helper trigger removed",
+    "pytest_cp27": "180 passed, 1 skipped (display-only GUI test in headless run), 23 subtests passed",
+    "bgm_source_probe_cache_cp27": "PASS; unchanged source probe reused across repeated outputs; each output independently probed; cache invalidation verified",
+    "pytest_cp28": "183 passed, 1 skipped (display-only GUI test in headless run), 23 subtests passed",
+    "static_subprocess_audit_cp28": "PASS; 32 run-style calls, 0 without explicit timeout, 0 shell=True, 0 disabled legacy BGM blocks",
+    "final_package_cp28": "PASS; complete full-source ZIP generated, extracted, manifest/hash-checked, compileall and regression rerun",
+    "cp33_checkpoint_integrity": "PASS; 8 targeted tests; atomic main and sidecar writes; prior committed checkpoint preserved on forced write failures; source/settings fingerprints invalidate affected stages.",
+    "cp33_pytest_headless": "214 passed, 1 skipped (display-only GUI test), 23 subtests passed",
+    "cp33_pytest_xvfb": "215 passed, 23 subtests passed at 1024x768",
+    "cp33_bootstrap": "PASS; shell syntax, --help; system ffmpeg+ffprobe preflight contract; unsupported Linux launch safely rejected.",
+    "cp33_native_mac": "NOT RUN; execution environment is Linux; native MLX install/model download must be verified on Apple Silicon macOS.",
+    "cp34_targeted": "5 passed: timeout callback cancellation, waiter wakeup, result/exception propagation, deferred close, no force exit",
+    "cp34_pytest_headless": "219 passed, 1 skipped (display-only GUI test), 23 subtests passed",
+    "cp34_pytest_xvfb": "220 passed, 23 subtests passed at 1024x768",
+    "cp34_graceful_shutdown": "PASS; no os._exit in App._finish_close; queue/API/bridge stopped before root destruction"
+  },
+  "resume": "CP34 complete. Resume from CP35: align Whisper model/device/compute controls with actual MLX backend; do not show ignored settings.",
+  "ui_visual_audit": {
+    "status": "done",
+    "completed_checkpoints": 5,
+    "required_checkpoints": 5,
+    "percent": 100,
+    "current_phase": "complete",
+    "completed": [
+      {
+        "checkpoint": "CP22",
+        "task": "Desktop GUI adaptive geometry, scrollable settings, visible action/control panels, settings modal visibility",
+        "status": "done",
+        "checks": [
+          "Full pytest under Xvfb 1024x768: 162 passed + 23 subtests",
+          "GUI layout PASS",
+          "live GUI/API panel 35/35",
+          "settings mapping 70/70",
+          "speech and BGM smoke PASS"
+        ]
+      },
+      {
+        "checkpoint": "CP23",
+        "task": "Browser panel responsive/accessibility visual audit",
+        "status": "done",
+        "checks": [
+          "Full pytest under Xvfb 1024x768: 164 passed + 23 subtests",
+          "Chromium 1365x900 and 390x844 PASS",
+          "No horizontal overflow",
+          "Existing start/cancel/queue functions preserved",
+          "API security + webui static 20/20"
+        ]
+      },
+      {
+        "checkpoint": "CP25",
+        "task": "Single shared lossless voice enhancement before H/V master construction",
+        "status": "done",
+        "checks": [
+          "174 passed, 1 skipped, 23 subtests passed",
+          "Synthetic 8s benchmark: 6→1 FFmpeg calls and 4→1 ffprobe calls for voice-enhancement subtask; 0.000s duration drift",
+          "GUI layout 1024x768 PASS; GUI settings 70/70; live GUI/API panel 35/35",
+          "Live loopback API 72/72; Chromium responsive PASS; speech and BGM smoke PASS"
+        ]
+      },
+      {
+        "checkpoint": "CP26",
+        "task": "Instrumented H/V shared narration parity and redundant audio-post guard",
+        "status": "done",
+        "checks": [
+          "178 passed, 1 skipped, 23 subtests passed",
+          "Targeted voice-sharing tests 12/12",
+          "Synthetic voice enhancement 6→1 FFmpeg and 4→1 ffprobe calls, 0.000s duration drift",
+          "Speech/BGM FFmpeg smoke and Chromium responsive smoke PASS"
+        ]
+      },
+      {
+        "checkpoint": "CP27",
+        "task": "BGM source metadata cache and render pass budget audit",
+        "status": "done",
+        "checks": [
+          "180 passed, 1 skipped, 23 subtests passed",
+          "BGM source metadata re-probed once per unchanged file; output probe remains per output",
+          "GUI settings 70/70; GUI/API panel 35/35; responsive Chromium PASS",
+          "Synthetic speech/BGM FFmpeg smoke PASS"
+        ]
+      },
+      {
+        "checkpoint": "CP28",
+        "task": "Final static safety audit, dead BGM path cleanup and full recovery verification",
+        "status": "done",
+        "checks": [
+          "183 passed, 1 headless display-only skip, 23 subtests passed",
+          "32 subprocess run-style calls have explicit timeout; zero shell=True; zero disabled legacy BGM blocks",
+          "Xvfb GUI layout, GUI settings 70/70, control panel 35/35, Chromium responsive PASS",
+          "Speech/BGM smoke PASS; source manifest and archive verified after extraction"
+        ]
+      }
+    ],
+    "remaining": []
+  },
+  "version": "r57-api.17",
+  "last_completed": "CP31 strict readiness/type validation; CP32 first-run bootstrap and self-check launcher",
+  "completed_cp29_findings": [
+    "disabled API listener",
+    "false API run-start result",
+    "queue false run-start result",
+    "API rebind rollback",
+    "malformed API config root"
+  ],
+  "remaining_high_priority": [
+    "checkpoint artifact-save failure handling and stage completion semantics",
+    "checkpoint input/settings fingerprint invalidation",
+    "TkBridge timeout cancellation",
+    "safe GUI shutdown checkpoint",
+    "Whisper model/device/compute settings parity",
+    "output disk-space/write preflight",
+    "dead-code and dependency cleanup",
+    "native Apple Silicon macOS install/run verification"
+  ],
+  "last_test_result": {
+    "passed": 206,
+    "skipped": 1,
+    "subtests_passed": 23,
+    "installer_contract_tests": "passed",
+    "shell_syntax": "passed"
+  }
+}

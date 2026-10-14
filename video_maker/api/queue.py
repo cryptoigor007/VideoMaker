@@ -54,6 +54,8 @@ class SeriesQueue:
         self._items: list[dict] = []
         self._paused = False
         self._cancel_pending = False
+        self._cancel_target: str | None = None
+        self._last_tick_warning = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         #: вызывается при завершении серии (вебхук) — задаёт сервер
@@ -76,12 +78,22 @@ class SeriesQueue:
             try:
                 self._tick()
             except Exception as exc:  # noqa: BLE001 — очередь не должна умирать
-                log.warning("[ОЧЕРЕДЬ] сбой такта: %s", exc)
+                # Пока открыт нативный диалог, Tk не обслуживает таймеры — тот же
+                # сбой повторяется каждые ~12 с. Пишем предупреждение не чаще
+                # раза в минуту, остальное — в DEBUG.
+                now = time.monotonic()
+                if now - self._last_tick_warning >= 60.0:
+                    self._last_tick_warning = now
+                    log.warning("[ОЧЕРЕДЬ] сбой такта: %s", exc)
+                else:
+                    log.debug("[ОЧЕРЕДЬ] сбой такта (повтор, подавлено): %s", exc)
 
     # ── операции ─────────────────────────────────────────────────────────
     def add(self, audio: str, output: str = "", series: str = "",
             note: str = "", overrides: dict | None = None,
             allow_duplicate: bool = False) -> dict:
+        if overrides is not None and not isinstance(overrides, dict):
+            raise ValueError("overrides должен быть JSON-объектом")
         audio = (audio or "").strip()
         if not audio:
             raise ValueError("не указан аудиофайл (audio)")
@@ -181,7 +193,11 @@ class SeriesQueue:
             self._save()
 
     def note_cancel(self) -> None:
-        self._cancel_pending = True
+        """Отмена адресуется текущей серии очереди, чтобы не помечать чужие сбои."""
+        with self._lock:
+            current = self._current()
+            self._cancel_pending = True
+            self._cancel_target = current["id"] if current else None
 
     # ── внутреннее ───────────────────────────────────────────────────────
     def _public(self, item: dict | None) -> dict | None:
@@ -244,6 +260,8 @@ class SeriesQueue:
                           os.path.basename(item["audio"]), "; ".join(errors))
                 return
             start_pipeline(self.app)
+            if not bool(getattr(self.app, "running", False)):
+                item["_precheck"] = ["приложение не запустило обработку; проверьте аудио и B-roll"]
 
         try:
             self.bridge.call(_go, timeout=90)
@@ -272,11 +290,17 @@ class SeriesQueue:
         series = item.get("series") or snap.get("series") or ""
         result = find_results(output, series, since)
 
+        # Отмена одноразовая и адресная: потребляем её на первом же завершении,
+        # но учитываем только если она была про этот выпуск (или про запуск из GUI).
+        pending = bool(self._cancel_pending)
+        target = self._cancel_target
+        self._cancel_pending = False
+        self._cancel_target = None
+
         if result.get("ready") and result.get("total_bytes"):
             self._mark(item, DONE, "", result=result)
             return
-        if self._cancel_pending:
-            self._cancel_pending = False
+        if (pending and target == item["id"]) or snap.get("cancel_requested"):
             self._mark(item, CANCELED, "отменено пользователем")
             return
         reason = snap.get("activity") or "пайплайн завершился без выдачи"
@@ -322,22 +346,38 @@ class SeriesQueue:
         try:
             with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
-            items = data.get("items") if isinstance(data, dict) else data
-            self._paused = bool(data.get("paused", False)) if isinstance(data, dict) else False
-            for it in items or []:
-                if not isinstance(it, dict) or not (it.get("audio") or "").strip():
+            if isinstance(data, dict):
+                items = data.get("items", [])
+                paused = data.get("paused", False)
+                self._paused = paused if type(paused) is bool else False
+                if type(paused) is not bool:
+                    log.warning("[ОЧЕРЕДЬ] paused должен быть boolean; очередь восстановлена без паузы")
+            elif isinstance(data, list):
+                # Legacy format: queue file used to be a plain list of items.
+                items = data
+                self._paused = False
+            else:
+                log.warning("[ОЧЕРЕДЬ] корень файла должен быть объектом или legacy-списком; файл проигнорирован")
+                return
+            if not isinstance(items, list):
+                log.warning("[ОЧЕРЕДЬ] поле items должно быть списком; файл проигнорирован")
+                self._paused = False
+                return
+            for source in items:
+                if not isinstance(source, dict):
                     continue
+                audio = source.get("audio")
+                if not isinstance(audio, str) or not audio.strip():
+                    continue
+                it = dict(source)
+                if not isinstance(it.get("overrides"), dict):
+                    it["overrides"] = {}
                 it.setdefault("id", uuid.uuid4().hex[:12])
-                it.setdefault("output", "")
-                it.setdefault("series", "")
-                it.setdefault("note", "")
-                it.setdefault("overrides", {})
-                it.setdefault("attempts", 0)
-                it.setdefault("added_at", _now())
+                for key, default in (("output", ""), ("series", ""), ("note", ""),
+                                     ("attempts", 0), ("added_at", _now()),
+                                     ("started_at", 0.0), ("finished_at", 0.0), ("error", "")):
+                    it.setdefault(key, default)
                 it.setdefault("added_human", _iso(it["added_at"]))
-                it.setdefault("started_at", 0.0)
-                it.setdefault("finished_at", 0.0)
-                it.setdefault("error", "")
                 if it.get("status") not in (PENDING, RUNNING, DONE, FAILED, CANCELED):
                     it["status"] = PENDING
                 if it.get("status") == RUNNING:
@@ -345,5 +385,6 @@ class SeriesQueue:
                     it["error"] = "прервано перезапуском приложения"
                 self._items.append(it)
             log.info("[ОЧЕРЕДЬ] восстановлено %d записей", len(self._items))
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, TypeError) as exc:
             log.warning("[ОЧЕРЕДЬ] не удалось прочитать %s: %s", self.path, exc)
+

@@ -20,57 +20,88 @@ _HTML = r"""<!DOCTYPE html>
 <title>VideoMaker — пульт</title>
 <style>
   :root{
-    --bg:#0f1115; --card:#181b22; --card2:#1f232c; --line:#2a2f3a;
-    --fg:#e8eaf0; --dim:#8b93a7; --acc:#4c8dff; --ok:#2ecc71; --warn:#f0b429; --err:#ff5c5c;
+    color-scheme:dark;
+    --bg:#0c1018; --card:#151c29; --card2:#222d40; --line:#3a4860;
+    --fg:#f1f5fc; --dim:#b0bdd1; --acc:#245dc7; --accHover:#2f70e6;
+    --ok:#24a968; --warn:#f3c24f; --err:#ff7777; --focus:#9ac4ff;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-       padding:14px;max-width:760px;margin:0 auto;-webkit-text-size-adjust:100%}
-  h1{font-size:17px;margin:0 0 12px;display:flex;align-items:center;gap:8px;font-weight:600}
-  .badge{font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;background:var(--card2);color:var(--dim)}
-  .badge.run{background:rgba(76,141,255,.18);color:#9cc0ff}
-  .badge.err{background:rgba(255,92,92,.18);color:#ffb3b3}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
-  .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  html{min-width:0;scroll-behavior:smooth}
+  body{margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:clamp(10px,2.2vw,24px);max-width:1100px;min-width:0;-webkit-text-size-adjust:100%}
+  h1{font-size:19px;margin:0 0 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-weight:700;letter-spacing:-.2px}
+  .badge{font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--card2);color:#e0e8f5;border:1px solid #48566d}
+  .badge.run{background:#17345d;color:#b9d6ff;border-color:#3769a8}
+  .badge.err{background:#542b34;color:#ffd0d0;border-color:#97505b}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:clamp(12px,1.7vw,18px);margin:0 0 14px;min-width:0;box-shadow:0 8px 22px rgba(0,0,0,.14)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;min-width:0}
   .muted{color:var(--dim);font-size:13px}
-  .big{font-size:30px;font-weight:700;letter-spacing:-.5px}
-  .bar{height:10px;background:var(--card2);border-radius:99px;overflow:hidden;margin:10px 0 6px}
-  .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),#8f6cff);transition:width .4s}
-  .stage{font-weight:600;margin-top:6px}
-  .act{font-size:12.5px;color:var(--dim);margin-top:6px;word-break:break-word;
-       font-family:ui-monospace,SFMono-Regular,Menlo,monospace;max-height:52px;overflow:hidden}
-  button{font:inherit;font-weight:600;border:0;border-radius:11px;padding:12px 16px;color:#fff;background:var(--acc);
-         cursor:pointer;flex:1}
-  button:active{transform:scale(.98)}
-  button.ghost{background:var(--card2);color:var(--fg)}
-  button.danger{background:#3a2226;color:#ffb3b3}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  .btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-  .btns button{min-width:120px}
-  input{font:inherit;background:var(--card2);border:1px solid var(--line);color:var(--fg);
-        border-radius:10px;padding:11px 12px;width:100%;margin-bottom:8px}
-  ul{list-style:none;margin:0;padding:0}
-  li{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .big{font-size:clamp(27px,3vw,34px);font-weight:750;letter-spacing:-.7px;font-variant-numeric:tabular-nums}
+  .bar{height:11px;background:#29364b;border:1px solid #41516a;border-radius:99px;overflow:hidden;margin:10px 0 8px}
+  .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4e92ff,#a28aff);transition:width .25s ease}
+  .stage{font-weight:700;margin-top:8px;overflow-wrap:anywhere}
+  .act{font-size:12.5px;color:#c0cce0;margin-top:7px;word-break:break-word;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace;max-height:76px;overflow:auto}
+  button{font:inherit;font-weight:650;border:1px solid transparent;border-radius:11px;padding:11px 16px;min-height:44px;color:#fff;background:var(--acc);
+         cursor:pointer;flex:1;touch-action:manipulation;transition:background-color .12s ease,border-color .12s ease,transform .08s ease}
+  button:hover:not(:disabled){background:var(--accHover)}
+  button:active:not(:disabled){transform:translateY(1px)}
+  button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+  button.ghost{background:#2a3548;color:#f1f5fc;border-color:#48566d}
+  button.ghost:hover:not(:disabled){background:#35445d;border-color:#7285a4}
+  button.danger{background:#512832;color:#ffe2e4;border-color:#8d4652}
+  button.danger:hover:not(:disabled){background:#6a2f3c}
+  button:disabled{background:#252d3b;color:#b0bdd1;border-color:#3a4659;opacity:1;cursor:not-allowed;filter:saturate(.55)}
+  .btns{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap;min-width:0}
+  .btns button{min-width:132px}
+  input{font:inherit;background:#111a28;border:1px solid #50617b;color:var(--fg);
+        border-radius:10px;padding:11px 12px;min-height:44px;width:100%;min-width:0;margin-bottom:9px}
+  input::placeholder{color:#a8b6cc;opacity:1}
+  ul{list-style:none;margin:12px 0 0;padding:0;min-width:0}
+  li{display:flex;gap:9px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px;min-width:0}
   li:last-child{border-bottom:0}
-  .dot{width:9px;height:9px;border-radius:99px;background:var(--dim);flex:0 0 auto}
-  .dot.pending{background:var(--warn)} .dot.running{background:var(--acc)}
+  .dot{width:9px;height:9px;border-radius:99px;background:var(--dim);flex:0 0 auto;outline:1px solid #0f1622;outline-offset:1px}
+  .dot.pending{background:var(--warn)} .dot.running{background:#66a3ff}
   .dot.done{background:var(--ok)} .dot.failed{background:var(--err)} .dot.canceled{background:var(--dim)}
   .grow{flex:1;min-width:0}
-  .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .mini{font-size:12px;color:var(--dim)}
-  .x{background:none;border:0;color:var(--dim);font-size:17px;padding:4px 8px;flex:0 0 auto;cursor:pointer}
-  pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0;
-      font-size:11.5px;line-height:1.5;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-  details summary{cursor:pointer;color:var(--dim);font-size:13px;outline:none}
+  .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+  .mini{font-size:12px;color:#bdc9dc;overflow-wrap:anywhere}
+  .x{background:#273246;border:1px solid #48566d;color:#e8effa;font-size:17px;line-height:1;padding:0;width:44px;height:44px;min-width:44px;min-height:44px;flex:0 0 44px;cursor:pointer;border-radius:10px}
+  .x:hover:not(:disabled){background:#3a4963;border-color:#8193af}
+  pre{background:#090e16;border:1px solid #3b4a62;border-radius:10px;padding:12px;margin:8px 0 0;
+      font-size:12px;line-height:1.55;max-height:clamp(200px,38vh,360px);overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+  details summary{cursor:pointer;color:#cfdaeb;font-size:14px;font-weight:650;min-height:34px;display:flex;align-items:center;outline:none}
+  .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   .hide{display:none}
+  @media(min-width:920px){
+    body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:16px;align-content:start}
+    h1{grid-column:1/-1}
+    #statusCard{grid-column:1;grid-row:2}
+    body>.card:nth-of-type(2){grid-column:2;grid-row:2}
+    body>.card:nth-of-type(3){grid-column:1/-1;grid-row:3}
+  }
+  @media(max-width:480px){
+    h1{font-size:18px;gap:8px}
+    .card{border-radius:13px}
+    .row{align-items:flex-start}
+    .big{font-size:28px}
+    .btns{gap:7px}
+    .btns button{min-width:0;flex:1 1 132px;padding:11px 10px}
+    .btns[style*="width:100%"] button{flex-basis:100%}
+    li{gap:7px}
+    .mini{font-size:11.5px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
+  }
 </style>
 </head>
 <body>
-<h1>VideoMaker <span id="state" class="badge">…</span></h1>
+<h1 id="pageTitle">VideoMaker <span id="state" class="badge" role="status" aria-live="polite" aria-atomic="true">…</span></h1>
 
 <div class="card" id="statusCard">
   <div class="row"><span class="muted" id="series">—</span><span class="big" id="pct">0%</span></div>
-  <div class="bar"><i id="bar"></i></div>
+  <div class="bar" id="progressBar" role="progressbar" aria-label="Прогресс создания видео" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="bar"></i></div>
   <div class="stage" id="stage">ожидание</div>
   <div class="muted" id="times">—</div>
   <div class="act" id="activity"></div>
@@ -84,25 +115,37 @@ _HTML = r"""<!DOCTYPE html>
   <div class="row"><b>Очередь</b><span class="muted" id="queueInfo">—</span></div>
   <div class="btns" style="margin-top:10px">
     <button data-act="pause" class="ghost" id="btnPause">Пауза</button>
-    <button data-act="clear" class="ghost">Убрать завершённые</button>
+    <button data-act="clear" class="ghost" aria-label="Убрать завершённые задания из очереди">Убрать завершённые</button>
   </div>
   <div style="margin-top:12px">
-    <input id="qAudio" placeholder="Аудио: файл или папка">
-    <input id="qOutput" placeholder="Папка вывода (пусто = как в настройках)">
-    <input id="qSeries" placeholder="Название серии (необязательно)">
-    <button data-act="add" class="ghost" style="width:100%">Добавить в очередь</button>
+    <label class="sr-only" for="qAudio">Аудио: файл или папка</label>
+    <input id="qAudio" aria-label="Аудио: файл или папка" placeholder="Аудио: файл или папка" autocomplete="off">
+    <label class="sr-only" for="qOutput">Папка вывода</label>
+    <input id="qOutput" aria-label="Папка вывода" placeholder="Папка вывода (пусто = как в настройках)" autocomplete="off">
+    <label class="sr-only" for="qSeries">Название серии</label>
+    <input id="qSeries" aria-label="Название серии (необязательно)" placeholder="Название серии (необязательно)" autocomplete="off">
+    <button data-act="add" class="ghost" style="width:100%" aria-label="Добавить серию в очередь обработки">Добавить в очередь</button>
   </div>
-  <ul id="queue"></ul>
+  <ul id="queue" aria-label="Очередь обработки" role="list"></ul>
 </div>
 
 <div class="card">
-  <details open><summary>Лог</summary><pre id="log">…</pre></details>
+  <details open><summary>Журнал обработки</summary><pre id="log" role="log" aria-label="Журнал обработки" aria-live="off">…</pre></details>
 </div>
 
 <script>
 (function(){
   "use strict";
   var KEY = new URLSearchParams(location.search).get("key") || "";
+  // The legacy launcher bootstraps the page with ?key=TOKEN. Remove it from
+  // browser history/address immediately; subsequent API calls use a header.
+  if (KEY && window.history && window.history.replaceState) {
+    try {
+      var cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("key");
+      window.history.replaceState({}, document.title, cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+    } catch(e) {}
+  }
   var $ = function(id){ return document.getElementById(id); };
   var busy = false;
 
@@ -115,8 +158,8 @@ _HTML = r"""<!DOCTYPE html>
       opts.signal = ctrl.signal;
       setTimeout(function(){ try { ctrl.abort(); } catch(e){} }, ms);
     }
-    var sep = path.indexOf("?") >= 0 ? "&" : "?";
-    var url = path + sep + "key=" + encodeURIComponent(KEY);
+    // Keep credentials out of request URLs, browser history and access logs.
+    var url = path;
     opts.headers = Object.assign({"X-Api-Key": KEY}, opts.headers || {});
     if (opts.body && typeof opts.body !== "string") {
       opts.headers["Content-Type"] = "application/json";
@@ -145,10 +188,13 @@ _HTML = r"""<!DOCTYPE html>
 
   function renderStatus(st){
     var running = !!st.running;
-    $("state").textContent = running ? "работает" : "свободен";
+    var stateLabel = running ? "работает" : "свободен";
+    if ($("state").textContent !== stateLabel) $("state").textContent = stateLabel;
     $("state").className = "badge" + (running ? " run" : "");
-    $("pct").textContent = (st.progress||0).toFixed(0) + "%";
-    $("bar").style.width = Math.max(0, Math.min(100, st.progress||0)) + "%";
+    var pct = Math.max(0, Math.min(100, Number(st.progress)||0));
+    $("pct").textContent = pct.toFixed(0) + "%";
+    $("bar").style.width = pct + "%";
+    $("progressBar").setAttribute("aria-valuenow", String(Math.round(pct)));
     $("series").textContent = st.series || "—";
     var s = st.stage || {};
     $("stage").textContent = s.name ? (s.name + (s.hint ? " — " + s.hint : "")) : "ожидание";
@@ -187,13 +233,13 @@ _HTML = r"""<!DOCTYPE html>
       if (it.status === "failed" || it.status === "canceled") {
         var rb = document.createElement("button");
         rb.className = "x"; rb.textContent = "↻"; rb.title = "повторить";
-        rb.setAttribute("data-act", "retry"); rb.setAttribute("data-id", it.id);
+        rb.setAttribute("data-act", "retry"); rb.setAttribute("data-id", it.id); rb.setAttribute("aria-label", "Повторить серию " + (it.series || it.id));
         li.appendChild(rb);
       }
       if (it.status !== "running") {
         var xb = document.createElement("button");
         xb.className = "x"; xb.textContent = "×"; xb.title = "удалить";
-        xb.setAttribute("data-act", "remove"); xb.setAttribute("data-id", it.id);
+        xb.setAttribute("data-act", "remove"); xb.setAttribute("data-id", it.id); xb.setAttribute("aria-label", "Удалить серию " + (it.series || it.id));
         li.appendChild(xb);
       }
       ul.appendChild(li);
@@ -276,5 +322,8 @@ def render(embed: bool = False) -> str:
     if not embed:
         return _HTML
     return (_HTML
-            .replace("<h1>VideoMaker <span id=\"state\" class=\"badge\">…</span></h1>", "")
-            .replace('padding:14px;max-width:760px', 'padding:8px;max-width:100%'))
+            # Keep the state node in the DOM: JavaScript still updates it in
+            # embedded mode, while the visible page heading is hidden.
+            .replace('<h1 id="pageTitle">', '<h1 id="pageTitle" class="hide">')
+            .replace('padding:clamp(10px,2.2vw,24px);max-width:1100px;min-width:0;',
+                     'padding:8px;max-width:100%;min-width:0;'))

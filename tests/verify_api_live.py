@@ -131,9 +131,40 @@ code, lg2, _ = call("GET", f"/api/log?since={lg.get('seq', 0)}", key=TOKEN)
 check("GET /api/log?since= (новых нет)", code == 200 and lg2.get("entries") == [], f"код {code}")
 code, s2, _ = call("GET", "/api/settings", key=TOKEN)
 check("GET /api/settings", code == 200 and isinstance(s2.get("settings"), dict), f"код {code}")
-secret = json.dumps(s2.get("settings") or {}, ensure_ascii=False)
-check("settings: ключи Gemini замаскированы",
-      "***" in secret or "gemini_api_key" not in secret, secret[:60])
+settings_payload = s2.get("settings") or {}
+check("settings: remove_long_pauses присутствует как bool",
+      isinstance(settings_payload.get("remove_long_pauses"), bool),
+      repr(settings_payload.get("remove_long_pauses")))
+settings_schema = (((spec.get("paths") or {}).get("/api/settings") or {}).get("post") or {})
+settings_schema = (((settings_schema.get("requestBody") or {}).get("content") or {})
+                   .get("application/json") or {}).get("schema") or {}
+check("OpenAPI описывает remove_long_pauses как boolean",
+      (((settings_schema.get("properties") or {}).get("remove_long_pauses") or {}).get("type") == "boolean"),
+      repr((settings_schema.get("properties") or {}).get("remove_long_pauses")))
+pause_before = settings_payload.get("remove_long_pauses", False)
+code, changed, _ = call("POST", "/api/settings", key=TOKEN,
+                        body={"remove_long_pauses": not pause_before})
+check("POST /api/settings принимает переключатель пауз",
+      code == 200 and "remove_long_pauses" in (changed.get("applied") or [])
+      and (changed.get("settings") or {}).get("remove_long_pauses") is (not pause_before),
+      f"код {code}; значение={(changed.get('settings') or {}).get('remove_long_pauses')!r}")
+code, persisted, _ = call("GET", "/api/settings", key=TOKEN)
+check("настройка пауз читается обратно через API",
+      code == 200 and (persisted.get("settings") or {}).get("remove_long_pauses") is (not pause_before),
+      f"код {code}")
+code, restored, _ = call("POST", "/api/settings", key=TOKEN,
+                        body={"remove_long_pauses": pause_before})
+check("тест возвращает исходное значение переключателя",
+      code == 200 and (restored.get("settings") or {}).get("remove_long_pauses") is pause_before,
+      f"код {code}")
+# Пустые ключи допустимы в тестовом/новом окружении. Непустые значения API
+# обязан заменять на "***"; пустая строка сама по себе не является утечкой.
+masked_gemini_fields = all(
+    settings_payload.get(name, "") in ("", "***")
+    for name in ("gemini_api_key", "gemini_api_keys")
+)
+check("settings: ключи Gemini замаскированы", masked_gemini_fields,
+      repr({k: settings_payload.get(k) for k in ("gemini_api_key", "gemini_api_keys")}))
 code, cfg, _ = call("GET", "/api/config", key=TOKEN)
 check("GET /api/config — адреса и токен", code == 200 and cfg.get("token") == TOKEN, f"код {code}")
 check("config: сеть выключена по умолчанию", (cfg.get("api") or {}).get("lan") is False)

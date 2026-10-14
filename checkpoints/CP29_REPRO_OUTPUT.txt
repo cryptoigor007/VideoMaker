@@ -1,0 +1,18 @@
+COMMAND: python checkpoints/CP29_REPRODUCTIONS.py
+EXIT CODE: 0
+
+STDOUT:
+[api_disabled_still_listens] {"enabled_conf": false, "health_reports_enabled": false, "health_status": 200, "listener_alive": true, "start_returned_url": true}
+[metadata_only_is_ready] {"metadata_exists": true, "ready": true, "total_bytes": 13, "video_files": []}
+[run_claims_started_without_running] {"http_code": 200, "response_started": true, "status_running": false}
+[string_false_coerced] {"applied": ["remove_long_pauses"], "gui_var_value": "false", "settings_value": true, "unknown": []}
+[bridge_late_callback] {"caller_received_timeout": true, "side_effects_after_pump": ["late side effect"], "side_effects_before_pump": []}
+[failed_checkpoint_artifact_still_completed] {"completed_stages": ["AudioStage", "TranscribeStage", "GeminiStage"], "next_stage": "MasterBuilder", "restored_transcription": {}, "transcription_file": ""}
+[checkpoint_ignores_pause_toggle] {"completed_stages": ["AudioStage", "TranscribeStage", "GeminiStage"], "current_remove_long_pauses": true, "saved_pause_setting": null}
+[malformed_json_roots] {"api_config": "TypeError: 'int' object is not iterable", "queue_json": "TypeError: 'int' object is not iterable"}
+[empty_vertical_broll_passes_settings_validate] {"errors": [], "horizontal_collect_video_count": 1, "horizontal_sample_real_mp4": true, "vertical_collect_video_count": 0, "vertical_processing_requested": true}
+[rebind_failure_loses_old_listener] {"config_http_code": 500, "configured_port_after_failure": 38571, "initial_listener_started": true, "old_port_alive_after_failure": false, "requested_busy_port": 38571, "returned_error": "не удалось перезапустить пульт (порт занят?)"}
+CP29 repro harness finished; observed behavior is documented in CP29_DEEP_AUDIT.md
+
+STDERR:
+[API] порт 38571 занят или недоступен: [Errno 98] Address already in use

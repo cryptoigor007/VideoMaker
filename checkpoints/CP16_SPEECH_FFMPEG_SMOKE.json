@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "input_duration_seconds": 8.0,
+  "word_count": 24,
+  "trim_start_seconds": 0.58,
+  "trim_end_seconds": 6.675,
+  "measured_wpm_before_adjustment": 236.26,
+  "final_duration_seconds": 12.0,
+  "final_wpm": 120.0,
+  "tempo_method": "rubberband_formant_preserved",
+  "output_file_probeable": true,
+  "subtitle_word_timestamps_preserved": true,
+  "note": "Synthetic harmonic signal only; does not assess human voice timbre."
+}

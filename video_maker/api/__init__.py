@@ -52,7 +52,7 @@ def start_api(app, root, headless: bool = False, port: int | None = None):
     Возвращает ApiRuntime или None, если пульт выключен/не поднялся.
     """
     conf = load_config()
-    if not conf.get("enabled", True):
+    if conf.get("enabled") is not True:
         log.info("[API] пульт выключен в %s", os.path.join(CONFIG_DIR, "api.json"))
         return None
     if port:

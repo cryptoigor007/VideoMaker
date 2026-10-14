@@ -1,0 +1,26 @@
+{
+  "checkpoint": "CP20",
+  "date": "2026-10-12",
+  "python_subprocess_calls_scanned": 32,
+  "subprocess_calls_without_explicit_timeout": 0,
+  "recursive_delete_call_sites": [
+    {
+      "file": "video_maker/pipeline/finalize.py",
+      "purpose": "remove only the current series reserved _tmp/shorts_staging tree",
+      "path_symlink_checks": true
+    },
+    {
+      "file": "video_maker/pipeline/shorts.py",
+      "purpose": "remove only the unique per-Short temporary directory",
+      "honors_keep_temp_files": true
+    }
+  ],
+  "persistent_cache_checks": {
+    "transcription_json_atomic_replace": true,
+    "ffprobe_metadata_json_atomic_replace": true,
+    "background_png_validated_and_atomic": true,
+    "intro_outro_mp4_ffprobe_verified_before_use_and_store": true,
+    "analysis_cache_key_uses_complete_transcript": true
+  },
+  "credential_log_check": "Gemini model-discovery exception text redacts raw and URL-encoded API-key forms; covered by CP20 test."
+}

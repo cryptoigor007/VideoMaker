@@ -1,0 +1,28 @@
+{
+  "checkpoint": "CP24",
+  "date": "2026-10-12",
+  "baseline": {
+    "compileall": "PASS",
+    "pytest": "163 passed, 1 skipped, 23 subtests passed",
+    "environment": "Linux/headless; Tk display-only layout test skipped"
+  },
+  "pipeline_order": ["AudioStage", "TranscribeStage", "GeminiStage", "MasterBuilder", "ParallelFinals", "ShortsCutter", "FinalizeStage"],
+  "parallel_finals_actual_behavior": "sequential: FinalHorizontal then FinalVertical",
+  "expected_core_media_operations": {
+    "whisper_transcription": "one per source audio",
+    "gemini_analysis": "one batched call (network/key retries possible)",
+    "narration_prepare_audio_render": "zero or one depending trim/tempo/optional pause removal",
+    "horizontal_master_video_encode": "one full encode",
+    "vertical_master_video_encode": "one full encode only with native vertical B-roll; omitted for VSTACK background mode",
+    "horizontal_subtitle_encode": "zero or one depending H hook/subtitle/strong-word settings",
+    "vertical_final_encode": "one; VSTACK+ASS merged into one encode in background mode",
+    "shorts": "one stream-copy trim attempt + one burn encode per unique clip; trim re-encode only on fallback",
+    "bgm_finalize": "one FFmpeg remux/mix per distinct publication variant; video stream copied, not re-encoded"
+  },
+  "confirmed_redundant_work_before_cp25": {
+    "voice_enhance": "duplicated separately on horizontal and vertical finalized MP4s",
+    "ffmpeg_invocations_per_branch": 3,
+    "total_ffmpeg_invocations_per_episode": 6,
+    "planned": "pre-enhance common narration to lossless PCM WAV once; reuse in both master branches; preserve branch fallback when called independently"
+  }
+}

@@ -9,6 +9,8 @@ import re
 import subprocess
 from collections import OrderedDict
 
+from .media_process import media_timeout_for_duration, run_ffmpeg_atomic
+
 log = logging.getLogger(__name__)
 
 # r57: кэш с инвалидацией (path|mtime_ns|size) — перезаписанный файл
@@ -137,8 +139,12 @@ def replace_audio(
         "-shortest",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
-    return output_path
+    duration = probe_duration(video_path)
+    return run_ffmpeg_atomic(
+        cmd, output_path,
+        timeout=media_timeout_for_duration(duration, minimum_seconds=300),
+        log_fn=_log,
+    )
 
 
 def voice_enhance_filter(audio_path: str, output_path: str, log_fn=None) -> str:
@@ -155,51 +161,45 @@ def voice_enhance_filter(audio_path: str, output_path: str, log_fn=None) -> str:
         "alimiter=limit=0.95"
     )
 
+    # Shared pre-master narration uses a WAV container so enhancement stays
+    # lossless until the normal master encode creates its AAC delivery stream.
+    # Preserve legacy AAC behavior for existing direct calls targeting .aac/.m4a.
+    if os.path.splitext(output_path)[1].lower() == ".wav":
+        codec_args = ["-c:a", "pcm_s16le"]
+    else:
+        codec_args = ["-c:a", "aac", "-b:a", "192k"]
     cmd = [
         "ffmpeg", "-y",
         "-i", audio_path,
         "-af", af,
-        "-c:a", "aac", "-b:a", "192k",
+        *codec_args,
         "-ar", "48000",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
-    return output_path
+    duration = probe_duration(audio_path)
+    return run_ffmpeg_atomic(
+        cmd, output_path,
+        timeout=media_timeout_for_duration(duration, minimum_seconds=300),
+        log_fn=_log,
+    )
 
 
 # ── BGM: подбор трека, loudnorm-хелперы, сборка аудио-цепочки ──────────────
 _BGM_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus")
 
 
+from .bgm_policy import list_bgm_tracks as _policy_list_bgm_tracks
+from .bgm_policy import pick_bgm_track as _policy_pick_bgm_track
+
+
 def list_bgm_tracks(bgm_folder: str) -> list[str]:
-    """Аудиофайлы BGM в папке (без скрытых). Пустая/несуществующая → []."""
-    folder = (bgm_folder or "").strip()
-    if not folder or not os.path.isdir(folder):
-        return []
-    try:
-        names = sorted(os.listdir(folder))
-    except OSError:
-        return []
-    return [
-        os.path.join(folder, n)
-        for n in names
-        if not n.startswith(".") and n.lower().endswith(_BGM_EXTS)
-    ]
+    """Поддерживает как отдельный файл музыки, так и папку с треками."""
+    return _policy_list_bgm_tracks(bgm_folder)
 
 
 def pick_bgm_track(bgm_folder: str, seed_key: str = "") -> str:
-    """Детерминированный выбор трека: один и тот же выпуск → одна и та же музыка.
-
-    Раньше был random.choice: разные площадки/прогоны получали разный трек.
-    """
-    tracks = list_bgm_tracks(bgm_folder)
-    if not tracks:
-        return ""
-    if len(tracks) == 1:
-        return tracks[0]
-    seed = f"{seed_key}|{len(tracks)}".encode("utf-8")
-    idx = int.from_bytes(hashlib.sha256(seed).digest()[:4], "big") % len(tracks)
-    return tracks[idx]
+    """Выбрать трек с устойчивой историей повторов для конкретного выходного файла."""
+    return _policy_pick_bgm_track(bgm_folder, seed_key=seed_key)
 
 
 def measure_loudnorm_params(
@@ -304,19 +304,20 @@ def mix_bgm(
     log_fn=None,
     loudnorm: bool = False,
     target_lufs: float = -14.0,
+    seed_key: str = "",
 ) -> str:
-    """Смешать голос с BGM (ducking) — луп до конца видео. Видео: stream copy."""
+    """Смешать голос с BGM и проверить готовый MP4 через ffprobe."""
     _log = log_fn or log.info
     _log("[АУДИО] Смешивание с BGM...")
 
-    if not (bgm_folder or "").strip() or not os.path.isdir(bgm_folder):
-        _log(f"[АУДИО] BGM папка недоступна: {bgm_folder!r} — пропускаем")
-        return video_path
+    bgm_source = (bgm_folder or "").strip()
+    if not bgm_source or not (os.path.isdir(bgm_source) or os.path.isfile(bgm_source)):
+        raise RuntimeError(f"BGM requested but file/folder is unavailable: {bgm_source!r}")
 
-    bgm_file = pick_bgm_track(bgm_folder, seed_key=os.path.basename(video_path))
+    asset_key = seed_key or os.path.abspath(video_path)
+    bgm_file = pick_bgm_track(bgm_source, seed_key=asset_key)
     if not bgm_file:
-        _log("[АУДИО] BGM файлы не найдены, пропускаем")
-        return video_path
+        raise RuntimeError(f"BGM requested but no supported audio tracks were found in {bgm_source!r}")
     _log(f"[АУДИО] BGM трек: {os.path.basename(bgm_file)}")
 
     video_dur = probe_duration(video_path)
@@ -327,6 +328,8 @@ def mix_bgm(
         duck=True,
         out_label="out",
     )
+    from .bgm_validation import validate_bgm_filter, verify_bgm_output
+    validate_bgm_filter(filter_complex)
 
     # Всегда пишем во временный файл (ffmpeg не умеет in-place на том же пути)
     import tempfile
@@ -354,6 +357,22 @@ def mix_bgm(
             _log(f"[АУДИО] mix_bgm ffmpeg error: {err}")
             raise RuntimeError(f"mix_bgm failed: {err}")
         os.replace(tmp_output_path, output_path)
+        if not os.path.isfile(output_path) or os.path.getsize(output_path) < 1000:
+            raise RuntimeError(f"mix_bgm did not produce a valid destination: {output_path}")
+        try:
+            verification = verify_bgm_output(video_path, output_path)
+            _log(
+                "[АУДИО] BGM output verified: "
+                f"audio={verification.get('audio_codec', 'unknown')} "
+                f"duration={float(verification.get('output_duration_seconds', 0.0)):.2f}s "
+                f"size={int(verification.get('output_size_bytes', 0))} bytes"
+            )
+        except Exception:
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+            raise
     finally:
         if os.path.exists(tmp_output_path):
             try:
@@ -381,7 +400,15 @@ def apply_loudnorm(
         "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11:print_format=json",
         "-f", "null", "-",
     ]
-    result = subprocess.run(cmd1, capture_output=True, text=True)
+    duration = probe_duration(video_path)
+    try:
+        result = subprocess.run(
+            cmd1, capture_output=True, text=True,
+            timeout=media_timeout_for_duration(duration, minimum_seconds=300),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _log(f"[АУДИО] Loudnorm analysis timeout after {exc.timeout}s")
+        raise RuntimeError(f"Loudnorm analysis exceeded timeout ({exc.timeout}s)") from exc
     
     # Parse JSON from stderr
     json_match = re.search(r"\{.*\}", result.stderr, re.DOTALL)
@@ -405,7 +432,16 @@ def apply_loudnorm(
             if abs(mi - float(target_lufs)) <= 0.6 and mtp <= -1.0:
                 _log(f"[АУДИО] Уже ≈{target_lufs} LUFS → copy (skip loudnorm encode)")
                 import shutil
-                shutil.copy2(video_path, output_path)
+                copy_tmp = f"{output_path}.vm_tmp_{os.getpid()}"
+                try:
+                    shutil.copy2(video_path, copy_tmp)
+                    os.replace(copy_tmp, output_path)
+                finally:
+                    try:
+                        if os.path.exists(copy_tmp):
+                            os.remove(copy_tmp)
+                    except OSError:
+                        pass
                 return output_path
 
             # Second pass: apply with measured values
@@ -430,8 +466,11 @@ def apply_loudnorm(
         "-ar", "48000",
         output_path,
     ]
-    subprocess.run(cmd, capture_output=True, check=True)
-    return output_path
+    return run_ffmpeg_atomic(
+        cmd, output_path,
+        timeout=media_timeout_for_duration(duration, minimum_seconds=300),
+        log_fn=_log,
+    )
 
 
 def measure_loudness(path: str) -> dict | None:
@@ -441,8 +480,19 @@ def measure_loudness(path: str) -> dict | None:
         "-af", "ebur128=peak=true",
         "-f", "null", "-",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    stderr = result.stderr
+    duration = probe_duration(path)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=media_timeout_for_duration(duration, minimum_seconds=300),
+        )
+    except subprocess.TimeoutExpired as exc:
+        log.warning("[АУДИО] measure_loudness timeout after %ss for %s", exc.timeout, path)
+        return None
+    if result.returncode != 0:
+        log.warning("[АУДИО] measure_loudness ffmpeg failed (rc=%s): %s", result.returncode, (result.stderr or "")[-400:])
+        return None
+    stderr = result.stderr or ""
 
     i_lufs = None
     peak_dbtp = None

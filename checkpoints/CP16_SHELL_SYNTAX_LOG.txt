@@ -1,0 +1,1 @@
+bash -n start.command start-headless.command: PASS

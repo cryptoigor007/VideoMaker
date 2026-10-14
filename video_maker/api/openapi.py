@@ -12,8 +12,9 @@ from __future__ import annotations
 _DESC = """Пульт VideoMaker: запуск сборки видео, живой статус, очередь серий, логи.
 
 Авторизация: токен в заголовке `X-Api-Key`, `Authorization: Bearer <токен>`
-или в параметре `?key=<токен>`. Токен лежит в `~/video_maker/api.json` и
-показывается на странице пульта.
+или (legacy) в параметре `?key=<токен>`; query-token может попасть в историю браузера и внешние логи, поэтому предпочтительны заголовки. Веб-страница очищает адресную строку после bootstrap и выполняет последующие запросы через `X-Api-Key`; сервер маскирует секреты query-параметров в access-логах. Токен хранится в `~/video_maker/api.json` и показывается в блоке пульта.
+
+JSON body должен быть объектом размером до 2 MiB. Ошибочный JSON или неверный Content-Length отклоняется с HTTP 400, превышение лимита — с HTTP 413. Boolean поля `lan` и `enabled` принимают только JSON true/false, чтобы строка `"false"` не включала доступ из сети.
 
 Доступ из сети выключен по умолчанию: запросы не с localhost отклоняются,
 пока не включён `lan` (`POST /api/config {"lan": true}`).
@@ -81,6 +82,29 @@ _PATHS: dict = {
         "get": {"summary": "Текущие настройки (секреты замаскированы)",
                 "responses": {"200": {"description": "Настройки"}}},
         "post": {"summary": "Изменить настройки и сохранить их",
+                 "requestBody": {"content": {"application/json": {"schema": {
+                     "type": "object",
+                     "properties": {
+                         "remove_long_pauses": {
+                             "type": "boolean",
+                             "default": False,
+                             "description": "Сокращать длинные межсловные паузы; по умолчанию выключено",
+                         },
+                         "align_speech_rate": {
+                             "type": "boolean",
+                             "default": True,
+                             "description": "Выравнивать темп речи (трим тишины и подтяжка к 120–150 WPM); по умолчанию включено",
+                         },
+                         "target_lufs": {
+                             "type": "number",
+                             "minimum": -36,
+                             "maximum": -5,
+                             "default": -14,
+                             "description": "Целевой уровень только для финального микса с BGM; voice-only выход не получает дополнительный loudnorm-проход",
+                         },
+                     },
+                     "additionalProperties": True,
+                 }}}},
                  "responses": {"200": {"description": "Что применилось"}}},
     },
     "/api/config": {

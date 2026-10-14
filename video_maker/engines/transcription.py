@@ -158,7 +158,18 @@ def transcribe(
     try:
         ck = _transcription_cache_key(audio_path, MLX_REPO, language)
         cpath = _transcription_cache_dir() / f"{ck}.json"
-        cpath.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        tmp_path = cpath.with_name(f".{cpath.name}.{os.getpid()}.{time.time_ns()}.tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as stream:
+                json.dump(out, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp_path, cpath)
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         _log(f"[WHISPER] Кэш SAVE → {cpath.name}")
     except Exception:
         pass

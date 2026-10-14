@@ -1,0 +1,387 @@
+[
+  {
+    "path": ".env.example",
+    "size": 222,
+    "sha256": "ca27d476636e95c067ef6978f2f0d289cee7c4ea59163a78cd42967dfaed64a7"
+  },
+  {
+    "path": ".gitignore",
+    "size": 112,
+    "sha256": "e8dd957ad15edeae818431cbe5cdfb010aae7a98e4fddc2a7e25e5209e135eac"
+  },
+  {
+    "path": "AUDIT_R56_FIX_PLAN.md",
+    "size": 50693,
+    "sha256": "b34d3ad38f64ec296a767242307304d7fd833ece39989e60791ab51289189550"
+  },
+  {
+    "path": "PATCH_R47.txt",
+    "size": 996,
+    "sha256": "85461243d340d6304718a947107c8983be54386ec8d7978c4ed94ef027282a66"
+  },
+  {
+    "path": "README.md",
+    "size": 6503,
+    "sha256": "8d6eec2e9abd103d39223ce92ff44e0528e87b3c0b463108c88655d9c66104ec"
+  },
+  {
+    "path": "README_FIX.txt",
+    "size": 505,
+    "sha256": "484ce335c7daa342d81cd6472da47a9cb42494a7ac7cdd867fc58a798c847736"
+  },
+  {
+    "path": "README_REPLACE.txt",
+    "size": 841,
+    "sha256": "3d1c92e5f94335c93ee4443ca6a00788d05728066ee849c61e2a3a811a8ac43f"
+  },
+  {
+    "path": "requirements.txt",
+    "size": 271,
+    "sha256": "6d6556a8e2e721b3acf0aa435850bd965b8ba78f27b353ef014e86bb197c779b"
+  },
+  {
+    "path": "start.command",
+    "size": 2374,
+    "sha256": "325289ae22a26842f55e42e012203e0d7f7900875060254edf138335337a1474"
+  },
+  {
+    "path": "VERSION.md",
+    "size": 6801,
+    "sha256": "e9554babb18d429bca9650827e559274484dcdd090d53500a28b3cc664854078"
+  },
+  {
+    "path": "start-headless.command",
+    "size": 380,
+    "sha256": "dfb5efa0da6ea6111684ba00d860ce58897e268d81965204cac3da80ddf85c77"
+  },
+  {
+    "path": "CHANGES.md",
+    "size": 19809,
+    "sha256": "79d07525d72d07c41e9574289e90e5f5f02d6bb9bfe192cdf3a626ba42b5056d"
+  },
+  {
+    "path": "video_maker/main.py",
+    "size": 8575,
+    "sha256": "76115f076053b64818b3f6884adf9bb197fc14a53c89e6169d2fea6459cb70d3"
+  },
+  {
+    "path": "video_maker/__init__.py",
+    "size": 129,
+    "sha256": "f9c84fac5796923db30a43323b686aea0918fe45d728574ee9463a4c8de49c9b"
+  },
+  {
+    "path": "video_maker/gui/app.py",
+    "size": 130563,
+    "sha256": "4207e90e1356a59121004c3ea8a49bb61bda6c734c787e8df4b1862be569cd24"
+  },
+  {
+    "path": "video_maker/gui/__init__.py",
+    "size": 42,
+    "sha256": "166f857a2ae5fe98dc37045dcf517f47ee1f66c4788364dfbfa6b082b7bb608c"
+  },
+  {
+    "path": "video_maker/external/utils.py",
+    "size": 905,
+    "sha256": "012066b6eb722c039866f8d1dc8e3f2c84a5c6135ec7a544f8c97117d0dcd7c7"
+  },
+  {
+    "path": "video_maker/external/__init__.py",
+    "size": 89,
+    "sha256": "1899a66816c5faf2522112d447f15cb5c2ec076efb679e63f7171d0b223d1417"
+  },
+  {
+    "path": "video_maker/external/aisie/styles.py",
+    "size": 2432,
+    "sha256": "0063007dd91ff040ff01bc115bc1050278b43847592772901340675496e987e8"
+  },
+  {
+    "path": "video_maker/external/aisie/timing.py",
+    "size": 8878,
+    "sha256": "2144a638fcf09b7aec083016c80479679b5ae4356df37507bb4b480fa98d6099"
+  },
+  {
+    "path": "video_maker/external/aisie/scoring.py",
+    "size": 13920,
+    "sha256": "b470eea65d04cd606a2a1300c0ad6528670f50109b303b178e520c68039e1d00"
+  },
+  {
+    "path": "video_maker/external/aisie/demo_plan.json",
+    "size": 4545,
+    "sha256": "243c6f39ff7d50ffd4e723d57f3d93f7035bd98ab9bb4658032dbaeb71a87303"
+  },
+  {
+    "path": "video_maker/external/aisie/classifier.py",
+    "size": 7689,
+    "sha256": "8357967ef42b0e03044c270005763e0e5314e855e70b84f4818f2acd4b1ababf"
+  },
+  {
+    "path": "video_maker/external/aisie/validate.py",
+    "size": 9418,
+    "sha256": "4ea01559be497b83a45aceeaf97e06846c8f1463737faef5a70d3b7dd8d8ae41"
+  },
+  {
+    "path": "video_maker/external/aisie/__init__.py",
+    "size": 606,
+    "sha256": "a1e42fc1763688c4070958ed856507f5a4ae86990a5c00d1cb9f8b75368cb1d6"
+  },
+  {
+    "path": "video_maker/external/aisie/pipeline.py",
+    "size": 11830,
+    "sha256": "351c5e68a21e5311f220a81f537bec7009d91e14f43d2be41e5d01bfb9486aff"
+  },
+  {
+    "path": "video_maker/external/aisie/placement.py",
+    "size": 8441,
+    "sha256": "cdf8e144ae0f815156472e71c9459eadb9a68657480027f0541246401a604b98"
+  },
+  {
+    "path": "video_maker/config/settings.py",
+    "size": 13884,
+    "sha256": "aa38d74ff839b7dcf0b4e642c79a192e865abe90a5790a5342cc3584ec665fd6"
+  },
+  {
+    "path": "video_maker/config/__init__.py",
+    "size": 131,
+    "sha256": "4efd825727ce9ded4dd4fc993db7f784e143b783c08f929276045fb56f3158c3"
+  },
+  {
+    "path": "video_maker/pipeline/parallel_finals.py",
+    "size": 1178,
+    "sha256": "4119c5e785db39c7788f3446cc402b4180d53c57aab68536a7026bdf09432ba1"
+  },
+  {
+    "path": "video_maker/pipeline/finalize.py",
+    "size": 27420,
+    "sha256": "9291c5bb5605ca3ee9b0285a650fe7d368ad007f46c8425384050132de1175c3"
+  },
+  {
+    "path": "video_maker/pipeline/branches.py",
+    "size": 17447,
+    "sha256": "6f6be6d6e7787318c6d467e3efdb524714aacd2e7ec997ec91cc91e38f9bcf4e"
+  },
+  {
+    "path": "video_maker/pipeline/checkpoint.py",
+    "size": 12907,
+    "sha256": "31111e82874ed7b40586dd1e4266f9745c409e13c1338ed57a68faec522693b1"
+  },
+  {
+    "path": "video_maker/pipeline/master.py",
+    "size": 3920,
+    "sha256": "a07688cfc2287b05539993fbb56ed1bf4e01606ce8708de459b15a848e640e58"
+  },
+  {
+    "path": "video_maker/pipeline/shorts.py",
+    "size": 19060,
+    "sha256": "1663b186b69a1d6cb1b2304170303ba457e4d8d940a0848dca67a6a611eb3f26"
+  },
+  {
+    "path": "video_maker/pipeline/__init__.py",
+    "size": 482,
+    "sha256": "43d5027fdc1286687fd1b7e423aa6e76141894dfa524e033625da5f06a0626a3"
+  },
+  {
+    "path": "video_maker/pipeline/stages.py",
+    "size": 8425,
+    "sha256": "52c4a05145b9a0e4f1c3da328e9ae90d62d37c76492a70c85f3f79da9f49c8a8"
+  },
+  {
+    "path": "video_maker/api/openapi.py",
+    "size": 10307,
+    "sha256": "acaad6043eeca65720cf9aaeab8005850438a1537582b204101fad78cc5099e3"
+  },
+  {
+    "path": "video_maker/api/control.py",
+    "size": 12806,
+    "sha256": "ba79044c07240500e535ceacd3200ec296ef7b24ecc228ca69f953d4e1ef368d"
+  },
+  {
+    "path": "video_maker/api/server.py",
+    "size": 35197,
+    "sha256": "a536d59dbf31a404214820838b4a8bbd7dc88dfcd21cd9f7194da44f1dd92495"
+  },
+  {
+    "path": "video_maker/api/queue.py",
+    "size": 15407,
+    "sha256": "fca39c0617f4d2378a5a0e0a6f06b120f02589e5490cfccfff57f8537c91d78f"
+  },
+  {
+    "path": "video_maker/api/bridge.py",
+    "size": 14469,
+    "sha256": "997345388252ae94e9659218cd304ed8dcd02fb4e2e2bf3c6b3c141667bfbdb9"
+  },
+  {
+    "path": "video_maker/api/__init__.py",
+    "size": 4235,
+    "sha256": "38b99835b33502a289fe24841cdad523e2397ea594f15a20e302a0138b49a687"
+  },
+  {
+    "path": "video_maker/api/webui.py",
+    "size": 13710,
+    "sha256": "d20151e83faeef0a3d433c8ceca385370f4758b64a3be3230f075c602e455ed5"
+  },
+  {
+    "path": "video_maker/icons/app_icon.png",
+    "size": 401168,
+    "sha256": "8678e9316cf6a71e45af3195c567697aaa4dba793555f06b6f85b6b0be44cb98"
+  },
+  {
+    "path": "video_maker/engines/bgm_validation.py",
+    "size": 6002,
+    "sha256": "326c6db1f5d0671762b712091a7174d9d0ca0b0e5e42065047a35e4be278725d"
+  },
+  {
+    "path": "video_maker/engines/speech_rate.py",
+    "size": 21423,
+    "sha256": "41efdee3b67fb62a578fc34fe995198664e19a6977d6f5f0f3f9d6229ffbc6fa"
+  },
+  {
+    "path": "video_maker/engines/analysis.py",
+    "size": 55180,
+    "sha256": "497bbb746f0b71a03c7f68e9b117a058f0c56486a9b0302c9853b1c326c13cf5"
+  },
+  {
+    "path": "video_maker/engines/bgm_policy.py",
+    "size": 10341,
+    "sha256": "6212f1b0525eccf2815dfd0cec0ebaadc28786bb57a2794871f4f5ef79627af1"
+  },
+  {
+    "path": "video_maker/engines/audio.py",
+    "size": 17518,
+    "sha256": "f41a4790134897eb98d284904763bad3505439f01d29faca274d4cafdf1f5784"
+  },
+  {
+    "path": "video_maker/engines/short_cover.py",
+    "size": 4753,
+    "sha256": "b834dd48b5bcf3c11cdadf10bd05573c51719c7b7226d70564d9e5e81abd8379"
+  },
+  {
+    "path": "video_maker/engines/video.py",
+    "size": 50388,
+    "sha256": "a705569a688e3cbdb59ccc37ebbb02bb97c86726b6608256e6c767d26feb37a3"
+  },
+  {
+    "path": "video_maker/engines/aisie_integration.py",
+    "size": 8521,
+    "sha256": "06a07decbb9a680ded47c75a04bb4f2d0fe0356d8a4a53dc94ed6a8a6a8845c0"
+  },
+  {
+    "path": "video_maker/engines/ffmpeg_resilient.py",
+    "size": 17540,
+    "sha256": "4d1b547b0c40847ec1ef0f2dddaab9ebd1606f7e3402cb69230f93f24f1b2451"
+  },
+  {
+    "path": "video_maker/engines/whisperx_resolve.py",
+    "size": 1780,
+    "sha256": "2ac290f62f1a0802ea59d66838caa1420f593f2ca9e11cd0f423fa9367717dff"
+  },
+  {
+    "path": "video_maker/engines/highlight_lexicon.py",
+    "size": 10832,
+    "sha256": "463878b8cd3cd790d153dc9569823291ca1040d1fd7e8135b0341a6ec87bc3a1"
+  },
+  {
+    "path": "video_maker/engines/upload_readiness.py",
+    "size": 3392,
+    "sha256": "5a86a840fbffdcab3972ff9f7c06ac90245955eb5ce5719da17b623944346328"
+  },
+  {
+    "path": "video_maker/engines/power.py",
+    "size": 5767,
+    "sha256": "5cb7b861fdb808e31ebf034df855e18937141584806d585115039a97b8bc3dbd"
+  },
+  {
+    "path": "video_maker/engines/transcription.py",
+    "size": 5748,
+    "sha256": "b8d72d59e6cc90690a85d4a8125c79b2fa53de212e4428f7be2b20d49f383ba7"
+  },
+  {
+    "path": "video_maker/engines/__init__.py",
+    "size": 107,
+    "sha256": "dcbe0b57f7a1147f1b144ad4065c2f2492bb8e6d466cc91dbf3784769d68b0b0"
+  },
+  {
+    "path": "video_maker/engines/colors.py",
+    "size": 1572,
+    "sha256": "529374602db48f467b96bba470c4dacacc8a3f745a264317a719c7418597cf11"
+  },
+  {
+    "path": "video_maker/engines/subtitles.py",
+    "size": 83628,
+    "sha256": "aca5c552d51edfdfea6d894cd6957f3228e2b9eb90ab25ef4cc8c1b0f5c86d14"
+  },
+  {
+    "path": "docs/API.md",
+    "size": 17407,
+    "sha256": "884ca4c6fc81ae4c306f970650ea510bce9458053f3c30e44b9f841db07fde84"
+  },
+  {
+    "path": "docs/superpowers/specs/2026-08-26-videomeyker-design.md",
+    "size": 5692,
+    "sha256": "6bdcea7db527b747a0d2774ee35d2431d162f984e8d0acf28a8084e8741944ba"
+  },
+  {
+    "path": "tests/verify_api_live.py",
+    "size": 17258,
+    "sha256": "039506de324dd9779da9b6f9c1c2382a7bcf1907a4fa79f82b425360697ca3ca"
+  },
+  {
+    "path": "tests/test_bgm_validation.py",
+    "size": 4385,
+    "sha256": "58b375afbfb3783843478b8fda5292f11f8eceeb5e18ccf0fc98fd269aa7c19b"
+  },
+  {
+    "path": "tests/synthetic_ffmpeg_smoke.py",
+    "size": 3922,
+    "sha256": "a5c35606455323c413398a439244c9b2bc169186d08ccfd282e6a70bb3ad379a"
+  },
+  {
+    "path": "tests/test_upload_readiness.py",
+    "size": 3848,
+    "sha256": "4fb9f275b4569957024f2f7dcf10285cf97adc52930d7ecb1a579db783ae5b86"
+  },
+  {
+    "path": "tests/verify_api_settings.py",
+    "size": 7530,
+    "sha256": "cf3f8eb54df5d72929ee50246abce06bddcc2f1f5f25dbb4c02b4d92615cf8ce"
+  },
+  {
+    "path": "tests/verify_log_deadlock.py",
+    "size": 4562,
+    "sha256": "f44c333b845de18dc2a58234457a8ccdace18e078b173700e19996547a21cfbc"
+  },
+  {
+    "path": "tests/test_pipeline.py",
+    "size": 10933,
+    "sha256": "7f4b8b8f6ac5b2076f628d9c1e8e0e67d3cbd6840f8f1995fbfc7e0047bd6092"
+  },
+  {
+    "path": "tests/test_speech_rate.py",
+    "size": 6676,
+    "sha256": "7c8edc727e8acf59f636b734031775637dc3e61054fa32a0336af6e55a37a681"
+  },
+  {
+    "path": "tests/__init__.py",
+    "size": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "tests/synthetic_bgm_mix_smoke.py",
+    "size": 3991,
+    "sha256": "2757607f2bd5b2196710676a87287c0ea45796d593b70256489b8373b015f5d1"
+  },
+  {
+    "path": "tests/test_bgm_policy.py",
+    "size": 6740,
+    "sha256": "a152d606141d7c0adf06ea9c79ee4d20c5ffbeb83526b16b1a7427e0495b049e"
+  },
+  {
+    "path": "tests/test_shorts_parity.py",
+    "size": 9891,
+    "sha256": "79bb9ff75a7b3c15a3da5326433b53cb97b4a9b188d4a97b46ddf809afcc9dce"
+  },
+  {
+    "path": "tests/verify_app_gui.py",
+    "size": 11804,
+    "sha256": "fe4f1d183bfe0c41697d6375aaae209a03af53bc97440ab6702a54a79afa4800"
+  }
+]

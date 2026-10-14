@@ -1,0 +1,53 @@
+{
+  "audit": "CP29",
+  "updated": "2026-10-12",
+  "current_checkpoint": "CP33",
+  "closed": [
+    "CP29-01",
+    "CP29-02",
+    "CP29-03",
+    "CP29-04",
+    "CP29-05",
+    "CP29-07",
+    "CP29-08",
+    "CP29-10",
+    "CP29-19"
+  ],
+  "partial": [
+    "CP29-15",
+    "CP29-16"
+  ],
+  "open": [
+    "CP29-06",
+    "CP29-09",
+    "CP29-11",
+    "CP29-12",
+    "CP29-13",
+    "CP29-14",
+    "CP29-17",
+    "CP29-18",
+    "CP29-20"
+  ],
+  "notes": {
+    "CP29-01": "Disabled API listener lifecycle fixed in CP30.",
+    "CP29-02": "Readiness now requires actual video media, not only metadata; CP31.",
+    "CP29-03": "Truthful `/api/run` and queue acceptance fixed in CP30.",
+    "CP29-04": "Checkpoint persistence errors no longer mark stages completed; CP33.",
+    "CP29-05": "Fingerprint-based checkpoint invalidation added in CP33.",
+    "CP29-06": "Timed-out bridge calls can still execute if left queued; CP34.",
+    "CP29-07": "Vertical B-roll preflight moved before expensive stages; CP31.",
+    "CP29-08": "Strict bool validation added to API/queue/settings; CP31.",
+    "CP29-09": "Listener rebind rollback improved, but broader transactional config atomicity still needs review.",
+    "CP29-10": "Non-object malformed API/queue config handled safely; CP30/CP31.",
+    "CP29-11": "MLX engine vs GUI Whisper settings mismatch remains; CP35.",
+    "CP29-12": "GUI shutdown still uses forced process exit; CP34.",
+    "CP29-13": "Metadata/report timing needs full successful-artifact transaction review.",
+    "CP29-14": "Cross-process output locking remains; CP36.",
+    "CP29-15": "Bootstrap now checks tools, but output disk-space/write preflight remains; CP36.",
+    "CP29-16": "Checkpoint writes atomic; remaining ordinary settings/config permission mode needs review.",
+    "CP29-17": "Dead code/dependency pruning remains; CP36.",
+    "CP29-18": "TLS/rate limiting remain for network-exposed API; do not expose plain HTTP publicly.",
+    "CP29-19": "Queue API bool conversion fixed; full webhook edge-case audit remains.",
+    "CP29-20": "No remote TLS/rate limiting; see CP29-18 and deploy only via VPN/reverse proxy."
+  }
+}

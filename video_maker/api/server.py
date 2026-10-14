@@ -27,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import socketserver
 import sys
@@ -42,6 +43,7 @@ from .control import (
     find_results,
     read_settings,
     start_pipeline,
+    sync_settings_from_gui,
     validate,
 )
 from .openapi import openapi_spec
@@ -52,6 +54,24 @@ CONFIG_DIR = os.path.expanduser("~/video_maker")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "api.json")
 DEFAULT_PORT = 8765
 SSE_MAX_SECONDS = 1800
+MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024
+_SECRET_QUERY_RE = re.compile(r"(?i)([?&](?:key|token|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|signature|auth|credential)=)[^&\s\"\']*")
+
+
+class ApiRequestError(ValueError):
+    """Expected client error while parsing an HTTP request body."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _safe_url_for_log(url: str) -> str:
+    """Remove common query credential values before writing URLs to logs."""
+    safe = _SECRET_QUERY_RE.sub(r"\1[REDACTED]", str(url or ""))
+    # URLs can also carry basic-auth userinfo; don't copy those credentials
+    # into warning logs when webhook delivery fails.
+    return re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1[REDACTED]@", safe)
 
 
 def _q_int(query: dict, name: str, default: int, lo: int = 0, hi: int = 100000) -> int:
@@ -88,18 +108,48 @@ def load_config() -> dict:
         "lan": False,
         "token": "",
         "webhook_url": "",
+        "webhook_token": "",
     }
     try:
         if os.path.isfile(CONFIG_PATH):
             with open(CONFIG_PATH, encoding="utf-8") as fh:
-                conf.update(json.load(fh) or {})
-    except (OSError, ValueError) as exc:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                conf.update(loaded)
+            else:
+                log.warning("[API] корень %s должен быть JSON-объектом; использованы безопасные настройки по умолчанию", CONFIG_PATH)
+                conf["enabled"] = False
+    except (OSError, ValueError, TypeError) as exc:
         log.warning("[API] не удалось прочитать %s: %s", CONFIG_PATH, exc)
+        conf["enabled"] = False
 
-    if not conf.get("token"):
+    # Treat malformed persisted values conservatively: a string such as
+    # "false" must never enable binding to 0.0.0.0 by Python truthiness.
+    if type(conf.get("lan")) is not bool:
+        conf["lan"] = False
+    if type(conf.get("enabled")) is not bool:
+        conf["enabled"] = False  # malformed value must not enable API access
+    raw_port = conf.get("port", DEFAULT_PORT)
+    if isinstance(raw_port, bool) or not isinstance(raw_port, int) or not 1 <= raw_port <= 65535:
+        conf["port"] = DEFAULT_PORT
+    if not isinstance(conf.get("webhook_url", ""), str):
+        conf["webhook_url"] = ""
+    need_save = False
+    token_value = conf.get("token")
+    if (not isinstance(token_value, str) or not token_value.isascii()
+            or not 24 <= len(token_value) <= 256):
         conf["token"] = secrets.token_urlsafe(24)
-        save_config(conf)
+        need_save = True
         log.info("[API] сгенерирован токен доступа")
+    webhook_token = conf.get("webhook_token")
+    if (not isinstance(webhook_token, str) or not webhook_token.isascii()
+            or not 16 <= len(webhook_token) <= 256):
+        # Отдельный секрет для исходящих вебхуков: основной токен пульта
+        # открывает весь HTTP-пульт и в чужие запросы не отправляется.
+        conf["webhook_token"] = secrets.token_urlsafe(18)
+        need_save = True
+    if need_save:
+        save_config(conf)
     return conf
 
 
@@ -148,31 +198,61 @@ class VideoMakerAPI:
 
     # ── запуск/остановка ─────────────────────────────────────────────────
     def start(self) -> str:
-        # Пока доступ из сети не разрешён, порт вообще не открываем наружу.
-        host = "0.0.0.0" if self.conf.get("lan") else "127.0.0.1"
+        """Start listening only when explicitly enabled; safe for reconfiguration."""
+        if self.conf.get("enabled") is not True:
+            self.stop()
+            log.info("[API] пульт отключён настройкой enabled=false")
+            return ""
+        # Do not create a second listener when called by a settings refresh.
+        if self._httpd is not None and self._thread is not None and self._thread.is_alive():
+            port = int(self.conf.get("port") or DEFAULT_PORT)
+            return f"http://127.0.0.1:{port}/?key={self.conf['token']}"
+
+        host = "0.0.0.0" if self.conf.get("lan") is True else "127.0.0.1"
         port = int(self.conf.get("port") or DEFAULT_PORT)
         handler = _make_handler(self)
         try:
-            self._httpd = _PultServer((host, port), handler)
+            httpd = _PultServer((host, port), handler)
         except OSError as exc:
+            self._httpd = None
+            self._thread = None
             log.error("[API] порт %s занят или недоступен: %s", port, exc)
             return ""
-        self._thread = threading.Thread(target=self._httpd.serve_forever,
-                                        name="vm-api", daemon=True)
-        self._thread.start()
+        thread = threading.Thread(target=httpd.serve_forever, name="vm-api", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with contextlib.suppress(Exception):
+                httpd.server_close()
+            self._httpd = None
+            self._thread = None
+            log.exception("[API] не удалось запустить поток HTTP-сервера")
+            return ""
+        self._httpd = httpd
+        self._thread = thread
         url = f"http://127.0.0.1:{port}/?key={self.conf['token']}"
         log.info("[API] пульт слушает %s:%s (сеть: %s)", host, port,
-                 "разрешена" if self.conf.get("lan") else "запрещена")
-        log.info("[API] локально: %s", url)
-        if self.conf.get("lan"):
-            log.info("[API] с телефона: http://%s:%s/?key=%s", local_ip(), port, self.conf["token"])
+                 "разрешена" if self.conf.get("lan") is True else "запрещена")
+        # Never write the bearer token to application logs. The URL returned
+        # to the GUI still contains the legacy bootstrap key for compatibility.
+        log.info("[API] панель локально доступна: http://127.0.0.1:%s/ (токен не журналируется)", port)
+        if self.conf.get("lan") is True:
+            log.info("[API] панель в локальной сети доступна на порту %s (токен не журналируется)", port)
         return url
 
     def stop(self) -> None:
-        if self._httpd:
+        httpd, thread = self._httpd, self._thread
+        self._httpd = None
+        self._thread = None
+        if httpd is None:
+            return
+        if thread is not None and thread.is_alive():
             with contextlib.suppress(Exception):
-                self._httpd.shutdown()
-                self._httpd.server_close()
+                httpd.shutdown()
+        with contextlib.suppress(Exception):
+            httpd.server_close()
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
 
     def urls(self) -> dict:
         port = int(self.conf.get("port") or DEFAULT_PORT)
@@ -202,13 +282,27 @@ class VideoMakerAPI:
             return False, "доступ из сети запрещён (включите LAN в настройках пульта)"
         if not provided:
             return False, "нет токена: ?key=, X-Api-Key или Authorization: Bearer"
-        if not hmac.compare_digest(provided, self.conf.get("token", "")):
+        # Сравнение байтами: compare_digest падает на не-ASCII строках, а ключ
+        # приходит из запроса и может содержать любые юникод-символы.
+        try:
+            provided_bytes = provided.encode("utf-8")
+            token_bytes = str(self.conf.get("token", "")).encode("utf-8")
+        except UnicodeEncodeError:
+            return False, "неверный токен"
+        if not hmac.compare_digest(provided_bytes, token_bytes):
             return False, "неверный токен"
         return True, ""
 
     # ── действия ─────────────────────────────────────────────────────────
     def status_payload(self, log_tail: int = 30) -> dict:
-        snap = self.status.snapshot(log_tail=log_tail)
+        try:
+            snap = self.status.snapshot(log_tail=log_tail)
+        except RuntimeError as exc:
+            # Запрос пришёл в момент закрытия окна: это не сбой, клиенту нужен
+            # честный 503 вместо traceback в журнале.
+            if "TkBridge" in str(exc):
+                raise ApiRequestError(503, "приложение закрывается") from exc
+            raise
         snap["queue"] = self.queue.snapshot()
         snap["api"] = self.urls()
         return snap
@@ -233,12 +327,19 @@ class VideoMakerAPI:
 
         def _go():
             applied, unknown = apply_settings(self.app, overrides)
+            # app.settings ← GUI-поля (как кнопка «Создать видео»): запуск через API
+            # не должен зависеть от того, нажимали ли кнопку в GUI до этого.
+            sync_settings_from_gui(self.app)
             errors = validate(self.app)
             result["applied"] = applied
             result["unknown"] = unknown
             result["errors"] = errors
+            result["started"] = False
             if not errors:
                 start_pipeline(self.app)
+                # App._start has additional checks (B-roll and collected audio)
+                # that may return without raising or starting the worker.
+                result["started"] = bool(getattr(self.app, "running", False))
 
         self.bridge.call(_go, timeout=120)
         if result.get("errors"):
@@ -246,9 +347,17 @@ class VideoMakerAPI:
             return 400, {"ok": False, "error": "проверка не пройдена",
                          "errors": result["errors"],
                          "unknown_fields": result.get("unknown") or []}
-        time.sleep(0.4)
+        if not result.get("started"):
+            return 409, {"ok": False,
+                         "error": "приложение не запустило обработку; проверьте источники и B-roll",
+                         "started": False,
+                         "applied": result.get("applied") or [],
+                         "unknown_fields": result.get("unknown") or [],
+                         "status": self.status_payload(0)}
+        time.sleep(0.05)
         return 200, {"ok": True, "started": True,
                      "applied": result.get("applied") or [],
+                     "unknown_fields": result.get("unknown") or [],
                      "status": self.status_payload(0)}
 
     def do_cancel(self) -> tuple[int, dict]:
@@ -278,34 +387,70 @@ class VideoMakerAPI:
         if unknown:
             return 400, {"ok": False, "error": f"неизвестный параметр: {', '.join(unknown)}"}
 
+        for key in ("lan", "enabled"):
+            if key in body and type(body[key]) is not bool:
+                return 400, {"ok": False, "error": f"{key} должен быть boolean (true/false), а не строкой или числом"}
+        if "webhook_url" in body and not isinstance(body["webhook_url"], str):
+            return 400, {"ok": False, "error": "webhook_url должен быть строкой"}
+
+        old_conf = dict(self.conf)
+        new_conf = dict(old_conf)
         changed: list[str] = []
         rebind = False
         if "port" in body:
+            raw_port = body["port"]
+            if isinstance(raw_port, bool):
+                return 400, {"ok": False, "error": "port должен быть целым числом 1..65535"}
             try:
-                port = int(body["port"])
+                port = int(raw_port)
             except (TypeError, ValueError):
                 return 400, {"ok": False, "error": "port должен быть целым числом 1..65535"}
-            if not 1 <= port <= 65535:
+            if not 1 <= port <= 65535 or str(raw_port).strip() not in (str(port), f"+{port}"):
                 return 400, {"ok": False, "error": "port должен быть целым числом 1..65535"}
-            self.conf["port"] = port
+            new_conf["port"] = port
             changed.append("port")
             rebind = True
         for key in ("lan", "enabled"):
             if key in body:
-                self.conf[key] = bool(body[key])
+                new_conf[key] = body[key]
                 changed.append(key)
                 rebind = True
         if "webhook_url" in body:
-            self.conf["webhook_url"] = str(body["webhook_url"] or "").strip()
+            new_conf["webhook_url"] = body["webhook_url"].strip()
             changed.append("webhook_url")
 
-        save_config(self.conf)
-        if rebind:
+        if not rebind:
+            self.conf.clear()
+            self.conf.update(new_conf)
+            save_config(self.conf)
+            return 200, {"ok": True, "changed": changed, "api": self.urls()}
+
+        # Rebind transactionally: on failure restore the previous config and
+        # attempt to restore the previous listener rather than leaving API down.
+        old_was_listening = bool(self._httpd is not None and self._thread is not None and self._thread.is_alive())
+        self.stop()
+        self.conf.clear()
+        self.conf.update(new_conf)
+
+        if self.conf.get("enabled") is True:
+            url = self.start()
+            if not url:
+                self.stop()
+                self.conf.clear()
+                self.conf.update(old_conf)
+                save_config(self.conf)
+                restored = bool(self.start()) if old_was_listening and self.conf.get("enabled") is True else False
+                return 500, {"ok": False,
+                             "error": "не удалось применить новые настройки; восстановлена предыдущая конфигурация",
+                             "changed": [], "rolled_back": True,
+                             "previous_listener_restored": restored,
+                             "api": self.public_urls()}
+        else:
+            # Disable must actually close the listening socket; do not call start().
             self.stop()
-            if not self.start():
-                return 500, {"ok": False, "error": "не удалось перезапустить пульт (порт занят?)",
-                             "changed": changed, "api": self.public_urls()}
-        return 200, {"ok": True, "changed": changed, "api": self.urls()}
+
+        save_config(self.conf)
+        return 200, {"ok": True, "changed": changed, "api": self.public_urls() if self.conf.get("enabled") is not True else self.urls()}
 
     def do_queue_add(self, body: dict) -> tuple[int, dict]:
         body = body or {}
@@ -399,6 +544,8 @@ class VideoMakerAPI:
         Ответ {id, url, state} — ровно те поля, что читает n8n_engine.py.
         """
         body = body or {}
+        if "allow_duplicate" in body and type(body["allow_duplicate"]) is not bool:
+            return 400, {"error": "allow_duplicate должен быть boolean (true/false)", "id": "", "state": "error"}
         audio = (body.get("audio") or body.get("media_path") or "").strip()
         if not audio:
             return 400, {"error": "не указан audio (или media_path)", "id": "", "state": "error"}
@@ -409,7 +556,7 @@ class VideoMakerAPI:
                 series=(body.get("series") or body.get("title") or "").strip(),
                 note=(body.get("note") or "").strip(),
                 overrides=body.get("overrides") or {},
-                allow_duplicate=bool(body.get("allow_duplicate")),
+                allow_duplicate=body.get("allow_duplicate", False),
             )
         except ValueError as exc:
             return 400, {"error": str(exc), "id": "", "state": "error"}
@@ -448,12 +595,12 @@ class VideoMakerAPI:
             }, ensure_ascii=False).encode("utf-8")
             req = urllib.request.Request(
                 url, data=payload, method="POST",
-                headers={"Content-Type": "application/json", "X-Api-Key": self.conf.get("token", "")})
+                headers={"Content-Type": "application/json", "X-Webhook-Token": self.conf.get("webhook_token", "")})
             try:
                 with urllib.request.urlopen(req, timeout=20) as resp:
-                    log.info("[API] вебхук %s → HTTP %s", url, resp.status)
+                    log.info("[API] вебхук %s → HTTP %s", _safe_url_for_log(url), resp.status)
             except Exception as exc:  # noqa: BLE001
-                log.warning("[API] вебхук %s не доставлен: %s", url, exc)
+                log.warning("[API] вебхук %s не доставлен: %s", _safe_url_for_log(url), exc)
 
         threading.Thread(target=_post, name="vm-webhook", daemon=True).start()
 
@@ -501,7 +648,15 @@ def _make_handler(api: VideoMakerAPI):
 
         # ── утилиты ──────────────────────────────────────────────────────
         def log_message(self, fmt, *args):
-            log.debug("[API] %s", fmt % args)
+            # BaseHTTPRequestHandler's default log line includes the full request
+            # target. Redact legacy query-token parameters before anything reaches
+            # the logger (including debug logs redirected to files).
+            try:
+                message = fmt % args
+            except (TypeError, ValueError):
+                message = str(fmt)
+            message = _SECRET_QUERY_RE.sub(r"\1[REDACTED]", message)
+            log.debug("[API] %s", message)
 
         def _cors(self) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -521,6 +676,8 @@ def _make_handler(api: VideoMakerAPI):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self._cors()
             self.end_headers()
             try:
@@ -532,9 +689,8 @@ def _make_handler(api: VideoMakerAPI):
             return parse_qs(urlparse(self.path).query)
 
         def _key(self, query: dict) -> str:
-            provided = (query.get("key") or [""])[0]
-            if provided:
-                return provided
+            # Prefer headers: query-string credentials are legacy-only because
+            # URLs may be retained by browser history, proxies or access logs.
             provided = self.headers.get("X-Api-Key", "") or ""
             if provided:
                 return provided
@@ -549,23 +705,34 @@ def _make_handler(api: VideoMakerAPI):
             auth = self.headers.get("Authorization", "") or ""
             if auth.lower().startswith("bearer "):
                 return auth[7:].strip()
+            # Compatibility path for older Orchestrator clients.
+            provided = (query.get("key") or [""])[0]
+            if provided:
+                return provided
             return ""
 
         def _body(self) -> dict:
+            raw_length = self.headers.get("Content-Length") or "0"
             try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                return {}
-            if length <= 0:
+                length = int(raw_length)
+            except (TypeError, ValueError):
+                raise ApiRequestError(400, "некорректный Content-Length") from None
+            if length < 0:
+                raise ApiRequestError(400, "некорректный Content-Length")
+            if length > MAX_REQUEST_BODY_BYTES:
+                raise ApiRequestError(413, f"тело запроса превышает {MAX_REQUEST_BODY_BYTES} байт")
+            if length == 0:
                 return {}
             raw = self.rfile.read(length)
-            if not raw:
-                return {}
+            if len(raw) != length:
+                raise ApiRequestError(400, "тело запроса прочитано не полностью")
             try:
                 data = json.loads(raw.decode("utf-8"))
-                return data if isinstance(data, dict) else {"items": data}
             except (ValueError, UnicodeDecodeError):
-                return {}
+                raise ApiRequestError(400, "тело запроса должно содержать корректный JSON UTF-8") from None
+            if not isinstance(data, dict):
+                raise ApiRequestError(400, "корнем JSON-тела должен быть объект")
+            return data
 
         def _guard(self, query: dict) -> bool:
             ok, why = api.check_key(self._key(query), self.client_address[0])
@@ -646,7 +813,10 @@ def _make_handler(api: VideoMakerAPI):
             query = self._query()
             if not self._guard(query):
                 return
-            body = self._body()
+            try:
+                body = self._body()
+            except ApiRequestError as exc:
+                return self._send(exc.status, {"ok": False, "error": str(exc)})
             try:
                 if path == "/api/run":
                     code, payload = api.do_run(body)
@@ -659,8 +829,12 @@ def _make_handler(api: VideoMakerAPI):
                 elif path == "/api/queue":
                     code, payload = api.do_queue_add(body)
                 elif path == "/api/queue/pause":
-                    api.queue.pause(bool(body.get("paused", True)))
-                    code, payload = 200, {"ok": True, "queue": api.queue.snapshot()}
+                    paused = body.get("paused", True)
+                    if type(paused) is not bool:
+                        code, payload = 400, {"ok": False, "error": "paused должен быть boolean (true/false)"}
+                    else:
+                        api.queue.pause(paused)
+                        code, payload = 200, {"ok": True, "queue": api.queue.snapshot()}
                 elif path == "/api/queue/clear":
                     removed = api.queue.clear_finished()
                     code, payload = 200, {"ok": True, "removed": removed,
@@ -703,6 +877,8 @@ def _make_handler(api: VideoMakerAPI):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Connection", "keep-alive")
             self._cors()
             self.end_headers()

@@ -1,3 +1,4 @@
+# DEEP AUDIT CP14 (2026-10-12): capture GUI settings in Tk main thread before worker start.
 # VideoMaker | 2026.09.23-r57-api | 2026-09-23
 # CHANGED (r57-api — пульт и живой статус):
 #   1) Статус-бар: строка «▶ что идёт сейчас» — последнее действие пайплайна
@@ -13,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import threading
@@ -20,6 +22,7 @@ import time
 import tkinter as tk
 import traceback
 import contextlib
+import copy
 import json
 from tkinter import filedialog, messagebox, ttk
 
@@ -33,13 +36,13 @@ COLORS = {
     "bg":           "#0F172A",
     "card":         "#1E293B",
     "card_hover":   "#273549",
-    "primary":      "#6366F1",
-    "primary_dim":  "#4F46E5",
+    "primary":      "#818CF8",
+    "primary_dim":  "#6366F1",
     "accent":       "#059669",
     "accent_dim":   "#047857",
     "text":         "#F8FAFC",
     "text_dim":     "#94A3B8",
-    "text_muted":   "#64748B",
+    "text_muted":   "#8B9BB3",
     "border":       "#334155",
     "input_bg":     "#0F172A",
     "input_fg":     "#F8FAFC",
@@ -50,6 +53,9 @@ COLORS = {
 
 # ─── Settings persistence ───────────────────────────────────────────────
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+
+# Диагностика доставки колеса мыши (включается переменной окружения).
+_SCROLL_DEBUG = bool(os.environ.get("VIDEO_MAKER_SCROLL_DEBUG"))
 
 PATH_VARS = [
     "audio_var",
@@ -89,6 +95,7 @@ OTHER_VARS = [
     "s_outro_duration", "s_outro_position", "s_outro_custom_time",
     "playlist_season_url_var", "playlist_block_url_var", "playlist_block_label_var",
     "required_hashtags_var", "shorts_desc_max_len_var",
+    "speech_rate_mode_var", "speech_rate_target_wpm_var", "speech_rate_coefficient_var",
 ]
 
 BOOL_VARS = [
@@ -100,7 +107,222 @@ BOOL_VARS = [
     "bgm_instagram_enable_var", "bgm_rutube_enable_var", "bgm_vk_enable_var", "bgm_facebook_enable_var", "bgm_other_enable_var",
     "prevent_sleep_var", "shutdown_when_done_var",
     "append_playlist_footer_var", "shorts_use_template_var",
+    "remove_long_pauses_var",
+    "align_speech_rate_var",
+    "cut_extra_words_var",
 ]
+
+
+def _deepest_existing(path: str) -> str:
+    """Глубочайшая существующая часть пути (для «пробуждения» сетевых папок)."""
+    if not str(path or "").strip():
+        return ""
+    cur = os.path.abspath(path)
+    while cur and cur != os.path.dirname(cur):
+        if os.path.exists(cur):
+            return cur
+        cur = os.path.dirname(cur)
+    return ""
+
+
+def _wait_for_paths(
+    paths: list[str],
+    wait_seconds: float,
+    *,
+    log_fn=None,
+    progress_every: float = 4.0,
+    trigger=None,
+    pump=None,
+) -> list[str]:
+    """Ждать появления путей (сетевые тома) и вернуть всё ещё отсутствующие.
+
+    trigger() вызывается один раз в начале ожидания, чтобы попытаться разбудить
+    подключение тома; pump() — чтобы окно перерисовывалось, пока мы ждём.
+    """
+    _log = log_fn or log.info
+    checked = [str(p).strip() for p in (paths or []) if str(p or "").strip()]
+    missing = [p for p in checked if not os.path.exists(p)]
+    if not missing:
+        return []
+    if trigger is not None:
+        try:
+            trigger()
+        except Exception as exc:  # noqa: BLE001 — разбудить том не критично
+            log.debug("[СЕТЬ] не удалось разбудить том: %s", exc)
+    total = max(0.0, float(wait_seconds))
+    if total > 0:
+        _log(f"[СЕТЬ] жду подключения: {', '.join(missing[:4])} (до {total:.0f} с)")
+    deadline = time.monotonic() + total
+    last_report = time.monotonic()
+    while True:
+        missing = [p for p in checked if not os.path.exists(p)]
+        if not missing or time.monotonic() >= deadline:
+            break
+        # «Будим» не только корень тома, но и существующих родителей: на SMB
+        # длинный путь может отвечать «нет» , пока по папке не пройдутся.
+        for p in missing:
+            try:
+                ancestor = _deepest_existing(os.path.dirname(p) or p)
+                if ancestor and os.path.isdir(ancestor):
+                    os.listdir(ancestor)
+            except OSError:
+                pass
+        time.sleep(0.5)
+        if pump is not None:
+            try:
+                pump()
+            except Exception:  # noqa: BLE001
+                pass
+        now = time.monotonic()
+        if now - last_report >= progress_every and total >= progress_every:
+            last_report = now
+            _log(f"[СЕТЬ] жду том… осталось {max(0.0, deadline - now):.0f} с")
+    if checked and not missing:
+        _log("[СЕТЬ] сетевые папки доступны")
+    return missing
+
+
+def speech_rate_mode_display(value) -> str:
+    """Подпись режима скорости для GUI-комбобокса («По словам/мин»/«По коэффициенту»)."""
+    from ..engines.speech_rate import speed_mode_label
+
+    return speed_mode_label(value)
+
+
+def _float_setting(value, default: float) -> float:
+    """Безопасный float из tk-переменной (пусто/мусор → default)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def collect_settings_from_gui(app) -> None:
+    """Перенести значения полей GUI в app.settings (то же, что делает кнопка «Создать видео»).
+
+    Вызывается из App._start и из API-запуска (POST /api/run): валидация и пайплайн
+    не должны зависеть от того, нажимали ли кнопку в GUI после загрузки настроек.
+    """
+    app.settings.audio_path = app.audio_var.get()
+    app.settings.broll_horizontal = app.broll_h_var.get()
+    app.settings.broll_vertical = app.broll_v_var.get()
+    app.settings.vertical_background = app.bg_var.get()
+    # r56 platform BGM
+    app.settings.bgm_youtube_folder = app.bgm_youtube_folder_var.get().strip()
+    app.settings.bgm_tiktok_folder = app.bgm_tiktok_folder_var.get().strip()
+    app.settings.bgm_instagram_folder = app.bgm_instagram_folder_var.get().strip()
+    app.settings.bgm_rutube_folder = app.bgm_rutube_folder_var.get().strip()
+    app.settings.bgm_vk_folder = app.bgm_vk_folder_var.get().strip()
+    app.settings.bgm_facebook_folder = app.bgm_facebook_folder_var.get().strip()
+    app.settings.bgm_other_folder = app.bgm_other_folder_var.get().strip()
+    app.settings.bgm_youtube_enable = bool(app.bgm_youtube_enable_var.get())
+    app.settings.bgm_tiktok_enable = bool(app.bgm_tiktok_enable_var.get())
+    app.settings.bgm_instagram_enable = bool(app.bgm_instagram_enable_var.get())
+    app.settings.bgm_rutube_enable = bool(app.bgm_rutube_enable_var.get())
+    app.settings.bgm_vk_enable = bool(app.bgm_vk_enable_var.get())
+    app.settings.bgm_facebook_enable = bool(app.bgm_facebook_enable_var.get())
+    app.settings.bgm_other_enable = bool(app.bgm_other_enable_var.get())
+    app.settings.bgm_folder = app.settings.bgm_youtube_folder  # legacy
+    app.settings.intro_middle_outro_folder = app.imo_folder_var.get()
+    app.settings.cover_horizontal = app.cover_h_var.get()
+    app.settings.cover_vertical = app.cover_v_var.get()
+    if hasattr(app, "shorts_cover_var"):
+        app.settings.shorts_cover_image = app.shorts_cover_var.get().strip()
+    app.settings.series_name = (app.series_entry.get("1.0", "end").strip() if hasattr(app, "series_entry") else app.series_var.get())
+    app.settings.gemini_model = app.model_var.get()
+    app.settings.intro_gemini = app.intro_gemini_var.get()
+
+    # WhisperX settings
+    app.settings.whisperx_path = app.whisperx_path_var.get()
+    app.settings.whisper_model = app.whisper_model_var.get() or "large-v3"
+    app.settings.whisper_language = app.whisper_lang_var.get()
+    app.settings.whisper_device = app.whisper_dev_var.get()
+    app.settings.whisper_compute_type = app.whisper_comp_var.get()
+
+    # Other settings
+    app.settings.keep_temp_files = app.keep_temp_var.get()
+    app.settings.prevent_sleep = app.prevent_sleep_var.get()
+    app.settings.shutdown_when_done = app.shutdown_when_done_var.get()
+    try:
+        target_lufs = float(app.target_lufs_var.get().strip() or -14.0)
+        if not math.isfinite(target_lufs) or not -36.0 <= target_lufs <= -5.0:
+            raise ValueError("target_lufs outside supported range [-36, -5]")
+        app.settings.target_lufs = target_lufs
+    except (ValueError, TypeError, AttributeError):
+        app.settings.target_lufs = -14.0
+        app.target_lufs_var.set("-14.0")
+        log.warning("[GUI] Некорректный target_lufs; восстановлено -14.0")
+
+    log.info(f"[GUI] audio_path = {app.settings.audio_path}")
+    log.info(f"[GUI] broll_horizontal = {app.settings.broll_horizontal}")
+    log.info(f"[GUI] broll_vertical = {app.settings.broll_vertical}")
+    log.info(f"[GUI] vertical_background = {app.settings.vertical_background}")
+    log.info(f"[GUI] bgm_folder = {app.settings.bgm_folder}")
+    log.info(f"[GUI] imo_folder = {app.settings.intro_middle_outro_folder}")
+    log.info(f"[GUI] output_folder = {app.output_var.get() or '(auto)'}")
+    log.info(f"[GUI] gemini_model = {app.settings.gemini_model}")
+    log.info(f"[GUI] series_name = {app.settings.series_name}")
+    log.info(f"[GUI] whisper_language = {app.settings.whisper_language}")
+    if hasattr(app, "caption_style_var"):
+        log.info(f"[GUI] caption_style = {app.caption_style_var.get()}")
+    if hasattr(app, "hook_style_var"):
+        log.info(f"[GUI] hook_style = {app.hook_style_var.get()}")
+    log.info(f"[GUI] whisper_device = {app.settings.whisper_device}")
+    log.info(f"[GUI] whisper_compute_type = {app.settings.whisper_compute_type}")
+    log.info(f"[GUI] keep_temp_files = {app.settings.keep_temp_files}")
+    log.info(f"[GUI] target_lufs = {app.settings.target_lufs}")
+
+    app.settings.h_enable_intro = app.h_intro.get()
+    app.settings.h_enable_middle = app.h_middle.get()
+    app.settings.h_enable_outro = app.h_outro.get()
+    app.settings.h_enable_hooks = app.h_hooks.get()
+    app.settings.h_enable_subtitles = app.h_subs.get()
+    app.settings.h_enable_strong_words = app.h_strong.get()
+    app.settings.v_enable_intro = app.v_intro.get()
+    app.settings.v_enable_middle = app.v_middle.get()
+    app.settings.v_enable_outro = app.v_outro.get()
+    app.settings.v_enable_hooks = app.v_hooks.get()
+    app.settings.v_enable_subtitles = app.v_subs.get()
+    app.settings.v_enable_strong_words = app.v_strong.get()
+    app.settings.s_enable_intro = app.s_intro.get()
+    app.settings.s_enable_middle = app.s_middle.get()
+    app.settings.s_enable_outro = app.s_outro.get()
+    app.settings.s_enable_hooks = app.s_hooks.get()
+    app.settings.s_enable_subtitles = app.s_subs.get()
+    app.settings.s_enable_strong_words = app.s_strong.get()
+
+    app.settings.voice_enhance = app.voice_enhance_var.get()
+    app.settings.remove_long_pauses = bool(app.remove_long_pauses_var.get())
+    app.settings.align_speech_rate = bool(app.align_speech_rate_var.get())
+    from ..engines.speech_rate import normalize_speed_mode
+
+    app.settings.speech_rate_mode = normalize_speed_mode(app.speech_rate_mode_var.get())
+    app.settings.speech_rate_target_wpm = _float_setting(app.speech_rate_target_wpm_var.get(), 120.0)
+    app.settings.speech_rate_coefficient = _float_setting(app.speech_rate_coefficient_var.get(), 1.0)
+    app.settings.cut_extra_words = bool(app.cut_extra_words_var.get())
+    app.settings.add_bgm = any([
+        app.settings.bgm_youtube_enable,
+        app.settings.bgm_tiktok_enable,
+        app.settings.bgm_instagram_enable,
+        app.settings.bgm_rutube_enable,
+        app.settings.bgm_vk_enable,
+        app.settings.bgm_facebook_enable,
+        app.settings.bgm_other_enable,
+    ])
+
+    log.info(f"[GUI] voice_enhance = {app.settings.voice_enhance}")
+    log.info(f"[GUI] remove_long_pauses = {app.settings.remove_long_pauses}")
+    log.info(f"[GUI] bgm platforms = {app.settings.active_bgm_platforms()}")
+
+    # Папка вывода: явная, либо родитель файла, либо сама папка аудио
+    out = app.output_var.get().strip()
+    if not out and app.settings.audio_path:
+        if os.path.isdir(app.settings.audio_path):
+            out = app.settings.audio_path
+        else:
+            out = os.path.dirname(app.settings.audio_path)
+    app.settings.output_folder = out
+    log.info(f"[GUI] output_folder (final) = {app.settings.output_folder}")
 
 
 class App:
@@ -160,12 +382,24 @@ class App:
                 self._icon_img = icon_img
         except Exception as _icon_err:
             log.warning("[GUI] icon load failed: %s", _icon_err)
-        # Полноэкранное окно по высоте
-        screen_h = self.root.winfo_screenheight()
-        self.root.geometry(f"960x{screen_h - 60}")
-        self.root.minsize(860, 680)
+        # Пропорциональное окно: не растягиваем низкие дисплеи по высоте и
+        # центрируем главное окно в доступной области экрана.
+        screen_w = max(1, int(self.root.winfo_screenwidth()))
+        screen_h = max(1, int(self.root.winfo_screenheight()))
+        min_w = min(860, max(480, screen_w - 24))
+        min_h = min(620, max(400, screen_h - 40))
+        window_w = min(1180, max(min_w, screen_w - 80))
+        window_h = min(820, max(min_h, screen_h - 100))
+        window_x = max(0, (screen_w - window_w) // 2)
+        window_y = max(0, (screen_h - window_h) // 2)
+        self.root.geometry(f"{window_w}x{window_h}+{window_x}+{window_y}")
+        self.root.minsize(min_w, min_h)
         self.root.configure(bg=COLORS["bg"])
-        log.info("[GUI] Окно настроено: 960x780, min 860x680")
+        self._scroll_canvases = []
+        self._scroll_areas = []   # (host, canvas): зона колеса, включая полосу прокрутки
+        self._last_browse_dir = ""  # последняя выбранная в диалогах папка
+        log.info("[GUI] Окно настроено: %sx%s, min %sx%s",
+                 window_w, window_h, min_w, min_h)
 
         self.settings = Settings.from_env()
         log.info(f"[GUI] Настройки загружены: model={self.settings.gemini_model}, "
@@ -206,6 +440,11 @@ class App:
         self.whisperx_status_var = tk.StringVar(value="Автопоиск...")
         # Idle / close control
         self._closing = False
+        self._close_pending = False
+        self._close_wait_started = 0.0
+        self._close_poll_after_id = None
+        self._close_wait_warning_shown = False
+        self._pipeline_thread: threading.Thread | None = None
         self._heartbeat_after_id = None
         self._imo_rescan_after_id = None
         self._imo_access_cache: dict[str, tuple[float, bool]] = {}  # path -> (ts, ok)
@@ -224,6 +463,27 @@ class App:
 
         log.info("[GUI] Вызов _build_ui()...")
         self._build_ui()
+        # Bind once globally; route a wheel event only to a visible scrollable
+        # area under the pointer. This also works over Entry/Text/Checkbutton.
+        self.root.bind_all("<MouseWheel>", self._on_scroll_wheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_scroll_wheel, add="+")
+        self.root.bind_all("<Button-5>", self._on_scroll_wheel, add="+")
+        try:
+            # Tk 9: трекпад и Magic Mouse шлют <TouchpadScroll>, а не <MouseWheel>.
+            self.root.bind_all("<TouchpadScroll>", self._on_touchpad_scroll, add="+")
+        except tk.TclError:
+            pass  # Tk < 9: жест трекпада приходит как <MouseWheel>
+        if _SCROLL_DEBUG:
+            def _dbg_toplevel(event):
+                log.info(
+                    "[SCROLL-DBG] toplevel-уровень: widget=%r x_root=%s y_root=%s delta=%r",
+                    getattr(event, "widget", None), getattr(event, "x_root", None),
+                    getattr(event, "y_root", None), getattr(event, "delta", None),
+                )
+                return None
+
+            self.root.bind("<MouseWheel>", _dbg_toplevel, add="+")
+        self._build_macos_menu()
         log.info("[GUI] _build_ui() завершён")
 
         # Запуск heartbeat (редко, только для диагностики)
@@ -243,73 +503,134 @@ class App:
         log.info("[GUI] App.__init__() ЗАВЕРШЁН — окно готово")
         log.info("[GUI] ═══════════════════════════════════════════════")
 
+    def _reinstall_log_hook(self) -> None:
+        """Вернуть буфер лога пульта после переконфигурации logging.
+
+        setup_logging(force=True) удаляет все обработчики корневого логгера,
+        включая буфер живого журнала /api/log и SSE. Перепривязываем его.
+        """
+        runtime = None
+        for module_name in ("__main__", "video_maker.main"):
+            module = sys.modules.get(module_name)
+            candidate = getattr(module, "_API_RUNTIME", None) if module else None
+            if candidate is not None:
+                runtime = candidate
+                break
+        if runtime is not None and hasattr(runtime, "status"):
+            with contextlib.suppress(Exception):
+                runtime.status.install_log_hook()
+
     def _on_close(self) -> None:
-        """Обработчик закрытия окна — надёжный выход без хвостов."""
+        """Ask the pipeline to cancel and wait for its worker before destroying Tk."""
+        if getattr(self, "_closing", False) or getattr(self, "_close_pending", False):
+            return
+
+        if self.running:
+            answer = messagebox.askyesno(
+                "Подтверждение",
+                "Пайплайн выполняется. Отменить его и дождаться безопасного завершения перед закрытием?",
+            )
+            if not answer:
+                return
+            self._close_pending = True
+            self._close_wait_started = time.monotonic()
+            self._close_wait_warning_shown = False
+            log.warning("[GUI] Закрытие отложено: запрошена отмена активного пайплайна")
+            self.cancel_event.set()
+            self._kill_ffmpeg_processes()
+            with contextlib.suppress(Exception):
+                self._log("\n  ЗАКРЫТИЕ: запрошена отмена; жду окончания текущей стадии и сохранения checkpoint...")
+            self._schedule_close_poll()
+            return
+
+        self._finish_close()
+
+    def _schedule_close_poll(self, delay_ms: int = 250) -> None:
+        if not getattr(self, "_close_pending", False) or getattr(self, "_closing", False):
+            return
+        try:
+            self._close_poll_after_id = self.root.after(delay_ms, self._poll_close_until_idle)
+        except (tk.TclError, RuntimeError):
+            log.exception("[GUI] Не удалось ожидать завершения пайплайна через Tk")
+
+    def _poll_close_until_idle(self) -> None:
+        """Keep Tk alive until the pipeline's finally block has fully returned."""
+        self._close_poll_after_id = None
+        if not getattr(self, "_close_pending", False) or getattr(self, "_closing", False):
+            return
+        worker = getattr(self, "_pipeline_thread", None)
+        active = bool(getattr(self, "running", False)) or bool(worker and worker.is_alive())
+        if not active:
+            self._finish_close()
+            return
+
+        elapsed = time.monotonic() - float(getattr(self, "_close_wait_started", time.monotonic()))
+        if elapsed >= 120 and not getattr(self, "_close_wait_warning_shown", False):
+            self._close_wait_warning_shown = True
+            keep_waiting = messagebox.askyesno(
+                "Завершение ещё выполняется",
+                "Пайплайн пока не завершился. Продолжать ждать безопасного завершения?\n\n"
+                "Если выбрать «Нет», окно останется открытым; принудительного завершения не будет.",
+            )
+            if not keep_waiting:
+                self._close_pending = False
+                self._close_wait_warning_shown = False
+                self._log("\n  Закрытие отменено: пайплайн всё ещё работает; окно оставлено открытым.")
+                return
+            self._close_wait_started = time.monotonic()
+            self._close_wait_warning_shown = False
+        self._schedule_close_poll(500)
+
+    def _finish_close(self) -> None:
+        """Release background services and destroy Tk without hard process exit."""
         if getattr(self, "_closing", False):
             return
         self._closing = True
+        self._close_pending = False
 
-        log.info("[GUI] WM_DELETE_WINDOW running=%s", self.running)
-        log.info("[GUI] ╔══════════════════════════════════════════════╗")
-        log.info("[GUI] ║ WM_DELETE_WINDOW — пользователь закрывает окно ║")
-        log.info("[GUI] ╚══════════════════════════════════════════════╝")
+        # Cancel UI timers before destroying widgets.
+        for attr in ("_heartbeat_after_id", "_imo_rescan_after_id", "_close_poll_after_id"):
+            aid = getattr(self, attr, None)
+            if aid is not None:
+                with contextlib.suppress(Exception):
+                    self.root.after_cancel(aid)
+                setattr(self, attr, None)
 
-        if self.running:
-            log.info("[GUI] Пайплайн выполняется (self.running=True)")
-            answer = messagebox.askyesno(
-                "Подтверждение",
-                "Пайплайн выполняется. Завершить?"
-            )
-            log.info(f"[GUI] Ответ пользователя: {answer}")
-            if not answer:
-                self._closing = False
-                log.info("[GUI] Отмена закрытия — окно остаётся открытым")
-                return
-            self.cancel_event.set()
-            self._kill_ffmpeg_processes()
-
-        # Всегда: остановить prevent_sleep, таймеры, дочерние процессы
         try:
             from ..engines.power import prevent_sleep_stop
             prevent_sleep_stop()
         except Exception:
-            pass
-
-        # Отменить pending after-callbacks
-        for attr in ("_heartbeat_after_id", "_imo_rescan_after_id"):
-            aid = getattr(self, attr, None)
-            if aid is not None:
-                try:
-                    self.root.after_cancel(aid)
-                except Exception:
-                    pass
-                setattr(self, attr, None)
+            log.debug("[GUI] prevent_sleep_stop failed during close", exc_info=True)
 
         try:
             self._save_settings()
-        except Exception as e:
-            log.warning("[GUI] save on close failed: %s", e)
+        except Exception as exc:
+            log.warning("[GUI] save on close failed: %s", exc)
 
-        log.info("[GUI] Уничтожение корневого окна...")
-        try:
+        # Stop the API queue/listener and reject pending TkBridge callbacks so
+        # HTTP handlers are not left waiting after the main loop is destroyed.
+        runtime = None
+        for module_name in ("__main__", "video_maker.main"):
+            module = sys.modules.get(module_name)
+            candidate = getattr(module, "_API_RUNTIME", None) if module else None
+            if candidate is not None:
+                runtime = candidate
+                break
+        if runtime is not None:
+            with contextlib.suppress(Exception):
+                runtime.stop()
+        else:
+            bridge = getattr(self, "_api_bridge", None)
+            if bridge is not None:
+                with contextlib.suppress(Exception):
+                    bridge.stop()
+
+        log.info("[GUI] Закрытие: сервисы остановлены, сохранение настроек завершено")
+        with contextlib.suppress(tk.TclError, RuntimeError):
             self.root.quit()
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(tk.TclError, RuntimeError):
             self.root.destroy()
-        except Exception:
-            pass
-        log.info("[GUI] root.destroy() выполнен")
-        log.info("[GUI] ╔══════════════════════════════════════════════╗")
-        log.info("[GUI] ║             ПРИЛОЖЕНИЕ ЗАКРЫТО               ║")
-        log.info("[GUI] ╚══════════════════════════════════════════════╝")
-
-        # Гарантированный выход процесса (нет orphan-потоков / caffeinate)
-        try:
-            import os as _os
-            _os._exit(0)
-        except Exception:
-            sys.exit(0)
+        log.info("[GUI] root.destroy() выполнен; процесс завершается штатно")
 
     # ─── Тема ─────────────────────────────────────────────────────────────
 
@@ -328,6 +649,9 @@ class App:
             foreground=COLORS["text"],
             borderwidth=1,
             relief="solid",
+            bordercolor=COLORS["border"],
+            lightcolor=COLORS["border"],
+            darkcolor=COLORS["border"],
         )
         style.configure(
             "Card.TLabelframe.Label",
@@ -373,17 +697,17 @@ class App:
             foreground=COLORS["input_fg"],
             insertcolor=COLORS["text"],
             borderwidth=1,
-            relief="solid",
-            padding=6,
+            relief="flat",
+            padding=7,
         )
 
         style.configure(
             "TButton",
             background=COLORS["card"],
             foreground=COLORS["text"],
-            borderwidth=1,
-            relief="solid",
-            padding=(12, 6),
+            borderwidth=0,
+            relief="flat",
+            padding=(12, 7),
             font=("SF Pro Text", 10),
         )
         style.map(
@@ -397,6 +721,7 @@ class App:
             background=COLORS["accent"],
             foreground="#FFFFFF",
             borderwidth=0,
+            relief="flat",
             padding=(20, 10),
             font=("SF Pro Display", 12, "bold"),
         )
@@ -438,12 +763,318 @@ class App:
             troughcolor=COLORS["border"],
             background=COLORS["primary"],
             borderwidth=0,
-            thickness=6,
+            thickness=8,
         )
+
+        # Higher-contrast, state-aware controls. Explicit disabled colours keep
+        # labels readable instead of fading into the dark card background.
+        style.configure("TNotebook", background=COLORS["bg"], borderwidth=0, tabmargins=(2, 4, 2, 0))
+        style.configure("TNotebook.Tab", background=COLORS["card"], foreground=COLORS["text_dim"],
+                        padding=(14, 8), font=("SF Pro Text", 10, "bold"))
+        style.map("TNotebook.Tab",
+                  background=[("selected", COLORS["primary"]), ("active", COLORS["card_hover"])],
+                  foreground=[("selected", "#FFFFFF"), ("active", COLORS["text"])])
+        style.configure("TScrollbar", background=COLORS["card_hover"], troughcolor=COLORS["bg"],
+                        bordercolor=COLORS["bg"], arrowcolor=COLORS["text_dim"], relief="flat")
+        style.map("TScrollbar", background=[("active", COLORS["primary"]), ("pressed", COLORS["primary_dim"])])
+        style.configure("TCheckbutton", indicatorcolor=COLORS["input_bg"], focuscolor=COLORS["primary"])
+        style.map("TCheckbutton",
+                  background=[("active", COLORS["card"])],
+                  foreground=[("disabled", "#94A3B8"), ("active", "#FFFFFF")],
+                  indicatorcolor=[("selected", COLORS["primary"]), ("pressed", COLORS["primary_dim"])])
+        style.configure("TRadiobutton", background=COLORS["card"], foreground=COLORS["text"],
+                        indicatorcolor=COLORS["input_bg"], focuscolor=COLORS["primary"])
+        style.map("TRadiobutton", foreground=[("disabled", "#94A3B8"), ("active", "#FFFFFF")],
+                  indicatorcolor=[("selected", COLORS["primary"]), ("pressed", COLORS["primary_dim"])])
+        style.map("TButton",
+                  background=[("disabled", COLORS["border"]), ("pressed", COLORS["primary_dim"]),
+                              ("active", COLORS["primary"])],
+                  foreground=[("disabled", "#CBD5E1"), ("!disabled", "#F8FAFC")])
+        style.map("Accent.TButton",
+                  background=[("disabled", COLORS["border"]), ("pressed", COLORS["accent_dim"]),
+                              ("active", COLORS["accent_dim"])],
+                  foreground=[("disabled", "#CBD5E1"), ("!disabled", "#FFFFFF")])
 
         log.info("[GUI] _setup_theme(): все стили применены")
 
     # ─── UI ───────────────────────────────────────────────────────────────
+
+    def _create_scrollable_content(self, parent, *, padx=0, pady=0):
+        """Создать область с вертикальной прокруткой и шириной по окну.
+
+        Возвращает внутренний ttk.Frame. Используется для длинных настроек,
+        а действия запуска остаются закреплёнными вне области прокрутки.
+        """
+        host = ttk.Frame(parent)
+        host.pack(fill=tk.BOTH, expand=True, padx=padx, pady=pady)
+        canvas = tk.Canvas(host, background=COLORS["bg"], highlightthickness=0,
+                           borderwidth=0, takefocus=False, yscrollincrement=1)
+        scrollbar = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _event, c=canvas: c.configure(scrollregion=c.bbox("all")))
+        canvas.bind("<Configure>", lambda event, c=canvas, wid=window_id: c.itemconfigure(wid, width=event.width))
+        if not hasattr(self, "_scroll_canvases"):
+            self._scroll_canvases = []
+        self._scroll_canvases.append(canvas)
+        if not hasattr(self, "_scroll_areas"):
+            self._scroll_areas = []
+        self._scroll_areas.append((host, canvas))
+        if _SCROLL_DEBUG:
+            def _dbg_widget(event, _name=str(canvas)):
+                log.info(
+                    "[SCROLL-DBG] widget-уровень %s: widget=%r x_root=%s y_root=%s delta=%r",
+                    _name, getattr(event, "widget", None), getattr(event, "x_root", None),
+                    getattr(event, "y_root", None), getattr(event, "delta", None),
+                )
+                return None
+
+            canvas.bind("<MouseWheel>", _dbg_widget, add="+")
+            inner.bind("<MouseWheel>", _dbg_widget, add="+")
+        return inner
+
+    def _scroll_area_for_event(self, event):
+        """Канва прокручиваемой области под указателем (или None).
+
+        Сначала ищем по цепочке родителей виджета-источника, затем по координатам.
+        """
+        areas = getattr(self, "_scroll_areas", None)
+        if not areas:
+            areas = [(canvas.master, canvas) for canvas in getattr(self, "_scroll_canvases", [])]
+        # 1) Виджет под курсором: поднимаемся по цепочке родителей до панели.
+        widget = getattr(event, "widget", None)
+        if widget is not None:
+            chain = []
+            walk = widget
+            while walk is not None:
+                chain.append(walk)
+                try:
+                    walk = walk.master
+                except Exception:  # noqa: BLE001
+                    break
+            for host, canvas in reversed(areas):
+                if host in chain:
+                    try:
+                        if canvas.winfo_ismapped():
+                            if _SCROLL_DEBUG:
+                                log.info("[SCROLL-DBG] → цепочка виджетов: канва %r", canvas)
+                            return canvas
+                    except tk.TclError:
+                        pass
+                    break
+        # 2) Координаты указателя: полоса прокрутки и пустые зоны панели.
+        for host, canvas in reversed(areas):
+            try:
+                if not canvas.winfo_ismapped() or not host.winfo_ismapped():
+                    continue
+                x0, y0 = host.winfo_rootx(), host.winfo_rooty()
+                x1, y1 = x0 + host.winfo_width(), y0 + host.winfo_height()
+                if not (x0 <= event.x_root <= x1 and y0 <= event.y_root <= y1):
+                    continue
+                if _SCROLL_DEBUG:
+                    log.info("[SCROLL-DBG] → hit-test по координатам: канва %r", canvas)
+                return canvas
+            except tk.TclError:
+                continue
+        return None
+
+    def _on_scroll_wheel(self, event):
+        """Прокрутка настоящим колёсиком (MouseWheel / Button-4 / Button-5)."""
+        if _SCROLL_DEBUG:
+            log.info(
+                "[SCROLL-DBG] вход: widget=%r x_root=%s y_root=%s delta=%r num=%r",
+                getattr(event, "widget", None), getattr(event, "x_root", None),
+                getattr(event, "y_root", None), getattr(event, "delta", None),
+                getattr(event, "num", None),
+            )
+        canvas = self._scroll_area_for_event(event)
+        if canvas is not None:
+            return self._scroll_canvas(canvas, event)
+        # Диагностика: колесо дошло до обработчика, но ни одна область не приняла
+        # событие — пишем детали, чтобы видеть реальную доставку на macOS.
+        try:
+            log.info(
+                "[SCROLL] колесо не обработано: widget=%r x_root=%s y_root=%s delta=%r num=%r",
+                getattr(event, "widget", None), getattr(event, "x_root", None),
+                getattr(event, "y_root", None), getattr(event, "delta", None),
+                getattr(event, "num", None),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    @staticmethod
+    def _unpack_touchpad_delta(raw) -> tuple[int, int]:
+        """Tk 9 TouchpadScroll: Δx в старших 16 битах, Δy в младших (знаковые)."""
+        value = int(raw) & 0xFFFFFFFF
+        dx = value >> 16
+        dy = value & 0xFFFF
+        if dx >= 0x8000:
+            dx -= 0x10000
+        if dy >= 0x8000:
+            dy -= 0x10000
+        return dx, dy
+
+    def _on_touchpad_scroll(self, event):
+        """Прокрутка трекпада/Magic Mouse: Tk 9 шлёт <TouchpadScroll>, не <MouseWheel>.
+
+        Δx — старшие 16 бит event.delta, Δy — младшие. Жест генерируется ~60 раз
+        в секунду, поэтому прокручиваем на сами дельты (пиксельная точность).
+        """
+        try:
+            dx, dy = self._unpack_touchpad_delta(getattr(event, "delta", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if _SCROLL_DEBUG:
+            log.info(
+                "[SCROLL-DBG] touchpad: widget=%r x_root=%s y_root=%s dx=%s dy=%s",
+                getattr(event, "widget", None), getattr(event, "x_root", None),
+                getattr(event, "y_root", None), dx, dy,
+            )
+        if not dy:
+            return None
+        canvas = self._scroll_area_for_event(event)
+        if canvas is None:
+            return None
+        pixels = max(-120, min(120, -dy))
+        try:
+            canvas.yview_scroll(pixels, "units")
+        except tk.TclError:
+            return None
+        return "break"
+
+    def _scroll_canvas(self, canvas, event):
+        """Шаг прокрутки для канвы; None — событие не про прокрутку."""
+        num = getattr(event, "num", None)
+        if num in (4, 5):
+            pixels = -60 if num == 4 else 60
+        else:
+            delta = int(getattr(event, "delta", 0) or 0)
+            if not delta:
+                return None
+            if sys.platform == "darwin":
+                # macOS: delta приходит «строками» (трекпад — мелкие шаги).
+                pixels = max(-120, min(120, -delta * 10))
+            else:
+                pixels = int(-delta / 120 * 60)
+                if pixels == 0:
+                    pixels = -60 if delta > 0 else 60
+                pixels = max(-240, min(240, pixels))
+        try:
+            canvas.yview_scroll(pixels, "units")
+        except tk.TclError:
+            return None
+        return "break"
+
+    def _build_macos_menu(self) -> None:
+        """Стандартная строка меню macOS: «Правка» (⌘C/V/X/A/Z), «Окно».
+
+        На Aqua Tk у текстовых полей нет Command-привязок: копирование, вставка
+        и «выделить всё» работают только через меню приложения, как в системных
+        программах. Пункты меню шлют виртуальные события текущему виджету.
+        """
+        if sys.platform != "darwin":
+            return
+
+        # Фокус на macOS у каждого окна свой: root.focus_get() может не видеть
+        # поля диалогов (Настройки и т.п.). Запоминаем последний сфокусированный
+        # виджет приложения — меню «Правка» и ⌘W адресуют действия ему.
+        self._focus_widget = getattr(self, "_focus_widget", None)
+
+        def _track_focus(event):
+            widget = getattr(event, "widget", None)
+            if widget is None or isinstance(widget, (tk.Tk, tk.Toplevel)):
+                return
+            self._focus_widget = widget
+
+        self.root.bind_all("<FocusIn>", _track_focus, add="+")
+
+        def _menu_virtual(name: str):
+            def action():
+                widget = self._edit_target_widget()
+                if widget is None:
+                    return
+                with contextlib.suppress(tk.TclError):
+                    widget.event_generate(name)
+            return action
+
+        menubar = tk.Menu(self.root)
+
+        app_menu = tk.Menu(menubar, tearoff=0)
+        app_menu.add_command(
+            label="О VideoMaker",
+            command=lambda: self._log("VideoMaker: окно управления сборкой видео"),
+        )
+        app_menu.add_separator()
+        app_menu.add_command(label="Выход", accelerator="Command+Q", command=self._on_close)
+        menubar.add_cascade(label="VideoMaker", menu=app_menu)
+
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Отменить", accelerator="Command+Z",
+                              command=_menu_virtual("<<Undo>>"))
+        edit_menu.add_command(label="Повторить", accelerator="Command+Shift+Z",
+                              command=_menu_virtual("<<Redo>>"))
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Вырезать", accelerator="Command+X",
+                              command=_menu_virtual("<<Cut>>"))
+        edit_menu.add_command(label="Копировать", accelerator="Command+C",
+                              command=_menu_virtual("<<Copy>>"))
+        edit_menu.add_command(label="Вставить", accelerator="Command+V",
+                              command=_menu_virtual("<<Paste>>"))
+        edit_menu.add_command(label="Выделить всё", accelerator="Command+A",
+                              command=_menu_virtual("<<SelectAll>>"))
+        menubar.add_cascade(label="Правка", menu=edit_menu)
+
+        window_menu = tk.Menu(menubar, tearoff=0)
+        window_menu.add_command(label="Свернуть", accelerator="Command+M",
+                                command=self._mac_minimize)
+        window_menu.add_command(label="Закрыть окно", accelerator="Command+W",
+                                command=self._mac_close_focused_window)
+        menubar.add_cascade(label="Окно", menu=window_menu)
+
+        self._mac_menu_edit = edit_menu
+        self._mac_menu_window = window_menu
+        self.root.configure(menu=menubar)
+
+    def _edit_target_widget(self):
+        """Виджет-адресат для <<Copy>>/<<Paste>>/<<Cut>>/... — из любого окна.
+
+        На macOS фокус у каждого toplevel свой, поэтому root.focus_get() может
+        «не видеть» поля диалогов (Настройки и т.п.). Основной источник — последний
+        сфокусированный виджет приложения (отслеживается через <FocusIn>).
+        """
+        widget = getattr(self, "_focus_widget", None)
+        if widget is not None:
+            try:
+                if widget.winfo_exists():
+                    return widget
+            except tk.TclError:
+                pass
+        try:
+            return self.root.focus_get()
+        except (tk.TclError, KeyError):
+            return None
+
+    def _mac_close_focused_window(self) -> None:
+        """⌘W: закрыть окно с фокусом (диалог) или главное окно."""
+        widget = self._edit_target_widget()
+        try:
+            top = widget.winfo_toplevel() if widget is not None else self.root
+        except tk.TclError:
+            top = self.root
+        if top is self.root:
+            self._on_close()
+        else:
+            with contextlib.suppress(tk.TclError):
+                top.destroy()
+
+    def _mac_minimize(self) -> None:
+        """⌘M: свернуть главное окно."""
+        with contextlib.suppress(tk.TclError):
+            self.root.iconify()
 
     def _build_ui(self) -> None:
         """Построить интерфейс."""
@@ -475,23 +1106,34 @@ class App:
         self.notebook.add(self.tab_imo, text="  Intro / Middle / Outro  ")
         self._build_imo_tab(self.tab_imo)
 
+        self.tab_monitor = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_monitor, text="  Журнал и пульт  ")
+        self._build_monitoring_tab(self.tab_monitor)
+
         log.info("[GUI] _build_ui(): интерфейс построен")
 
     def _build_main_tab(self, parent) -> None:
-        """Вкладка основных настроек: слева настройки, справа чёрное поле серии."""
-        columns = ttk.Frame(parent)
-        columns.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        columns.columnconfigure(0, weight=3)
-        columns.columnconfigure(1, weight=2)
-        columns.rowconfigure(0, weight=1)
+        """Вкладка создания: слева настройки со своим скроллом, справа пульт и журнал."""
+        # Две панели: настройки (прокручиваются сами) и стационарная панель
+        # пульта/журнала, растягивающаяся вместе с окном.
+        self.main_panes = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
+        self.main_panes.pack(fill=tk.BOTH, expand=True)
+        self.settings_pane = ttk.Frame(self.main_panes)
+        self.monitor_pane = ttk.Frame(self.main_panes)
+        self.main_panes.add(self.settings_pane, weight=3)
+        self.main_panes.add(self.monitor_pane, weight=2)
 
-        left_col = ttk.Frame(columns)
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        layout = ttk.Frame(self.settings_pane)
+        layout.pack(fill=tk.BOTH, expand=True)
+        settings_body = self._create_scrollable_content(layout, padx=8, pady=(6, 0))
+        # Остальные элементы (создать/отмена, прогресс, «▶ что идёт сейчас») кладём
+        # в layout, а не в canvas: основные действия остаются на экране.
+        parent = layout
 
-        right_col = ttk.Frame(columns)
-        right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        right_col.rowconfigure(0, weight=1)
-        right_col.columnconfigure(0, weight=1)
+        # Настройки — одна вертикальная колонка: «Название серии» всегда внизу,
+        # а не в отдельной правой колонке при широком окне.
+        left_col = ttk.Frame(settings_body)
+        left_col.pack(fill=tk.X, expand=False, padx=2, pady=6)
 
         # ─── Левая колонка: все настройки ───────────────────────────────
         # Аудио: одна кнопка — файл или папка (приложение определяет само)
@@ -513,9 +1155,13 @@ class App:
             font=("SF Pro Text", 9),
         ).pack(anchor="w", pady=(2, 0))
 
-        broll_frame = self._add_section(left_col, "B-roll видео")
-        self._add_browse_row(broll_frame, "Горизонтальный:", "broll_h_var", "dir")
-        self._add_browse_row(broll_frame, "Вертикальный (9:16):", "broll_v_var", "dir")
+        broll_frame = self._add_section(left_col, "B-roll видео (16:9 и 9:16)")
+        broll_h_row = ttk.Frame(broll_frame)
+        broll_h_row.pack(fill=tk.X, pady=(0, 4))
+        self._add_browse_row(broll_h_row, "Горизонтальный:", "broll_h_var", "dir")
+        broll_v_row = ttk.Frame(broll_frame)
+        broll_v_row.pack(fill=tk.X)
+        self._add_browse_row(broll_v_row, "Вертикальный:", "broll_v_var", "dir")
         self.imo_folder_var = tk.StringVar()
         self._add_file_section(
             left_col, "Фон для вертикального видео",
@@ -574,9 +1220,99 @@ class App:
         self.add_bgm_var = tk.BooleanVar(value=True)
         self.intro_gemini_var = tk.BooleanVar(value=True)
         self.keep_temp_var = tk.BooleanVar(value=False)
+        self.remove_long_pauses_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "remove_long_pauses", False))
+        )
         ttk.Checkbutton(audio_settings, text="Усилить голос", variable=self.voice_enhance_var).pack(anchor="w", pady=2)
         # r56: BGM включается галочками соцсетей выше
         ttk.Checkbutton(audio_settings, text="Интро: Gemini выбирает", variable=self.intro_gemini_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(
+            audio_settings,
+            text="Сокращать длинные паузы между словами (необязательно)",
+            variable=self.remove_long_pauses_var,
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            audio_settings,
+            text="По умолчанию выключено. Короткие паузы сохраняются; после пунктуации остаётся больше времени.",
+            wraplength=410,
+            justify="left",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", padx=(20, 0), pady=(0, 4))
+        self.align_speech_rate_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "align_speech_rate", False))
+        )
+        ttk.Checkbutton(
+            audio_settings,
+            text="Выравнивать темп речи (скорость — ползунком ниже)",
+            variable=self.align_speech_rate_var,
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            audio_settings,
+            text="По умолчанию выключено (как в прежних версиях): аудио идёт без обрезки тишины и без ускорения/замедления. Включите, чтобы подтягивать темп речи к выбранной скорости.",
+            wraplength=410,
+            justify="left",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", padx=(20, 0), pady=(0, 2))
+
+        # r57-api.22: ползунок скорости речи — цель в словах/мин или коэффициент темпа.
+        self.speech_rate_mode_var = tk.StringVar(
+            value=speech_rate_mode_display(getattr(self.settings, "speech_rate_mode", "wpm"))
+        )
+        self.speech_rate_target_wpm_var = tk.DoubleVar(
+            value=_float_setting(getattr(self.settings, "speech_rate_target_wpm", 120.0), 120.0)
+        )
+        self.speech_rate_coefficient_var = tk.DoubleVar(
+            value=_float_setting(getattr(self.settings, "speech_rate_coefficient", 1.0), 1.0)
+        )
+        sr_row = ttk.Frame(audio_settings)
+        sr_row.pack(fill=tk.X, pady=(2, 0))
+        ttk.Label(sr_row, text="Скорость речи:").pack(side=tk.LEFT)
+        self.speech_rate_mode_combo = ttk.Combobox(
+            sr_row,
+            textvariable=self.speech_rate_mode_var,
+            state="readonly",
+            width=18,
+            values=["По словам/мин", "По коэффициенту"],
+        )
+        self.speech_rate_mode_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.speech_rate_slider = tk.Scale(
+            audio_settings,
+            orient=tk.HORIZONTAL,
+            showvalue=False,
+            length=380,
+            from_=100, to=200, resolution=1,
+            variable=self.speech_rate_target_wpm_var,
+        )
+        self.speech_rate_slider.pack(fill=tk.X, padx=(20, 0), pady=(2, 0))
+        self.speech_rate_hint = ttk.Label(
+            audio_settings,
+            text="",
+            wraplength=410,
+            justify="left",
+            font=("SF Pro Text", 9),
+        )
+        self.speech_rate_hint.pack(anchor="w", padx=(20, 0), pady=(0, 4))
+        self.speech_rate_mode_combo.bind("<<ComboboxSelected>>", self._on_speech_rate_mode_change)
+        self.speech_rate_target_wpm_var.trace_add("write", lambda *a: self._update_speech_rate_hint())
+        self.speech_rate_coefficient_var.trace_add("write", lambda *a: self._update_speech_rate_hint())
+        self._on_speech_rate_mode_change()
+
+        # r57-api.24: вырезание повторов/лишних слов по итоговому тексту Gemini.
+        self.cut_extra_words_var = tk.BooleanVar(
+            value=bool(getattr(self.settings, "cut_extra_words", False))
+        )
+        ttk.Checkbutton(
+            audio_settings,
+            text="Вырезать повторы и лишние слова (по тексту Gemini)",
+            variable=self.cut_extra_words_var,
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            audio_settings,
+            text="По умолчанию выключено. Сравнивает итоговый текст Gemini с расшифровкой: вырезает только слова, которых Gemini не оставил (повторы, оговорки). Исправления распознавания не трогаются.",
+            wraplength=410,
+            justify="left",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", padx=(20, 0), pady=(0, 4))
         ttk.Checkbutton(audio_settings, text="Сохранять временные файлы", variable=self.keep_temp_var).pack(anchor="w", pady=2)
         self.prevent_sleep_var = tk.BooleanVar(value=True)
         self.shutdown_when_done_var = tk.BooleanVar(value=False)
@@ -648,20 +1384,28 @@ class App:
 
         lufs_frame = self._add_section(left_col, "Громкость (LUFS)")
         lufs_frame.configure(padding=8)
-        ttk.Label(lufs_frame, text="Целевой LUFS:", width=14).pack(side=tk.LEFT)
+        ttk.Label(lufs_frame, text="Целевой LUFS для микса с BGM:").pack(anchor="w")
+        lufs_row = ttk.Frame(lufs_frame)
+        lufs_row.pack(fill=tk.X, pady=(3, 0))
         self.target_lufs_var = tk.StringVar(value="-14.0")
-        ttk.Entry(lufs_frame, textvariable=self.target_lufs_var, width=8, font=("SF Pro Text", 11)).pack(side=tk.LEFT)
-        ttk.Label(lufs_frame, text="(YouTube/TikTok: -14)").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Entry(lufs_row, textvariable=self.target_lufs_var, width=8, font=("SF Pro Text", 11)).pack(side=tk.LEFT)
+        ttk.Label(lufs_row, text="диапазон −36 … −5; обычно −14").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(
+            lufs_frame,
+            text="Voice-only выход не проходит отдельную нормализацию — без дополнительного медленного прохода.",
+            wraplength=410, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
 
-        # ─── Правая колонка: чёрное поле названия серии на всю высоту ───
-        series_frame = self._add_section(right_col, "Название серии / папка результата", expand=True)
+        # ─── Поле имени серии (компактное, не растягивается на весь экран) ───
+        series_frame = self._add_section(left_col, "Название серии / папка результата")
         series_frame.configure(padding=8)
         self.series_var = tk.StringVar()
         self.series_entry = tk.Text(
             series_frame,
             wrap=tk.WORD,
             font=("SF Pro Text", 13),
-            bg="#000000",
+            height=5,
+            bg=COLORS["input_bg"],
             fg="#F0F0F0",
             insertbackground="#FFFFFF",
             selectbackground="#3A7AFE",
@@ -673,7 +1417,7 @@ class App:
             highlightbackground="#333333",
             highlightcolor="#3A7AFE",
         )
-        self.series_entry.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        self.series_entry.pack(fill=tk.X, expand=False, pady=(4, 0))
         ttk.Label(
             series_frame,
             text="Имя папки результата = это название (или имя аудио)",
@@ -720,50 +1464,111 @@ class App:
         self._activity_text = ""
         self._pipeline_t0 = 0.0
 
-        # === Лог ===
-        log_frame = self._add_section(parent, "Лог", expand=True)
-        log_frame.configure(padding=4)
-
-        self.log_text = tk.Text(
-            log_frame,
-            height=10,
-            state=tk.DISABLED,
-            wrap=tk.WORD,
-            bg=COLORS["log_bg"],
-            fg=COLORS["text_dim"],
-            insertbackground=COLORS["text"],
-            selectbackground=COLORS["primary"],
-            font=("SF Mono", 10),
-            borderwidth=0,
-            highlightthickness=0,
-            padx=8,
-            pady=8,
+        # ─── Правая панель: пульт + живой журнал (без своего внешнего скролла) ───
+        right = ttk.Frame(self.monitor_pane, padding=12)
+        right.pack(fill=tk.BOTH, expand=True)
+        self._build_api_block(
+            right, side=tk.TOP, pady=(0, 10), label_attr="api_label_main",
+            cb_attr="api_lan_cb_main", btn_attr="api_open_btn_main",
         )
-        log_scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        log_scrollbar.pack(side="right", fill="y")
-        self.log_text.pack(fill="both", expand=True)
+        self._build_log_block(right, attr="log_text_main", width=46, height=16)
 
-        # === Пульт (HTTP API): телефон и Orchestrator ===
-        api_frame = self._add_section(parent, "Пульт (телефон / Orchestrator)")
-        api_frame.configure(padding=4)
-        self.api_label = ttk.Label(
-            api_frame, text="пульт поднимается…", style="Progress.TLabel",
+        # Стартовая позиция шторки ~60/40; дальше её двигает пользователь/окно.
+        self._sash_placed = False
+        self.root.after_idle(self._place_main_sash)
+
+    def _build_monitoring_tab(self, parent) -> None:
+        """Журнал и сетевой пульт на отдельной вкладке, без обрезания снизу."""
+        layout = ttk.Frame(parent, padding=12)
+        layout.pack(fill=tk.BOTH, expand=True)
+        # Пульт закреплён снизу (как и раньше), журнал растягивается выше него.
+        self._build_api_block(
+            layout, side=tk.BOTTOM, pady=(12, 0), label_attr="api_label",
+            cb_attr="api_lan_cb", btn_attr="api_open_btn",
+        )
+        self._build_log_block(layout, attr="log_text", height=16)
+
+    def _place_main_sash(self) -> None:
+        """Первичная позиция шторки главной вкладки (~60/40)."""
+        if getattr(self, "_sash_placed", False):
+            return
+        try:
+            width = int(self.main_panes.winfo_width())
+            if width <= 200:
+                self.root.after(50, self._place_main_sash)
+                return
+            position = min(max(420, int(width * 0.6)), max(420, width - 320))
+            self.main_panes.sashpos(0, position)
+            self._sash_placed = True
+        except tk.TclError:
+            pass
+
+    def _build_api_block(self, parent, *, side, pady, label_attr: str, cb_attr: str, btn_attr: str):
+        """Блок пульта. Копии (вкладка + правая панель) делят галочку и обработчики."""
+        if not hasattr(self, "api_lan_var"):
+            self.api_lan_var = tk.BooleanVar(value=False)
+            self._api_labels: list[ttk.Label] = []
+            self._api_urls: dict = {}
+            self._api_lan_setter = None
+        frame = ttk.LabelFrame(
+            parent, text="Пульт (телефон / Orchestrator)",
+            style="Card.TLabelframe", padding=10,
+        )
+        frame.pack(side=side, fill=tk.X, pady=pady)
+        label = ttk.Label(
+            frame, text="пульт поднимается…", style="Progress.TLabel",
             anchor="w", justify="left", wraplength=880,
         )
-        self.api_label.pack(fill=tk.X)
-        api_row = ttk.Frame(api_frame)
-        api_row.pack(fill=tk.X, pady=(6, 0))
-        self.api_lan_var = tk.BooleanVar(value=False)
-        self.api_lan_cb = ttk.Checkbutton(
-            api_row, text="Доступ из локальной сети (телефон)",
+        label.pack(fill=tk.X)
+        setattr(self, label_attr, label)
+        self._api_labels.append(label)
+        frame.bind(
+            "<Configure>",
+            lambda event, target=label: target.configure(wraplength=max(280, event.width - 28)),
+            add="+",
+        )
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X, pady=(8, 0))
+        check = ttk.Checkbutton(
+            row, text="Доступ из локальной сети (телефон)",
             variable=self.api_lan_var, command=self._on_api_lan_toggle,
         )
-        self.api_lan_cb.pack(side=tk.LEFT)
-        self.api_open_btn = ttk.Button(api_row, text="Открыть пульт", command=self._open_api_page)
-        self.api_open_btn.pack(side=tk.RIGHT)
-        self._api_urls: dict = {}
-        self._api_lan_setter = None
+        check.pack(side=tk.LEFT, anchor="w")
+        setattr(self, cb_attr, check)
+        button = ttk.Button(
+            row, text="Открыть пульт", command=self._open_api_page,
+            style="Accent.TButton",
+        )
+        button.pack(side=tk.RIGHT, padx=(12, 0))
+        setattr(self, btn_attr, button)
+        return frame
+
+    def _build_log_block(self, parent, *, attr: str, height: int = 16, width: int | None = None):
+        """Журнал обработки; все копии виджета получают один и тот же поток лога."""
+        frame = ttk.LabelFrame(
+            parent, text="Журнал обработки", style="Card.TLabelframe", padding=6,
+        )
+        frame.pack(fill=tk.BOTH, expand=True)
+        text_kwargs: dict = dict(
+            height=height, state=tk.DISABLED, wrap=tk.WORD,
+            bg=COLORS["log_bg"], fg=COLORS["text_dim"],
+            insertbackground=COLORS["text"], selectbackground=COLORS["primary"],
+            font=("SF Mono", 10), borderwidth=0, highlightthickness=1,
+            highlightbackground=COLORS["border"], highlightcolor=COLORS["primary"],
+            padx=10, pady=10,
+        )
+        if width is not None:
+            text_kwargs["width"] = width
+        widget = tk.Text(frame, **text_kwargs)
+        scrollbar = ttk.Scrollbar(frame, command=widget.yview)
+        widget.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        widget.pack(fill=tk.BOTH, expand=True)
+        setattr(self, attr, widget)
+        if not hasattr(self, "_log_widgets"):
+            self._log_widgets: list[tk.Text] = []
+        self._log_widgets.append(widget)
+        return frame
 
     # ─── Пульт: отображение адресов и переключатель сети ──────────────────
     def _show_api_info(self, urls: dict, lan_setter=None) -> None:
@@ -780,11 +1585,26 @@ class App:
             text += "\nС телефона: включите «Доступ из локальной сети»"
         if not self._api_urls.get("enabled", True):
             text = "Пульт выключен (--no-api или enabled=false в ~/video_maker/api.json)"
+            enabled = False
+        else:
+            enabled = True
         with contextlib.suppress(tk.TclError):
-            # виджет мог быть уже уничтожен при закрытии окна
-            self.api_label.configure(text=text)
+            # виджеты-копии могли быть уже уничтожены при закрытии окна
+            for label in getattr(self, "_api_labels", ()):
+                label.configure(text=text)
             if hasattr(self, "api_lan_var"):
                 self.api_lan_var.set(bool(self._api_urls.get("lan")))
+            self._set_api_controls_enabled(enabled)
+
+    def _set_api_controls_enabled(self, enabled: bool) -> None:
+        """Когда пульт выключен, галочка сети и «Открыть пульт» бессмысленны."""
+        state = tk.NORMAL if enabled else tk.DISABLED
+        for attr in ("api_lan_cb", "api_lan_cb_main", "api_open_btn", "api_open_btn_main"):
+            widget = getattr(self, attr, None)
+            if widget is None:
+                continue
+            with contextlib.suppress(tk.TclError):
+                widget.configure(state=state)
 
     def _on_api_lan_toggle(self) -> None:
         """Переключить доступ из сети (сохранение + перезапуск сервера в потоке)."""
@@ -795,8 +1615,9 @@ class App:
         # Сразу видно, что нажатие принято: перезапуск сервера занимает доли
         # секунды, но подпись успевает показать, что происходит.
         with contextlib.suppress(tk.TclError):
-            self.api_label.configure(
-                text=f"Переключаю доступ из сети: {'включаю' if want else 'выключаю'}…")
+            for label in getattr(self, "_api_labels", ()):
+                label.configure(
+                    text=f"Переключаю доступ из сети: {'включаю' if want else 'выключаю'}…")
 
         def _show(urls) -> None:
             if urls:
@@ -836,9 +1657,8 @@ class App:
             log.warning("[API] не удалось открыть браузер: %s", exc)
 
     def _build_imo_tab(self, parent) -> None:
-        """Вкладка Intro / Middle / Outro для каждого формата."""
-        scroll = ttk.Frame(parent)
-        scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        """Вкладка Intro / Middle / Outro для каждого формата с прокруткой."""
+        scroll = self._create_scrollable_content(parent, padx=8, pady=8)
 
         for section_title, prefix in [
             ("16:9 Горизонтальное видео", "h"),
@@ -970,7 +1790,7 @@ class App:
         var = tk.StringVar()
         setattr(self, var_name, var)
 
-        ttk.Label(parent, text=label_text, width=14).pack(side=tk.LEFT)
+        ttk.Label(parent, text=label_text, width=18).pack(side=tk.LEFT)
         ttk.Entry(parent, textvariable=var, font=("SF Pro Text", 10)).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
         )
@@ -981,23 +1801,70 @@ class App:
             cmd = lambda v=var, n=var_name, ft=filetypes: self._browse_file(v, n, ft)
         ttk.Button(parent, text="Обзор...", command=cmd).pack(side=tk.LEFT)
 
+    def _browse_initialdir(self, current_value: str = "") -> str:
+        """Каталог для открытия диалога: текущее поле → его ближайшая существующая
+        папка → последняя выбранная → домашний каталог."""
+        def usable(path: str) -> str:
+            path = (path or "").strip()
+            if not path:
+                return ""
+            if os.path.isdir(path):
+                return path
+            parent = os.path.dirname(path)
+            return parent if os.path.isdir(parent) else ""
+
+        value = (current_value or "").strip()
+        candidate = usable(value)
+        if candidate:
+            return candidate
+        if value:
+            base = value if os.path.isdir(value) else os.path.dirname(value)
+            deepest = _deepest_existing(base or value)
+            if deepest:
+                return deepest
+        return usable(getattr(self, "_last_browse_dir", "")) or os.path.expanduser("~")
+
+    @staticmethod
+    def _value_of(var) -> str:
+        try:
+            return (var.get() or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _remember_browse_dir(self, path: str) -> None:
+        """Запомнить выбранный путь, чтобы следующий диалог открылся там же."""
+        path = (path or "").strip()
+        if not path:
+            return
+        self._last_browse_dir = path if os.path.isdir(path) else os.path.dirname(path)
+
     def _browse_dir(self, var: tk.StringVar, name: str) -> None:
         log.info(f"[GUI] Диалог выбора папки: {name}")
-        path = filedialog.askdirectory()
-        log.info(f"[GUI] Выбрана папка: {path or '(пусто)'}")
-        if path:
+        initial_dir = self._browse_initialdir(self._value_of(var))
+
+        def done(path: str) -> None:
+            log.info(f"[GUI] Выбрана папка: {path or '(пусто)'}")
+            if not path:
+                return
+            self._remember_browse_dir(path)
             var.set(path.strip())
             log.info(f"[GUI] {name} = {path}")
             self._save_settings()
+
+        self._choose_folder(initial_dir, f"Выберите папку: {name}", done)
 
     def _browse_file(self, var: tk.StringVar, name: str, filetypes=None) -> None:
         log.info(f"[GUI] Диалог выбора файла: {name}")
         types = [("Все файлы", "*.*")]
         if filetypes:
             types = filetypes + types
-        path = filedialog.askopenfilename(filetypes=types)
-        log.info(f"[GUI] Выбран файл: {path or '(пусто)'}")
-        if path:
+        initial_dir = self._browse_initialdir(self._value_of(var))
+
+        def done(path: str) -> None:
+            log.info(f"[GUI] Выбран файл: {path or '(пусто)'}")
+            if not path:
+                return
+            self._remember_browse_dir(path)
             var.set(path.strip())
             log.info(f"[GUI] {name} = {path}")
             # Сначала sync (галочка + bool=True), потом save —
@@ -1005,50 +1872,155 @@ class App:
             self._sync_imo_checkboxes()
             self._save_settings()
 
+        self._choose_file(initial_dir, f"Выберите файл: {name}", done, filetypes=types)
+
+    # ─── Системные диалоги выбора (macOS: choose folder/file через osascript) ──
+    def _choose_folder(self, initial_dir: str, title: str, on_done) -> None:
+        self._choose_path_native("folder", initial_dir, title, on_done)
+
+    def _choose_file(self, initial_dir: str, title: str, on_done, filetypes=None) -> None:
+        self._choose_path_native("file", initial_dir, title, on_done, filetypes=filetypes)
+
+    def _choose_path_native(self, kind: str, initial_dir: str, title: str, on_done,
+                            filetypes=None) -> None:
+        """Системный диалог macOS со стартовой папкой.
+
+        Tk 9 на этом Mac игнорирует initialdir у собственного диалога, поэтому
+        используем родной диалог через osascript: он всегда открывается в нужной
+        папке и не блокирует цикл Tk, пока открыт.
+        """
+        if sys.platform != "darwin":
+            self._choose_path_tk(kind, initial_dir, title, on_done, filetypes=filetypes)
+            return
+        script = self._osascript_choose_script(kind, initial_dir, title)
+        try:
+            import subprocess
+            proc = subprocess.Popen(
+                ["/usr/bin/osascript", "-e", script],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+        except OSError as exc:
+            log.warning("[GUI] системный диалог не запустился (%s); откат на Tk", exc)
+            self._choose_path_tk(kind, initial_dir, title, on_done, filetypes=filetypes)
+            return
+        self._poll_osascript(proc, on_done)
+
+    @staticmethod
+    def _osascript_choose_script(kind: str, initial_dir: str, title: str) -> str:
+        def esc(text: str) -> str:
+            return text.replace("\\", "\\\\").replace('"', '\\"')
+
+        what = "folder" if kind == "folder" else "file"
+        line = f'choose {what} with prompt "{esc(title or "Выберите путь")}"'
+        if (initial_dir or "").strip():
+            line += f' default location (POSIX file "{esc(initial_dir.strip())}")'
+        return f"set theChoice to {line}\nreturn POSIX path of theChoice"
+
+    def _poll_osascript(self, proc, on_done, attempts: int = 0) -> None:
+        if getattr(self, "_closing", False):
+            with contextlib.suppress(Exception):
+                proc.kill()
+            return
+        rc = proc.poll()
+        if rc is None:
+            if attempts > 3600:  # диалог оставлен открытым надолго
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                on_done("")
+                return
+            with contextlib.suppress(tk.TclError, RuntimeError):
+                self.root.after(200, lambda: self._poll_osascript(proc, on_done, attempts + 1))
+            return
+        out = ""
+        err = ""
+        with contextlib.suppress(Exception):
+            out = (proc.stdout.read() if proc.stdout else "").strip()
+            err = (proc.stderr.read() if proc.stderr else "").strip()
+        path = ""
+        if rc == 0 and out:
+            path = out if out == "/" else out.rstrip("/")
+        elif rc != 0 and "-128" not in err:
+            log.warning("[GUI] диалог выбора завершился с ошибкой: %s", err[:200] or rc)
+        on_done(path)
+
+    def _choose_path_tk(self, kind: str, initial_dir: str, title: str, on_done, filetypes=None) -> None:
+        """Резервный путь: встроенный диалог Tk (когда osascript недоступен)."""
+        try:
+            if kind == "folder":
+                path = filedialog.askdirectory(initialdir=initial_dir, title=title or None)
+            else:
+                types = [("Все файлы", "*.*")]
+                if filetypes:
+                    types = list(filetypes) + types
+                path = filedialog.askopenfilename(initialdir=initial_dir, title=title or None,
+                                                  filetypes=types)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[GUI] диалог выбора не открылся: %s", exc)
+            path = ""
+        on_done(path or "")
+
     def _browse_dir_into(self, var) -> None:
-        from tkinter import filedialog
-        path = filedialog.askdirectory()
-        if path:
-            var.set(path)
+        initial_dir = self._browse_initialdir(self._value_of(var))
+
+        def done(path: str) -> None:
+            if path:
+                self._remember_browse_dir(path)
+                var.set(path)
+
+        self._choose_folder(initial_dir, "Выберите папку", done)
 
     def _browse_bgm_folder(self, folder_var, enable_var, is_youtube_base: bool = False) -> None:
         """Выбор папки BGM: если в ней есть аудио — галочка включается автоматически."""
-        from tkinter import filedialog
-        path = filedialog.askdirectory()
-        if not path:
-            return
-        folder_var.set(path)
-        from ..config.settings import Settings
-        has = Settings.folder_has_bgm_audio(path)
-        if has:
-            enable_var.set(True)
-        elif not is_youtube_base:
-            # доп. соцсеть без треков — галочку лучше снять
-            enable_var.set(False)
+        initial_dir = self._browse_initialdir(self._value_of(folder_var))
+
+        def done(path: str) -> None:
+            if not path:
+                return
+            self._remember_browse_dir(path)
+            folder_var.set(path)
+            from ..config.settings import Settings
+            has = Settings.folder_has_bgm_audio(path)
+            if has:
+                enable_var.set(True)
+            elif not is_youtube_base:
+                # доп. соцсеть без треков — галочку лучше снять
+                enable_var.set(False)
+
+        self._choose_folder(initial_dir, "Выберите папку с фоновой музыкой", done)
 
     def _browse_audio(self) -> None:
         """Одна кнопка: выбрать файл или папку. Тип определяется автоматически, инфо — в лог."""
         log.info("[GUI] Диалог выбора аудио (файл или папка)")
-        path = self._ask_file_or_directory(
+        initial_dir = self._browse_initialdir(self._value_of(getattr(self, "audio_var", None)))
+
+        def done(path: str) -> None:
+            if not path:
+                log.info("[GUI] Выбор аудио отменён")
+                return
+            path = path.strip()
+            self._remember_browse_dir(path)
+            self.audio_var.set(path)
+            log.info(f"[GUI] audio_var = {path}")
+            self._save_settings()
+            self._report_audio_selection(path)
+
+        self._ask_file_or_directory(
             title="Выберите аудиофайл или папку с аудио",
+            on_done=done,
             filetypes=[("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg *.aac *.wma"), ("Все файлы", "*.*")],
         )
-        if not path:
-            log.info("[GUI] Выбор аудио отменён")
-            return
-        path = path.strip()
-        self.audio_var.set(path)
-        log.info(f"[GUI] audio_var = {path}")
-        self._save_settings()
-        self._report_audio_selection(path)
 
-    def _ask_file_or_directory(self, title: str = "Выберите файл или папку", filetypes=None) -> str:
-        """
-        Диалог, позволяющий выбрать файл или папку.
-        На macOS — через AppleScript (NSOpenPanel: files + directories).
-        Иначе — компактное окно с двумя действиями (один раз нажать).
+    def _ask_file_or_directory(self, title: str = "Выберите файл или папку", on_done=None,
+                               filetypes=None) -> None:
+        """Компактное окно «что выбрать?» → системный диалог файла или папки.
+
+        Сам выбор идёт через _choose_file/_choose_folder (родной диалог macOS со
+        стартовой папкой); результат приходит в on_done(path) позже.
         """
         # --- macOS: нативный панель с canChooseFiles + canChooseDirectories ---
+        initial_dir = self._browse_initialdir(
+            self.audio_var.get() if hasattr(self, "audio_var") else ""
+        )
         if sys.platform == "darwin":
             try:
                 import subprocess
@@ -1083,6 +2055,12 @@ class App:
                     panel.setAllowsMultipleSelection_(False)
                     panel.setMessage_(title)
                     panel.setPrompt_("Выбрать")
+                    if initial_dir:
+                        try:
+                            from Foundation import NSURL  # type: ignore
+                            panel.setDirectoryURL_(NSURL.fileURLWithPath_(initial_dir))
+                        except Exception:
+                            pass
                     if panel.runModal() == NSModalResponseOK:
                         urls = panel.URLs()
                         if urls and len(urls) > 0:
@@ -1093,8 +2071,8 @@ class App:
             except Exception as e:
                 log.debug("[GUI] macOS native panel unavailable: %s", e)
 
-        # --- Fallback: маленькое окно выбора типа (одна кнопка «Обзор» → один клик тип) ---
-        result = {"path": ""}
+        # --- Компактное окно выбора типа (одна кнопка «Обзор» → один клик тип) ---
+        result = {"done": False}
 
         win = tk.Toplevel(self.root)
         win.title(title)
@@ -1107,21 +2085,30 @@ class App:
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frame, text="Что выбрать?", style="Section.TLabel").pack(anchor="w", pady=(0, 10))
 
+        def _finish(path: str) -> None:
+            if result["done"]:
+                return
+            result["done"] = True
+            if on_done is not None:
+                on_done(path or "")
+
         def pick_file():
-            types = filetypes or [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg *.aac *.wma"), ("Все файлы", "*.*")]
-            p = filedialog.askopenfilename(parent=win, title="Выберите аудиофайл", filetypes=types)
-            if p:
-                result["path"] = p
             win.destroy()
+            self._choose_file(
+                initial_dir,
+                "Выберите аудиофайл",
+                _finish,
+                filetypes=filetypes or [("Аудио", "*.mp3 *.wav *.flac *.m4a *.ogg *.aac *.wma"),
+                                        ("Все файлы", "*.*")],
+            )
 
         def pick_dir():
-            p = filedialog.askdirectory(parent=win, title="Выберите папку с аудио")
-            if p:
-                result["path"] = p
             win.destroy()
+            self._choose_folder(initial_dir, "Выберите папку с аудио", _finish)
 
         def cancel():
             win.destroy()
+            _finish("")
 
         ttk.Button(frame, text="📄  Аудиофайл", command=pick_file).pack(fill=tk.X, pady=3)
         ttk.Button(frame, text="📁  Папка с аудио", command=pick_dir).pack(fill=tk.X, pady=3)
@@ -1137,7 +2124,6 @@ class App:
             pass
 
         win.wait_window()
-        return result["path"]
 
     def _report_audio_selection(self, path: str) -> None:
         """После выбора пути: определить файл/папку, просканировать, вывести инфо в лог GUI."""
@@ -1204,13 +2190,22 @@ class App:
         """Настройки: Gemini/Whisper + описания YouTube + доп. промпт."""
         win = tk.Toplevel(self.root)
         win.title("Настройки")
-        win.geometry("640x640")
+        screen_w = int(win.winfo_screenwidth())
+        screen_h = int(win.winfo_screenheight())
+        modal_w = min(820, max(520, screen_w - 60))
+        modal_h = min(760, max(500, screen_h - 100))
+        modal_x = max(0, self.root.winfo_rootx() + (self.root.winfo_width() - modal_w) // 2)
+        modal_y = max(0, self.root.winfo_rooty() + (self.root.winfo_height() - modal_h) // 2)
+        win.geometry(f"{modal_w}x{modal_h}+{modal_x}+{modal_y}")
+        win.minsize(min(520, modal_w), min(500, modal_h))
         win.configure(bg=COLORS.get("bg", "#1e1e1e"))
         win.transient(self.root)
         win.grab_set()
 
+        win.grid_columnconfigure(0, weight=1)
+        win.grid_rowconfigure(0, weight=1)
         nb = ttk.Notebook(win)
-        nb.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        nb.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 8))
 
         # --- Tab: Модели ---
         tab_m = ttk.Frame(nb, padding=12)
@@ -1221,9 +2216,9 @@ class App:
             _model_values = list(AVAILABLE_GEMINI_MODELS)
         except Exception:
             _model_values = [
-                "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
-                "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash",
-                "gemini-1.5-flash", "gemini-1.5-pro",
+                "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+                "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.7-flash",
+                "gemini-3.8-flash", "gemini-2.5-flash",
             ]
         cur = (self.model_var.get() or "").strip()
         if cur and cur not in _model_values:
@@ -1316,7 +2311,13 @@ class App:
         keys_list = list(self.settings.gemini_api_keys or [])
         if not keys_list and self.settings.gemini_api_key:
             keys_list = [self.settings.gemini_api_key]
-        keys_box = tk.Text(tab_m, height=5, wrap="word")
+        keys_box = tk.Text(
+            tab_m, height=5, wrap="word", bg=COLORS["input_bg"], fg=COLORS["input_fg"],
+            insertbackground=COLORS["text"], selectbackground=COLORS["primary"],
+            relief="flat", borderwidth=0, highlightthickness=1,
+            highlightbackground=COLORS["border"], highlightcolor=COLORS["primary"],
+            padx=8, pady=8,
+        )
         keys_box.pack(fill=tk.X, pady=(4, 8))
         keys_box.insert("1.0", "\n".join(keys_list))
         self._settings_keys_box = keys_box
@@ -1377,8 +2378,19 @@ class App:
             text="Полное тело промпта Gemini (можно менять целиком). Пусто при сохранении = снова встроенный.",
             style="Section.TLabel",
         ).pack(anchor="w")
-        prompt_box = tk.Text(tab_p, height=20, wrap="word")
-        prompt_box.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
+        prompt_frame = ttk.Frame(tab_p)
+        prompt_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 4))
+        prompt_box = tk.Text(
+            prompt_frame, height=12, wrap="word", bg=COLORS["input_bg"], fg=COLORS["input_fg"],
+            insertbackground=COLORS["text"], selectbackground=COLORS["primary"],
+            relief="flat", borderwidth=0, highlightthickness=1,
+            highlightbackground=COLORS["border"], highlightcolor=COLORS["primary"],
+            padx=8, pady=8,
+        )
+        prompt_scrollbar = ttk.Scrollbar(prompt_frame, command=prompt_box.yview)
+        prompt_box.configure(yscrollcommand=prompt_scrollbar.set)
+        prompt_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        prompt_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # Загрузить: сохранённое тело или встроенный промпт
         body = str(getattr(self.settings, "prompt_body", "") or "").strip()
         if not body:
@@ -1402,7 +2414,13 @@ class App:
             text="Доп. инструкции (необязательно) — дописываются ПОСЛЕ тела промпта:",
             style="Section.TLabel",
         ).pack(anchor="w", pady=(8, 0))
-        extra_box = tk.Text(tab_p, height=4, wrap="word")
+        extra_box = tk.Text(
+            tab_p, height=4, wrap="word", bg=COLORS["input_bg"], fg=COLORS["input_fg"],
+            insertbackground=COLORS["text"], selectbackground=COLORS["primary"],
+            relief="flat", borderwidth=0, highlightthickness=1,
+            highlightbackground=COLORS["border"], highlightcolor=COLORS["primary"],
+            padx=8, pady=8,
+        )
         extra_box.pack(fill=tk.X, pady=(4, 4))
         extra_box.insert("1.0", str(getattr(self.settings, "prompt_extra", "") or ""))
         self._settings_prompt_extra_box = extra_box
@@ -1484,9 +2502,12 @@ class App:
             self._save_packaging_settings()
             win.destroy()
 
-        btn_row = ttk.Frame(win, padding=(12, 0, 12, 12))
-        btn_row.pack(fill=tk.X)
-        ttk.Button(btn_row, text="Сохранить", style="Accent.TButton", command=save).pack(fill=tk.X)
+        btn_row = ttk.Frame(win, padding=(0, 0, 0, 0))
+        btn_row.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
+        self._settings_save_btn = ttk.Button(
+            btn_row, text="Сохранить", style="Accent.TButton", command=save,
+        )
+        self._settings_save_btn.pack(fill=tk.X, ipady=2)
 
     def _save_packaging_settings(self) -> None:
         """Дописать packaging-поля в JSON настроек (и prompt_extra)."""
@@ -1565,17 +2586,18 @@ class App:
             try:
                 if getattr(self, "_closing", False):
                     return
-                self.log_text.configure(state=tk.NORMAL)
-                self.log_text.insert(tk.END, full_msg + "\n")
-                # Ограничиваем рост виджета
-                try:
-                    line_count = int(self.log_text.index("end-1c").split(".")[0])
-                    if line_count > 3000:
-                        self.log_text.delete("1.0", f"{line_count - 2500}.0")
-                except Exception:
-                    pass
-                self.log_text.see(tk.END)
-                self.log_text.configure(state=tk.DISABLED)
+                for widget in getattr(self, "_log_widgets", ()):  # вкладка + правая панель
+                    try:
+                        widget.configure(state=tk.NORMAL)
+                        widget.insert(tk.END, full_msg + "\n")
+                        # Ограничиваем рост виджета
+                        line_count = int(widget.index("end-1c").split(".")[0])
+                        if line_count > 3000:
+                            widget.delete("1.0", f"{line_count - 2500}.0")
+                        widget.see(tk.END)
+                        widget.configure(state=tk.DISABLED)
+                    except tk.TclError:
+                        pass
                 # Статус-бар: что идёт прямо сейчас (рамки-разделители пропускаем)
                 line = ""
                 for candidate in reversed((msg or "").splitlines()):
@@ -1694,6 +2716,57 @@ class App:
 
     # ─── Запуск пайплайна ────────────────────────────────────────────────
 
+    def _on_speech_rate_mode_change(self, *_args) -> None:
+        """Переключить диапазон ползунка под режим: слова/мин ↔ коэффициент."""
+        if not hasattr(self, "speech_rate_slider"):
+            return
+        from ..engines.speech_rate import normalize_speed_mode
+
+        if normalize_speed_mode(self.speech_rate_mode_var.get()) == "coefficient":
+            self.speech_rate_slider.configure(
+                variable=self.speech_rate_coefficient_var,
+                from_=1.0, to=1.5, resolution=0.01,
+            )
+        else:
+            self.speech_rate_slider.configure(
+                variable=self.speech_rate_target_wpm_var,
+                from_=100, to=200, resolution=1,
+            )
+        self._update_speech_rate_hint()
+
+    def _update_speech_rate_hint(self) -> None:
+        """Подсказка под ползунком: текущая цель + метрики прошлого прогона."""
+        if not hasattr(self, "speech_rate_hint"):
+            return
+        try:
+            from ..engines.speech_rate import load_speech_state, normalize_speed_mode
+
+            state = load_speech_state()
+            if normalize_speed_mode(self.speech_rate_mode_var.get()) == "coefficient":
+                k = _float_setting(self.speech_rate_coefficient_var.get(), 1.0)
+                first = f"Коэффициент ×{k:.2f}: итог = исходный темп × {k:.2f}"
+            else:
+                target = _float_setting(self.speech_rate_target_wpm_var.get(), 120.0)
+                estimate = ""
+                source_wpm = _float_setting(state.get("measured_wpm_before_adjustment"), 0.0)
+                if source_wpm > 0:
+                    if target > source_wpm:
+                        estimate = f" ≈ ×{target / source_wpm:.2f} от прошлого темпа"
+                    else:
+                        estimate = " (прошлый темп уже не ниже цели)"
+                first = f"Цель: {target:.0f} слов/мин{estimate}"
+            last = ""
+            if state.get("word_count"):
+                last = (
+                    f"Прошлый прогон: {state.get('word_count')} слов · "
+                    f"{_float_setting(state.get('measured_wpm_before_adjustment'), 0.0):.1f} → "
+                    f"{_float_setting(state.get('final_wpm'), 0.0):.1f} слов/мин · "
+                    f"коэффициент ×{_float_setting(state.get('tempo_factor'), 1.0):.2f}"
+                )
+            self.speech_rate_hint.configure(text=first + (("\n" + last) if last else ""))
+        except Exception:
+            pass
+
     def _start(self) -> None:
         """Запустить пайплайн."""
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
@@ -1704,115 +2777,11 @@ class App:
             log.warning("[GUI] Пайплайн уже выполняется — показываем предупреждение")
             messagebox.showwarning("Внимание", "Пайплайн уже запущен")
             return
+        if getattr(self, "_starting", False):
+            return
 
         log.info("[GUI] Сбор настроек из GUI...")
-        self.settings.audio_path = self.audio_var.get()
-        self.settings.broll_horizontal = self.broll_h_var.get()
-        self.settings.broll_vertical = self.broll_v_var.get()
-        self.settings.vertical_background = self.bg_var.get()
-        # r56 platform BGM
-        self.settings.bgm_youtube_folder = self.bgm_youtube_folder_var.get().strip()
-        self.settings.bgm_tiktok_folder = self.bgm_tiktok_folder_var.get().strip()
-        self.settings.bgm_instagram_folder = self.bgm_instagram_folder_var.get().strip()
-        self.settings.bgm_rutube_folder = self.bgm_rutube_folder_var.get().strip()
-        self.settings.bgm_vk_folder = self.bgm_vk_folder_var.get().strip()
-        self.settings.bgm_facebook_folder = self.bgm_facebook_folder_var.get().strip()
-        self.settings.bgm_other_folder = self.bgm_other_folder_var.get().strip()
-        self.settings.bgm_youtube_enable = bool(self.bgm_youtube_enable_var.get())
-        self.settings.bgm_tiktok_enable = bool(self.bgm_tiktok_enable_var.get())
-        self.settings.bgm_instagram_enable = bool(self.bgm_instagram_enable_var.get())
-        self.settings.bgm_rutube_enable = bool(self.bgm_rutube_enable_var.get())
-        self.settings.bgm_vk_enable = bool(self.bgm_vk_enable_var.get())
-        self.settings.bgm_facebook_enable = bool(self.bgm_facebook_enable_var.get())
-        self.settings.bgm_other_enable = bool(self.bgm_other_enable_var.get())
-        self.settings.bgm_folder = self.settings.bgm_youtube_folder  # legacy
-        self.settings.intro_middle_outro_folder = self.imo_folder_var.get()
-        self.settings.cover_horizontal = self.cover_h_var.get()
-        self.settings.cover_vertical = self.cover_v_var.get()
-        if hasattr(self, "shorts_cover_var"):
-            self.settings.shorts_cover_image = self.shorts_cover_var.get().strip()
-        self.settings.series_name = (self.series_entry.get("1.0", "end").strip() if hasattr(self, "series_entry") else self.series_var.get())
-        self.settings.gemini_model = self.model_var.get()
-        self.settings.intro_gemini = self.intro_gemini_var.get()
-
-        # WhisperX settings
-        self.settings.whisperx_path = self.whisperx_path_var.get()
-        self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
-        self.settings.whisper_language = self.whisper_lang_var.get()
-        self.settings.whisper_device = self.whisper_dev_var.get()
-        self.settings.whisper_compute_type = self.whisper_comp_var.get()
-
-        # Other settings
-        self.settings.keep_temp_files = self.keep_temp_var.get()
-        self.settings.prevent_sleep = self.prevent_sleep_var.get()
-        self.settings.shutdown_when_done = self.shutdown_when_done_var.get()
-        try:
-            self.settings.target_lufs = float(self.target_lufs_var.get().strip() or -14.0)
-        except (ValueError, TypeError, AttributeError):
-            self.settings.target_lufs = -14.0
-            log.warning("[GUI] Некорректный target_lufs, используем -14.0")
-
-        log.info(f"[GUI] audio_path = {self.settings.audio_path}")
-        log.info(f"[GUI] broll_horizontal = {self.settings.broll_horizontal}")
-        log.info(f"[GUI] broll_vertical = {self.settings.broll_vertical}")
-        log.info(f"[GUI] vertical_background = {self.settings.vertical_background}")
-        log.info(f"[GUI] bgm_folder = {self.settings.bgm_folder}")
-        log.info(f"[GUI] imo_folder = {self.settings.intro_middle_outro_folder}")
-        log.info(f"[GUI] output_folder = {self.output_var.get() or '(auto)'}")
-        log.info(f"[GUI] gemini_model = {self.settings.gemini_model}")
-        log.info(f"[GUI] series_name = {self.settings.series_name}")
-        log.info(f"[GUI] whisper_language = {self.settings.whisper_language}")
-        if hasattr(self, "caption_style_var"):
-            log.info(f"[GUI] caption_style = {self.caption_style_var.get()}")
-        if hasattr(self, "hook_style_var"):
-            log.info(f"[GUI] hook_style = {self.hook_style_var.get()}")
-        log.info(f"[GUI] whisper_device = {self.settings.whisper_device}")
-        log.info(f"[GUI] whisper_compute_type = {self.settings.whisper_compute_type}")
-        log.info(f"[GUI] keep_temp_files = {self.settings.keep_temp_files}")
-        log.info(f"[GUI] target_lufs = {self.settings.target_lufs}")
-
-        self.settings.h_enable_intro = self.h_intro.get()
-        self.settings.h_enable_middle = self.h_middle.get()
-        self.settings.h_enable_outro = self.h_outro.get()
-        self.settings.h_enable_hooks = self.h_hooks.get()
-        self.settings.h_enable_subtitles = self.h_subs.get()
-        self.settings.h_enable_strong_words = self.h_strong.get()
-        self.settings.v_enable_intro = self.v_intro.get()
-        self.settings.v_enable_middle = self.v_middle.get()
-        self.settings.v_enable_outro = self.v_outro.get()
-        self.settings.v_enable_hooks = self.v_hooks.get()
-        self.settings.v_enable_subtitles = self.v_subs.get()
-        self.settings.v_enable_strong_words = self.v_strong.get()
-        self.settings.s_enable_intro = self.s_intro.get()
-        self.settings.s_enable_middle = self.s_middle.get()
-        self.settings.s_enable_outro = self.s_outro.get()
-        self.settings.s_enable_hooks = self.s_hooks.get()
-        self.settings.s_enable_subtitles = self.s_subs.get()
-        self.settings.s_enable_strong_words = self.s_strong.get()
-
-        self.settings.voice_enhance = self.voice_enhance_var.get()
-        self.settings.add_bgm = any([
-            self.settings.bgm_youtube_enable,
-            self.settings.bgm_tiktok_enable,
-            self.settings.bgm_instagram_enable,
-            self.settings.bgm_rutube_enable,
-            self.settings.bgm_vk_enable,
-            self.settings.bgm_facebook_enable,
-            self.settings.bgm_other_enable,
-        ])
-
-        log.info(f"[GUI] voice_enhance = {self.settings.voice_enhance}")
-        log.info(f"[GUI] bgm platforms = {self.settings.active_bgm_platforms()}")
-
-        # Папка вывода: явная, либо родитель файла, либо сама папка аудио
-        out = self.output_var.get().strip()
-        if not out and self.settings.audio_path:
-            if os.path.isdir(self.settings.audio_path):
-                out = self.settings.audio_path
-            else:
-                out = os.path.dirname(self.settings.audio_path)
-        self.settings.output_folder = out
-        log.info(f"[GUI] output_folder (final) = {self.settings.output_folder}")
+        collect_settings_from_gui(self)
 
         # Persist GUI state before validate / pipeline
         self._save_settings()
@@ -1822,14 +2791,32 @@ class App:
             log_file = os.path.join(self.settings.output_folder, "videomaker.log")
             from video_maker.main import setup_logging
             setup_logging(log_file)
+            self._reinstall_log_hook()
             log.info(f"[GUI] Логирование перенастроено в {log_file}")
 
+        missing_network: list[str] = []
         if hasattr(self, "_wake_network_paths"):
-            self._wake_network_paths()
+            missing_network = self._wake_network_paths()
         errors = self.settings.validate()
+        if errors and missing_network:
+            # Том мог отключиться после сна: просим Finder подключить его и ждём —
+            # вместо сухой ошибки «папка не найдена».
+            self._starting = True
+            try:
+                self._wake_network_paths(wait_seconds=20.0, try_open=True)
+            finally:
+                self._starting = False
+            errors = self.settings.validate()
         if errors:
             log.error(f"[GUI] Ошибки валидации: {errors}")
-            messagebox.showerror("Ошибки", "\n".join(errors))
+            hint = ""
+            if any("/Volumes/" in e for e in errors):
+                hint = (
+                    "\n\nСетевой том ещё не подключён. Откройте его в Finder — "
+                    "подключение произойдёт автоматически, затем нажмите «Создать видео» "
+                    "ещё раз (приложение подождёт до 20 секунд)."
+                )
+            messagebox.showerror("Ошибки", "\n".join(errors) + hint)
             return
 
         # Список аудиофайлов (один или из папки, + 1 уровень подпапок)
@@ -1839,6 +2826,16 @@ class App:
         for i, pth in enumerate(self._audio_queue, 1):
             log.info(f"[GUI]   {i}. {pth}")
             self._log(f"[АУДИО]   {i}. {os.path.basename(pth)}")
+
+        if not self._audio_queue:
+            # Пустая папка/отсутствие поддерживаемых файлов: честно останавливаемся
+            # до запуска worker, чтобы API не отвечал «started» на пустой запуск.
+            messagebox.showerror(
+                "Ошибки",
+                f"В источнике нет аудиофайлов:\n{self.settings.audio_path}\n\n"
+                "Поддерживаются m4a, mp3, wav, flac, ogg, aac (файл или папка).",
+            )
+            return
 
         # Предпросмотр B-roll (подпапки с темами)
         try:
@@ -1859,6 +2856,23 @@ class App:
             log.warning("[GUI] preview B-roll failed: %s", e)
 
         log.info("[GUI] Валидация пройдена — запуск пайплайна")
+        # Freeze every setting used by the worker while still on the Tk main thread.
+        # Tk StringVar/Text.get() must never be called from the pipeline thread.
+        imo_fields = (
+            "h_intro_path", "h_mid_path", "h_outro_path",
+            "h_intro_duration", "h_mid_duration", "h_outro_duration",
+            "v_intro_path", "v_mid_path", "v_outro_path",
+            "v_intro_duration", "v_mid_duration", "v_outro_duration",
+            "s_intro_path", "s_mid_path", "s_outro_path",
+            "s_intro_duration", "s_mid_duration", "s_outro_duration",
+        )
+        self._pipeline_snapshot = {
+            "settings": copy.deepcopy(self.settings),
+            "packaging_opts": self._packaging_opts_from_settings(),
+            "caption_style": self.caption_style_var.get() if hasattr(self, "caption_style_var") else "auto_aisie",
+            "hook_style": self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie",
+            "imo": {name: self._var_get(name) for name in imo_fields},
+        }
         self.running = True
         self.start_btn.configure(state=tk.DISABLED)
         self.cancel_btn.configure(state=tk.NORMAL)
@@ -1867,24 +2881,49 @@ class App:
         self._start_progress_ticker()
         log.info("[GUI] self.running = True, кнопка Старт заблокирована, Отмена включена")
 
-        thread = threading.Thread(target=self._run_pipeline, daemon=True)
+        thread = threading.Thread(target=self._run_pipeline, name="vm-pipeline", daemon=True)
+        self._pipeline_thread = thread
         log.info(f"[GUI] Создан поток пайплайна: {thread.name}")
         thread.start()
         log.info("[GUI] Поток запущен")
 
     def _run_pipeline(self) -> None:
         """Выполнить пайплайн в отдельном потоке (один файл или очередь из папки)."""
+        snapshot = getattr(self, "_pipeline_snapshot", None) or {}
+        pipeline_settings = snapshot.get("settings") or self.settings
+        pipeline_packaging_opts = snapshot.get("packaging_opts")
+        if not isinstance(pipeline_packaging_opts, dict):
+            # Safe non-GUI fallback for programmatic callers; never access Tk here.
+            pipeline_packaging_opts = {
+                "playlist_season_url": getattr(pipeline_settings, "playlist_season_url", ""),
+                "playlist_block_url": getattr(pipeline_settings, "playlist_block_url", ""),
+                "playlist_block_label": getattr(pipeline_settings, "playlist_block_label", ""),
+                "required_hashtags": getattr(pipeline_settings, "required_hashtags", ""),
+                "append_playlist_footer": bool(getattr(pipeline_settings, "append_playlist_footer", True)),
+                "shorts_use_template": bool(getattr(pipeline_settings, "shorts_use_template", True)),
+                "shorts_desc_max_len": int(getattr(pipeline_settings, "shorts_desc_max_len", 280) or 280),
+                "prompt_extra": str(getattr(pipeline_settings, "prompt_extra", "") or ""),
+                "prompt_body": str(getattr(pipeline_settings, "prompt_body", "") or ""),
+            }
+        imo_values = snapshot.get("imo") if isinstance(snapshot.get("imo"), dict) else {}
+        caption_style = str(snapshot.get("caption_style") or "auto_aisie")
+        hook_style = str(snapshot.get("hook_style") or "auto_aisie")
+
+        def _frozen_imo(name: str) -> str:
+            value = imo_values.get(name, "")
+            return str(value or "").strip()
+
         log.info("[PIPELINE] ═══════════════════════════════════════════════")
         log.info(f"[PIPELINE] Поток пайплайна запущен: {threading.current_thread().name}")
         log.info(f"[PIPELINE] PID: {os.getpid()}")
 
         from ..engines.power import prevent_sleep_start, prevent_sleep_stop, shutdown_computer
         pipeline_ok = False
-        if getattr(self.settings, "prevent_sleep", True):
+        if getattr(pipeline_settings, "prevent_sleep", True):
             prevent_sleep_start(log_fn=self._log)
 
         audio_queue = getattr(self, "_audio_queue", None) or Settings.collect_audio_files(
-            self.settings.audio_path
+            pipeline_settings.audio_path
         )
         total = len(audio_queue)
         if total == 0:
@@ -1906,8 +2945,8 @@ class App:
             log.info("[PIPELINE] Все модули пайплайна импортированы")
             log.info(f"[PIPELINE] Очередь: {total} аудиофайл(ов)")
 
-            base_series = (self.settings.series_name or "").strip()
-            base_output = self.settings.output_folder
+            base_series = (pipeline_settings.series_name or "").strip()
+            base_output = pipeline_settings.output_folder
 
             for idx, audio_file in enumerate(audio_queue, 1):
                 if self.cancel_event.is_set():
@@ -1940,71 +2979,79 @@ class App:
                 progress_span = 100.0 / total
 
                 ctx = PipelineContext(
-                    packaging_opts=self._packaging_opts_from_settings(),
+                    packaging_opts=pipeline_packaging_opts,
                     audio_path=audio_file,
-                    broll_horizontal=self.settings.broll_horizontal,
-                    broll_vertical=self.settings.broll_vertical,
-                    bgm_folder=self.settings.bgm_folder,
-                    bgm_platforms=self.settings.active_bgm_platforms(),
-                    intro_middle_outro_folder=self.settings.intro_middle_outro_folder,
-                    vertical_background=self.settings.vertical_background,
-                    cover_horizontal=self.settings.cover_horizontal,
-                    cover_vertical=self.settings.cover_vertical,
-                    shorts_cover_image=getattr(self.settings, "shorts_cover_image", "") or "",
+                    broll_horizontal=pipeline_settings.broll_horizontal,
+                    broll_vertical=pipeline_settings.broll_vertical,
+                    bgm_folder=pipeline_settings.bgm_folder,
+                    bgm_platforms=pipeline_settings.active_bgm_platforms(),
+                    intro_middle_outro_folder=pipeline_settings.intro_middle_outro_folder,
+                    vertical_background=pipeline_settings.vertical_background,
+                    cover_horizontal=pipeline_settings.cover_horizontal,
+                    cover_vertical=pipeline_settings.cover_vertical,
+                    shorts_cover_image=getattr(pipeline_settings, "shorts_cover_image", "") or "",
                     output_folder=out_dir,
                     series_name=series,
-                    gemini_model=self.settings.gemini_model,
-                    gemini_api_key=self.settings.gemini_api_key,
-                    gemini_api_keys=self.settings.gemini_api_keys,
-                    whisper_model=self.settings.whisper_model,
-                    whisperx_path=self.settings.whisperx_path,
-                    whisper_language=self.settings.whisper_language,
-                    whisper_device=self.settings.whisper_device,
-                    whisper_compute_type=self.settings.whisper_compute_type,
-                    voice_enhance=self.settings.voice_enhance,
-                    add_bgm=self.settings.add_bgm,
-                    intro_gemini=self.settings.intro_gemini,
-                    keep_temp_files=self.settings.keep_temp_files,
-                    caption_style=(self.caption_style_var.get() if hasattr(self, "caption_style_var") else "auto_aisie"),
-                    hook_style=(self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie"),
-                    target_lufs=self.settings.target_lufs,
-                    vstack_top_ratio=self.settings.vstack_top_ratio,
-                    h_enable_intro=self.settings.h_enable_intro,
-                    h_enable_middle=self.settings.h_enable_middle,
-                    h_enable_outro=self.settings.h_enable_outro,
-                    h_enable_hooks=self.settings.h_enable_hooks,
-                    h_enable_subtitles=self.settings.h_enable_subtitles,
-                    h_enable_strong_words=self.settings.h_enable_strong_words,
-                    v_enable_intro=self.settings.v_enable_intro,
-                    v_enable_middle=self.settings.v_enable_middle,
-                    v_enable_outro=self.settings.v_enable_outro,
-                    v_enable_hooks=self.settings.v_enable_hooks,
-                    v_enable_subtitles=self.settings.v_enable_subtitles,
-                    v_enable_strong_words=self.settings.v_enable_strong_words,
-                    s_enable_intro=self.settings.s_enable_intro,
-                    s_enable_middle=self.settings.s_enable_middle,
-                    s_enable_outro=self.settings.s_enable_outro,
-                    s_enable_hooks=self.settings.s_enable_hooks,
-                    s_enable_subtitles=self.settings.s_enable_subtitles,
-                    s_enable_strong_words=self.settings.s_enable_strong_words,
-                    h_intro_path=self._var_get("h_intro_path"),
-                    h_mid_path=self._var_get("h_mid_path"),
-                    h_outro_path=self._var_get("h_outro_path"),
-                    h_intro_duration=float(self._var_get("h_intro_duration") or 3),
-                    h_mid_duration=float(self._var_get("h_mid_duration") or 1),
-                    h_outro_duration=float(self._var_get("h_outro_duration") or 3),
-                    v_intro_duration=float(self._var_get("v_intro_duration") or 3),
-                    v_mid_duration=float(self._var_get("v_mid_duration") or 1),
-                    v_outro_duration=float(self._var_get("v_outro_duration") or 3),
-                    s_intro_duration=float(self._var_get("s_intro_duration") or 3),
-                    s_mid_duration=float(self._var_get("s_mid_duration") or 1),
-                    s_outro_duration=float(self._var_get("s_outro_duration") or 3),
-                    v_intro_path=self._var_get("v_intro_path"),
-                    v_mid_path=self._var_get("v_mid_path"),
-                    v_outro_path=self._var_get("v_outro_path"),
-                    s_intro_path=self._var_get("s_intro_path"),
-                    s_mid_path=self._var_get("s_mid_path"),
-                    s_outro_path=self._var_get("s_outro_path"),
+                    gemini_model=pipeline_settings.gemini_model,
+                    gemini_api_key=pipeline_settings.gemini_api_key,
+                    gemini_api_keys=pipeline_settings.gemini_api_keys,
+                    whisper_model=pipeline_settings.whisper_model,
+                    whisperx_path=pipeline_settings.whisperx_path,
+                    whisper_language=pipeline_settings.whisper_language,
+                    whisper_device=pipeline_settings.whisper_device,
+                    whisper_compute_type=pipeline_settings.whisper_compute_type,
+                    voice_enhance=pipeline_settings.voice_enhance,
+                    add_bgm=pipeline_settings.add_bgm,
+                    remove_long_pauses=pipeline_settings.remove_long_pauses,
+                    align_speech_rate=pipeline_settings.align_speech_rate,
+                    # r57-api.22: ползунок скорости речи обязан попадать в контекст,
+                    # иначе стадии берут дефолты (120 слов/мин) и настройка «не работает».
+                    speech_rate_mode=pipeline_settings.speech_rate_mode,
+                    speech_rate_target_wpm=pipeline_settings.speech_rate_target_wpm,
+                    speech_rate_coefficient=pipeline_settings.speech_rate_coefficient,
+                    cut_extra_words=pipeline_settings.cut_extra_words,
+                    intro_gemini=pipeline_settings.intro_gemini,
+                    keep_temp_files=pipeline_settings.keep_temp_files,
+                    caption_style=caption_style,
+                    hook_style=hook_style,
+                    target_lufs=pipeline_settings.target_lufs,
+                    vstack_top_ratio=pipeline_settings.vstack_top_ratio,
+                    h_enable_intro=pipeline_settings.h_enable_intro,
+                    h_enable_middle=pipeline_settings.h_enable_middle,
+                    h_enable_outro=pipeline_settings.h_enable_outro,
+                    h_enable_hooks=pipeline_settings.h_enable_hooks,
+                    h_enable_subtitles=pipeline_settings.h_enable_subtitles,
+                    h_enable_strong_words=pipeline_settings.h_enable_strong_words,
+                    v_enable_intro=pipeline_settings.v_enable_intro,
+                    v_enable_middle=pipeline_settings.v_enable_middle,
+                    v_enable_outro=pipeline_settings.v_enable_outro,
+                    v_enable_hooks=pipeline_settings.v_enable_hooks,
+                    v_enable_subtitles=pipeline_settings.v_enable_subtitles,
+                    v_enable_strong_words=pipeline_settings.v_enable_strong_words,
+                    s_enable_intro=pipeline_settings.s_enable_intro,
+                    s_enable_middle=pipeline_settings.s_enable_middle,
+                    s_enable_outro=pipeline_settings.s_enable_outro,
+                    s_enable_hooks=pipeline_settings.s_enable_hooks,
+                    s_enable_subtitles=pipeline_settings.s_enable_subtitles,
+                    s_enable_strong_words=pipeline_settings.s_enable_strong_words,
+                    h_intro_path=_frozen_imo("h_intro_path"),
+                    h_mid_path=_frozen_imo("h_mid_path"),
+                    h_outro_path=_frozen_imo("h_outro_path"),
+                    h_intro_duration=float(_frozen_imo("h_intro_duration") or 3),
+                    h_mid_duration=float(_frozen_imo("h_mid_duration") or 1),
+                    h_outro_duration=float(_frozen_imo("h_outro_duration") or 3),
+                    v_intro_duration=float(_frozen_imo("v_intro_duration") or 3),
+                    v_mid_duration=float(_frozen_imo("v_mid_duration") or 1),
+                    v_outro_duration=float(_frozen_imo("v_outro_duration") or 3),
+                    s_intro_duration=float(_frozen_imo("s_intro_duration") or 3),
+                    s_mid_duration=float(_frozen_imo("s_mid_duration") or 1),
+                    s_outro_duration=float(_frozen_imo("s_outro_duration") or 3),
+                    v_intro_path=_frozen_imo("v_intro_path"),
+                    v_mid_path=_frozen_imo("v_mid_path"),
+                    v_outro_path=_frozen_imo("v_outro_path"),
+                    s_intro_path=_frozen_imo("s_intro_path"),
+                    s_mid_path=_frozen_imo("s_mid_path"),
+                    s_outro_path=_frozen_imo("s_outro_path"),
                     log_callback=self._log,
                 )
                 ctx.cancel_event = self.cancel_event  # для ShortsCutter / отмены внутри стадий
@@ -2076,9 +3123,18 @@ class App:
                         stage.name(),
                         __import__("time").time() - _t_stage,
                     )
-                    save_checkpoint(
-                        ctx, name, queue_index=idx, queue_total=total, log_fn=ctx.log,
-                    )
+                    if self.cancel_event.is_set():
+                        # Отмена пришла во время стадии: не помечаем её выполненной,
+                        # чтобы резюме продолжилось с неё, а не с середины.
+                        prev = (getattr(ctx, "_completed_stages", None) or [None])[-1]
+                        save_checkpoint(
+                            ctx, prev or "cancelled",
+                            queue_index=idx, queue_total=total, log_fn=ctx.log,
+                        )
+                    else:
+                        save_checkpoint(
+                            ctx, name, queue_index=idx, queue_total=total, log_fn=ctx.log,
+                        )
                     # Масштабируем progress стадии в общий прогресс
                     global_progress = progress_base + (ctx.progress / 100.0) * progress_span
                     self._set_progress(global_progress, stage=f"[{idx}/{total}] {stage.name()}")
@@ -2118,9 +3174,13 @@ class App:
         finally:
             log.info("[PIPELINE] finally: self.running = False, кнопка разблокирована")
             try:
+                self.root.after(0, self._update_speech_rate_hint)
+            except Exception:
+                pass
+            try:
                 from ..engines.power import prevent_sleep_stop, shutdown_computer
                 prevent_sleep_stop(log_fn=self._log)
-                if pipeline_ok and getattr(self.settings, "shutdown_when_done", False):
+                if pipeline_ok and getattr(pipeline_settings, "shutdown_when_done", False):
                     self._log("[POWER] Выключение компьютера по завершению...")
                     log.info("[POWER] shutdown_when_done=True — выключаем")
                     shutdown_computer(delay_sec=30, log_fn=self._log)
@@ -2176,19 +3236,23 @@ class App:
             log.info(f"[WHISPER] Found: {path}")
         else:
             self.whisperx_status_var.set("✗ Не найден")
-            log.warning("[WHISPER] Not found")
+            # Движок использует MLX Whisper и WhisperX не вызывает — это не ошибка.
+            log.debug("[WHISPER] WhisperX не найден (движку MLX он не нужен)")
 
     def _browse_whisperx(self) -> None:
         """Ручной выбор whisperx бинарника."""
-        path = filedialog.askopenfilename(
-            title="Выберите whisperx",
-            filetypes=[("Исполняемые файлы", "*"), ("Все файлы", "*.*")]
-        )
-        if path:
+        initial_dir = self._browse_initialdir(self._value_of(getattr(self, "whisperx_path_var", None)))
+
+        def done(path: str) -> None:
+            if not path:
+                return
+            self._remember_browse_dir(path)
             self.whisperx_path_var.set(path.strip())
             self.whisperx_status_var.set(f"✓ {path}")
             self._save_settings()
             log.info(f"[WHISPER] Manual path set: {path}")
+
+        self._choose_file(initial_dir, "Выберите whisperx", done)
 
     def _kill_ffmpeg_processes(self) -> None:
         """Убить дочерние ffmpeg/ffprobe текущего процесса (не чужие в системе)."""
@@ -2389,6 +3453,8 @@ class App:
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            if data.get("last_browse_dir"):
+                self._last_browse_dir = str(data["last_browse_dir"])
             for key, value in data.items():
                 if isinstance(value, str):
                     value = value.strip()
@@ -2430,17 +3496,24 @@ class App:
                 self.append_playlist_footer_var.set(bool(getattr(self.settings, "append_playlist_footer", True)))
                 self.shorts_use_template_var.set(bool(getattr(self.settings, "shorts_use_template", True)))
                 self.shorts_desc_max_len_var.set(str(getattr(self.settings, "shorts_desc_max_len", 280)))
+            if hasattr(self, "speech_rate_mode_var"):
+                # JSON может хранить каноническое «wpm»/«coefficient» или подпись —
+                # в комбобоксе всегда показываем подпись.
+                self.speech_rate_mode_var.set(
+                    speech_rate_mode_display(self.speech_rate_mode_var.get())
+                )
             self._wake_network_paths()
             self._sync_imo_checkboxes()
             self._bind_imo_path_traces()
         except Exception as e:
             log.warning("[GUI] Ошибка загрузки настроек: %s", e)
 
-    def _wake_network_paths(self) -> None:
-        """Пробудить сетевые тома (/Volumes/...) после reconnect.
+    def _wake_network_paths(self, wait_seconds: float = 0.0, *, try_open: bool = False) -> list[str]:
+        """Разбудить сетевые тома (/Volumes/...) и дождаться их появления.
 
-        macOS часто не монтирует SMB/AFP, пока папку не открыть в Finder.
-        Делаем os.listdir по корню тома и exists по сохранённым путям.
+        macOS не монтирует SMB/AFP, пока к папке не обратятся: стучимся в корень
+        тома, при необходимости просим Finder открыть его (open -g, без фокуса)
+        и ждём. Возвращает пути, которые так и остались недоступны.
         """
         paths = []
         for name in PATH_VARS:
@@ -2453,7 +3526,7 @@ class App:
             if p:
                 paths.append(p)
 
-        volumes = set()
+        volumes: set[str] = set()
         for p in paths:
             if p.startswith("/Volumes/"):
                 parts = p.split("/")
@@ -2461,38 +3534,64 @@ class App:
                     volumes.add("/Volumes/" + parts[2])
 
         for vol in sorted(volumes):
-            try:
-                # Триггер automount
-                if os.path.isdir(vol):
-                    os.listdir(vol)
-                    log.info("[GUI] Том доступен: %s", vol)
-                else:
-                    # Попытка «достучаться» через open -g (без окна) не всегда есть
-                    # fallback: stat
-                    os.stat(vol)
-            except OSError as e:
-                log.warning("[GUI] Том ещё не смонтирован: %s (%s)", vol, e)
+            if os.path.isdir(vol):
+                log.info("[GUI] Том доступен: %s", vol)
 
-        # Повторная проверка сохранённых путей
-        missing = []
-        for p in paths:
-            if p.startswith("/Volumes/") and not os.path.exists(p):
-                missing.append(p)
-        if missing:
+        def _trigger() -> None:
+            import subprocess
+            opened: set[str] = set()
+            for vol in sorted(volumes):
+                if os.path.isdir(vol):
+                    continue
+                try:
+                    os.listdir(vol)  # если том уже поднялся — этого достаточно
+                except OSError:
+                    pass
+                if try_open and vol not in opened:
+                    opened.add(vol)
+                    try:
+                        subprocess.run(["open", "-g", vol], capture_output=True,
+                                       text=True, timeout=10, check=False)
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("[GUI] open %s не сработал: %s", vol, exc)
+            if not try_open:
+                return
+            # Том может быть смонтирован, а конкретная папка на нём — «спать».
+            # Открываем в Finder глубочайшую существующую папку пути.
+            for p in paths:
+                if os.path.exists(p):
+                    continue
+                ancestor = _deepest_existing(os.path.dirname(p) or p)
+                if not ancestor:
+                    continue
+                mounted_root = ""
+                parts = ancestor.split("/")
+                if len(parts) >= 3 and parts[1] == "Volumes":
+                    mounted_root = "/".join(parts[:3])
+                if not mounted_root or not os.path.isdir(mounted_root):
+                    continue  # том не смонтирован — им займётся ветка выше
+                if ancestor not in opened:
+                    opened.add(ancestor)
+                    try:
+                        subprocess.run(["open", "-g", ancestor], capture_output=True,
+                                       text=True, timeout=10, check=False)
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("[GUI] open %s не сработал: %s", ancestor, exc)
+
+        missing = _wait_for_paths(
+            paths, wait_seconds, log_fn=self._log, trigger=_trigger,
+            pump=(self.root.update_idletasks if hasattr(self, "root") else None),
+        )
+        volumes_missing = [p for p in missing if p.startswith("/Volumes/")]
+        if volumes_missing:
             log.warning(
                 "[GUI] Пути пока недоступны (откройте том в Finder или подождите): %s",
-                "; ".join(missing[:5]),
+                "; ".join(volumes_missing[:5]),
             )
-            try:
-                # Одна мягкая попытка: list родителя
-                for p in missing[:8]:
-                    parent = os.path.dirname(p)
-                    try:
-                        os.listdir(parent)
-                    except OSError:
-                        pass
-            except Exception:
-                pass
+        other_missing = [p for p in missing if not p.startswith("/Volumes/")]
+        if other_missing:
+            log.debug("[GUI] Недоступные локальные пути: %s", "; ".join(other_missing[:5]))
+        return missing
 
     def _save_settings(self) -> None:
         """Сохранить текущие настройки в JSON (merge — не затираем packaging/prompt_extra)."""
@@ -2544,6 +3643,7 @@ class App:
                 ),
                 "prompt_extra": str(getattr(self.settings, "prompt_extra", "") or ""),
                 "prompt_body": str(getattr(self.settings, "prompt_body", "") or ""),
+                "last_browse_dir": str(getattr(self, "_last_browse_dir", "") or ""),
             })
             try:
                 data["shorts_desc_max_len"] = int(

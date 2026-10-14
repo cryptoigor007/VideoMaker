@@ -1,0 +1,25 @@
+CP29 coverage summary (coverage.py, branch coverage enabled)
+
+Command: coverage run --branch -m pytest tests/ -q
+Result: 183 passed, 1 skipped, 23 subtests passed
+Overall line coverage: 29%
+Statements: 9,334; missed statements: 6,420
+Branches: 3,062; partial branches: 298
+
+Highest-risk modules by current coverage:
+  video_maker/gui/app.py                  3% (1,722 stmts; 1,650 missed)
+  video_maker/engines/ffmpeg_resilient.py  6% (316 stmts; 288 missed)
+  video_maker/engines/video.py             8% (923 stmts; 836 missed)
+  video_maker/api/queue.py                11% (244 stmts; 209 missed)
+  video_maker/engines/transcription.py    14% (92 stmts; 77 missed)
+  video_maker/engines/audio.py            15% (279 stmts; 234 missed)
+  video_maker/engines/analysis.py         21% (641 stmts; 489 missed)
+  video_maker/engines/subtitles.py        25% (1,210 stmts; 883 missed)
+  video_maker/api/server.py               31% (541 stmts; 354 missed)
+  video_maker/pipeline/checkpoint.py      45% (208 stmts; 107 missed)
+  video_maker/pipeline/finalize.py        76% (378 stmts; 88 missed)
+  video_maker/pipeline/stages.py          89% (165 stmts; 17 missed)
+
+Interpretation: coverage numbers are a map for prioritizing tests, not a bug count. They show that existing passing tests execute a limited portion of the highest-risk application modules.
+
+Tooling caveat: ruff, vulture, pyflakes, bandit and mypy were not installed in the environment; installation attempt failed due unavailable DNS/network. The dead-code candidates in CP29_FINDINGS.json are based on AST/grep reference search and should be reviewed before deletion, especially if functions are intended as external API.

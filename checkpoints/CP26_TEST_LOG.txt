@@ -1,0 +1,28 @@
+CP26 verification log — 2026-10-12
+
+Core regression:
+  python -m pytest -q
+  178 passed, 1 skipped, 23 subtests passed in 1.30s. The skip is a display-dependent test in headless mode.
+
+Targeted shared-voice tests:
+  python -m pytest -q tests/test_master_voice_sharing_cp26.py tests/test_voice_enhance_pass_cp25.py
+  12 passed.
+
+Compilation:
+  python -m compileall -q video_maker tests
+  PASS.
+
+Synthetic one-pass benchmark:
+  tests/synthetic_voice_enhance_smoke_cp25.py
+  PASS; 8-second sample; legacy 6 FFmpeg / 4 ffprobe calls vs shared path 1 FFmpeg / 1 ffprobe; duration drift 0.000 seconds. Exact timing is in CP26_VOICE_ENHANCE_BENCHMARK.json.
+
+Synthetic speech FFmpeg smoke:
+  PASS; final 120 WPM; word timestamps preserved.
+
+Synthetic BGM FFmpeg smoke:
+  PASS; H.264/AAC, full audio decode PASS.
+
+Chromium responsive web smoke:
+  PASS at 1365x900 desktop and 390x844 mobile; no horizontal overflow.
+
+The full-episode processing time was not benchmarked on the user's Apple Silicon Mac/MLX. Results only quantify calls/time for the voice-enhancement subtask on an 8-second synthetic signal.

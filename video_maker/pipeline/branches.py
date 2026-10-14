@@ -77,8 +77,10 @@ class FinalHorizontal(Stage):
             )
             did_burn = True
 
-        # Аудио пост-обработка: voice_enhance и BGM (video stream copy)
-        if ctx.voice_enhance or (ctx.add_bgm and ctx.bgm_folder):
+        # Voice enhancement is a shared pre-master pass in the regular pipeline.
+        # BGM is deferred to FinalizeStage per platform; do not invoke an obsolete
+        # no-op audio-post path just because an old single-folder BGM flag is set.
+        if ctx.voice_enhance and not getattr(ctx, "voice_enhance_applied", False):
             current = self._apply_audio_post(current, ctx, output_path)
 
         # Если не было burn — привести имя к final_16x9.mp4 без перекодирования
@@ -108,25 +110,15 @@ class FinalHorizontal(Stage):
         return ctx
 
     def _apply_audio_post(self, video_path: str, ctx: PipelineContext, output_path: str) -> str:
-        """Применить voice_enhance и BGM к финальному видео."""
+        """Compatibility fallback for voice enhancement; BGM is handled per asset in FinalizeStage."""
         current = video_path
 
         # Voice enhance — применяем к аудиодорожке
-        if ctx.voice_enhance:
+        if ctx.voice_enhance and not getattr(ctx, "voice_enhance_applied", False):
             tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced.aac")
             os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
             # Извлекаем аудио, улучшаем, кладем обратно
             current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
-
-        # BGM — мешаем ОДИН раз на long wide (единственный mix в пайплайне)
-        # r56: BGM deferred to Finalize (per social platform)
-        if False and ctx.add_bgm and ctx.bgm_folder:
-            from ..engines.audio import mix_bgm
-            current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log, loudnorm=True)
-            ctx.horizontal_audio_normalized = True
-            ctx.bgm_mixed = True
-            ctx.bgm_source_video = current
-            ctx.log("[BGM] mixed once on wide — vertical/shorts will reuse this audio")
 
         return current
 
@@ -134,7 +126,8 @@ class FinalHorizontal(Stage):
         """Извлечь аудио, улучшить, заменить в видео."""
         import tempfile
 
-        from ..engines.audio import replace_audio, voice_enhance_filter
+        from ..engines.audio import probe_duration, replace_audio, voice_enhance_filter
+        from ..engines.media_process import media_timeout_for_duration, run_ffmpeg_atomic
 
         with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
             orig_audio = tmp.name
@@ -148,7 +141,11 @@ class FinalHorizontal(Stage):
                 "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                 orig_audio,
             ]
-            subprocess.run(cmd, capture_output=True, check=True)
+            run_ffmpeg_atomic(
+                cmd, orig_audio,
+                timeout=media_timeout_for_duration(probe_duration(video_path), minimum_seconds=300),
+                log_fn=ctx.log,
+            )
 
             # Улучшаем аудио
             voice_enhance_filter(orig_audio, enhanced_audio_path, log_fn=ctx.log)
@@ -280,18 +277,9 @@ class FinalVertical(Stage):
                 current = self._copy_audio_from(current, src_a, bgm_out, ctx)
                 ctx.vertical_audio_normalized = True
                 ctx.log("[BGM] vertical: reused mixed audio from wide (no re-mix)")
-            elif ctx.voice_enhance:
+            elif ctx.voice_enhance and not getattr(ctx, "voice_enhance_applied", False):
                 current = self._apply_audio_post(current, ctx, output_path)
-        elif False and ctx.add_bgm and ctx.bgm_folder:
-            # r56: BGM deferred to Finalize
-            from ..engines.audio import mix_bgm
-            bgm_out = os.path.join(output_dir, "final_9x16_bgm.mp4")
-            current = mix_bgm(current, ctx.bgm_folder, bgm_out, log_fn=ctx.log, loudnorm=True)
-            ctx.vertical_audio_normalized = True
-            ctx.bgm_mixed = True
-            ctx.bgm_source_video = current
-            ctx.log("[BGM] mixed once on vertical (wide had no BGM)")
-        elif ctx.voice_enhance:
+        elif ctx.voice_enhance and not getattr(ctx, "voice_enhance_applied", False):
             current = self._apply_audio_post(current, ctx, output_path)
 
         ctx.final_vertical = current
@@ -304,16 +292,10 @@ class FinalVertical(Stage):
 
     def _apply_audio_post(self, video_path: str, ctx: PipelineContext, output_path: str) -> str:
         current = video_path
-        if ctx.voice_enhance:
+        if ctx.voice_enhance and not getattr(ctx, "voice_enhance_applied", False):
             tmp_audio = os.path.join(ctx.output_folder, "_tmp", "voice_enhanced_v.aac")
             os.makedirs(os.path.dirname(tmp_audio), exist_ok=True)
             current = self._extract_enhance_replace_audio(current, tmp_audio, ctx)
-        # r56: BGM deferred to Finalize (per platform)
-        if False and ctx.add_bgm and ctx.bgm_folder and not getattr(ctx, "bgm_mixed", False):
-            from ..engines.audio import mix_bgm
-            current = mix_bgm(current, ctx.bgm_folder, output_path, log_fn=ctx.log, loudnorm=True)
-            ctx.bgm_mixed = True
-            ctx.bgm_source_video = current
         return current
 
     def _copy_audio_from(self, video_path: str, audio_src_video: str, output_path: str, ctx: PipelineContext) -> str:
@@ -337,7 +319,10 @@ class FinalVertical(Stage):
             *t_args,
             output_path,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        from ..engines.audio import probe_duration
+        from ..engines.media_process import media_timeout_for_duration
+        timeout = media_timeout_for_duration(probe_duration(video_path), minimum_seconds=180)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if res.returncode == 0 and os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
             return output_path
         # fallback: re-encode audio only
@@ -351,7 +336,7 @@ class FinalVertical(Stage):
             *t_args,
             output_path,
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
             return output_path
         ctx.log("[BGM] copy audio failed — keep original video audio")
@@ -360,7 +345,8 @@ class FinalVertical(Stage):
     def _extract_enhance_replace_audio(self, video_path: str, enhanced_audio_path: str, ctx: PipelineContext) -> str:
         import tempfile
         import subprocess
-        from ..engines.audio import replace_audio, voice_enhance_filter
+        from ..engines.audio import probe_duration, replace_audio, voice_enhance_filter
+        from ..engines.media_process import media_timeout_for_duration, run_ffmpeg_atomic
 
         with tempfile.NamedTemporaryFile(suffix=".aac", delete=False) as tmp:
             orig_audio = tmp.name
@@ -370,7 +356,11 @@ class FinalVertical(Stage):
                 "-vn", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                 orig_audio,
             ]
-            subprocess.run(cmd, capture_output=True, check=True)
+            run_ffmpeg_atomic(
+                cmd, orig_audio,
+                timeout=media_timeout_for_duration(probe_duration(video_path), minimum_seconds=300),
+                log_fn=ctx.log,
+            )
             voice_enhance_filter(orig_audio, enhanced_audio_path, log_fn=ctx.log)
             return replace_audio(video_path, enhanced_audio_path, video_path + ".ve.mp4", log_fn=ctx.log)
         finally:

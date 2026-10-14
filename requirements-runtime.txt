@@ -1,0 +1,7 @@
+# Runtime-only dependencies for VideoMaker. Test tools stay out of the end-user environment.
+google-genai>=1.0.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+psutil>=5.9.0
+imageio-ffmpeg>=0.4.0

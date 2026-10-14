@@ -1,0 +1,6 @@
+CP34 TkBridge/shutdown
+- compileall PASS
+- targeted: 5 passed
+- full headless: 219 passed, 1 display-only skip, 23 subtests passed
+- Xvfb 1024x768: 220 passed, 23 subtests passed
+- callbacks queued at timeout are cancelled; stopped bridge wakes waiters; graceful close waits for worker
