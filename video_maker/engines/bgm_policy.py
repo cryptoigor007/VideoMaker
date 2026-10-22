@@ -16,6 +16,8 @@ import secrets
 import threading
 import time
 
+from ..paths import resolve_existing_path
+
 log = logging.getLogger(__name__)
 
 BGM_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus")
@@ -34,6 +36,7 @@ def list_bgm_tracks(bgm_source: str) -> list[str]:
     source = os.path.abspath(os.path.expanduser((bgm_source or "").strip())) if (bgm_source or "").strip() else ""
     if not source:
         return []
+    source = resolve_existing_path(source, kind="any") or source
     if os.path.isfile(source):
         if os.path.basename(source).startswith(".") or not source.lower().endswith(BGM_EXTS):
             return []
@@ -80,6 +83,7 @@ def _write_state(path: str, state: dict) -> None:
 def _source_scope(source: str) -> tuple[str, list[str], bool]:
     """Return persistent shuffle scope, tracks, and whether source is one explicit file."""
     expanded = os.path.abspath(os.path.expanduser((source or "").strip())) if (source or "").strip() else ""
+    expanded = resolve_existing_path(expanded, kind="any") or expanded
     if expanded and os.path.isfile(expanded):
         tracks = list_bgm_tracks(expanded)
         scope = os.path.dirname(expanded)

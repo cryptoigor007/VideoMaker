@@ -12,6 +12,8 @@ import time
 import uuid
 from typing import Callable, Optional, Sequence
 
+from ..paths import resolve_existing_path
+
 LogFn = Optional[Callable[[str], None]]
 
 
@@ -83,6 +85,7 @@ def _volume_root(path: str) -> str | None:
 
 def path_is_readable(path: str, min_bytes: int = 32) -> bool:
     try:
+        path = resolve_existing_path(path, kind="file") or path
         if not path or not os.path.isfile(path):
             return False
         if os.stat(path).st_size < min_bytes:
@@ -96,7 +99,10 @@ def path_is_readable(path: str, min_bytes: int = 32) -> bool:
 
 def path_is_writable_dir(dir_path: str) -> bool:
     try:
-        d = dir_path if os.path.isdir(dir_path) else os.path.dirname(dir_path) or "."
+        resolved_dir = resolve_existing_path(dir_path, kind="dir")
+        d = resolved_dir or (
+            dir_path if os.path.isdir(dir_path) else os.path.dirname(dir_path) or "."
+        )
         os.makedirs(d, exist_ok=True)
         test = os.path.join(d, f".vm_write_test_{os.getpid()}")
         with open(test, "wb") as f:

@@ -1,0 +1,550 @@
+{
+  "version": 1,
+  "source": "/Volumes/SSD/темп/компиляция/часть_01.m4a",
+  "audio_hash": "e7943f45e910d234",
+  "settings_hash": "e64e101a0641fbdb",
+  "scenes_total": 209,
+  "scenes_sig": "258e105d316a968f",
+  "scenes": {
+    "0": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/01_crowd_people_walking_city/people_toasting_glasses_84973_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/01_crowd_people_walking_city/people_toasting_glasses_84973_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 0,
+          "query": "crowd_people_walking_city",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/01_crowd_people_walking_city/people_toasting_glasses_84973_pixabay.mp4",
+          "score": 9,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/party_social/people_toasting_glasses_84973_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:39.404139+00:00",
+      "adopted": true
+    },
+    "1": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/02_person_holding_smartphone_pop/teenagers_sitting_together_staring_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/02_person_holding_smartphone_pop/teenagers_sitting_together_staring_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 1,
+          "query": "person_holding_smartphone_pop",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/02_person_holding_smartphone_pop/teenagers_sitting_together_staring_01_pixabay.mp4",
+          "score": 9,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/series/teenagers_sitting_together_staring_01_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:39.734368+00:00",
+      "adopted": true
+    },
+    "2": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/03_lonely_person_sitting_by/lonely_person_window_40797_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/03_lonely_person_sitting_by/lonely_person_window_40797_pixabay.mp4"
+      ],
+      "score": 10,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 2,
+          "query": "lonely_person_sitting_by",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/03_lonely_person_sitting_by/lonely_person_window_40797_pixabay.mp4",
+          "score": 10,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/solitude/lonely_person_window_40797_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:40.162441+00:00",
+      "adopted": true
+    },
+    "3": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/04_person_drinking_coffee_alone/working_late_laptop_52823_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/04_person_drinking_coffee_alone/working_late_laptop_52823_pixabay.mp4"
+      ],
+      "score": 4,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 3,
+          "query": "person_drinking_coffee_alone",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/04_person_drinking_coffee_alone/working_late_laptop_52823_pixabay.mp4",
+          "score": 4,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/custom/working_late_laptop_52823_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:40.495871+00:00",
+      "adopted": true
+    },
+    "4": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/05_swiping_dating_app_screen/smartphone_hands_47743_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/05_swiping_dating_app_screen/smartphone_hands_47743_pixabay.mp4"
+      ],
+      "score": 10,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 4,
+          "query": "swiping_dating_app_screen",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/05_swiping_dating_app_screen/smartphone_hands_47743_pixabay.mp4",
+          "score": 10,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/phone_digital/smartphone_hands_47743_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:40.821455+00:00",
+      "adopted": true
+    },
+    "5": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/06_close_up_face_looking/close_up_face_looking_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/06_close_up_face_looking/close_up_face_looking_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 5,
+          "query": "close_up_face_looking",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/06_close_up_face_looking/close_up_face_looking_01_pixabay.mp4",
+          "score": 9,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:40.881007+00:00",
+      "adopted": true
+    },
+    "6": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/07_young_couple_communicating_outdoors/young_couple_communicating_outdoors_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/07_young_couple_communicating_outdoors/young_couple_communicating_outdoors_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 6,
+          "query": "young_couple_communicating_outdoors",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/07_young_couple_communicating_outdoors/young_couple_communicating_outdoors_01_pixabay.mp4",
+          "score": 9,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:40.955920+00:00",
+      "adopted": true
+    },
+    "7": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/08_couple_cafe_date_distracted/people_conversation_109288_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/08_couple_cafe_date_distracted/people_conversation_109288_pixabay.mp4"
+      ],
+      "score": 10,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 7,
+          "query": "couple_cafe_date_distracted",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/08_couple_cafe_date_distracted/people_conversation_109288_pixabay.mp4",
+          "score": 10,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/friendship/people_conversation_109288_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:41.340106+00:00",
+      "adopted": true
+    },
+    "8": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/09_swiping_dating_profiles_smartphone/swiping_dating_profiles_smartphone_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/09_swiping_dating_profiles_smartphone/swiping_dating_profiles_smartphone_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 8,
+          "query": "swiping_dating_profiles_smartphone",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/09_swiping_dating_profiles_smartphone/swiping_dating_profiles_smartphone_01_pixabay.mp4",
+          "score": 9,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:41.405603+00:00",
+      "adopted": true
+    },
+    "9": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/10_thoughtful_person_walking_blurred/street_lamp_night_24603_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/10_thoughtful_person_walking_blurred/street_lamp_night_24603_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 9,
+          "query": "thoughtful_person_walking_blurred",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/10_thoughtful_person_walking_blurred/street_lamp_night_24603_pixabay.mp4",
+          "score": 9,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/night_light/street_lamp_night_24603_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:41.799314+00:00",
+      "adopted": true
+    },
+    "10": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/11_two_people_sitting_opposite/group_of_friends_laughing_124636_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/11_two_people_sitting_opposite/group_of_friends_laughing_124636_pixabay.mp4"
+      ],
+      "score": 4,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 10,
+          "query": "two_people_sitting_opposite",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/11_two_people_sitting_opposite/group_of_friends_laughing_124636_pixabay.mp4",
+          "score": 4,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/friendship/group_of_friends_laughing_124636_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:43.562057+00:00",
+      "adopted": true
+    },
+    "11": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/12_distracted_listener_cafe_date/sad_portrait_47159_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/12_distracted_listener_cafe_date/sad_portrait_47159_pixabay.mp4"
+      ],
+      "score": 3,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 11,
+          "query": "distracted_listener_cafe_date",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/12_distracted_listener_cafe_date/sad_portrait_47159_pixabay.mp4",
+          "score": 3,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/emotions_face/sad_portrait_47159_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:44.411052+00:00",
+      "adopted": true
+    },
+    "12": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/13_cautious_expression_eyes_listening/cautious_expression_eyes_listening_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/13_cautious_expression_eyes_listening/cautious_expression_eyes_listening_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 12,
+          "query": "cautious_expression_eyes_listening",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/13_cautious_expression_eyes_listening/cautious_expression_eyes_listening_01_pixabay.mp4",
+          "score": 9,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:44.476395+00:00",
+      "adopted": true
+    },
+    "13": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/14_green_emergency_exit_sign/elevator_doors_closing_person_125778_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/14_green_emergency_exit_sign/elevator_doors_closing_person_125778_pixabay.mp4"
+      ],
+      "score": 1,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 13,
+          "query": "green_emergency_exit_sign",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/14_green_emergency_exit_sign/elevator_doors_closing_person_125778_pixabay.mp4",
+          "score": 1,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/waiting_sitting/elevator_doors_closing_person_125778_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:45.438735+00:00",
+      "adopted": true
+    },
+    "14": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/15_person_discreetly_checking_wrist/lonely_man_dark_bedroom_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/15_person_discreetly_checking_wrist/lonely_man_dark_bedroom_01_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 14,
+          "query": "person_discreetly_checking_wrist",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/15_person_discreetly_checking_wrist/lonely_man_dark_bedroom_01_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/series/lonely_man_dark_bedroom_01_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:46.766067+00:00",
+      "adopted": true
+    },
+    "15": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/16_man_walking_away_back/man_walking_away_back_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/16_man_walking_away_back/man_walking_away_back_01_pixabay.mp4"
+      ],
+      "score": 8,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 15,
+          "query": "man_walking_away_back",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/16_man_walking_away_back/man_walking_away_back_01_pixabay.mp4",
+          "score": 8,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:46.956690+00:00",
+      "adopted": true
+    },
+    "16": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/17_person_crossing_arms_defensive/books_study_140807_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/17_person_crossing_arms_defensive/books_study_140807_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 16,
+          "query": "person_crossing_arms_defensive",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/17_person_crossing_arms_defensive/books_study_140807_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/school_learn/books_study_140807_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:48.501701+00:00",
+      "adopted": true
+    },
+    "17": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/18_finger_hovering_over_smartphone/finger_hovering_over_smartphone_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/18_finger_hovering_over_smartphone/finger_hovering_over_smartphone_01_pixabay.mp4"
+      ],
+      "score": 9,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 17,
+          "query": "finger_hovering_over_smartphone",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/18_finger_hovering_over_smartphone/finger_hovering_over_smartphone_01_pixabay.mp4",
+          "score": 9,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:48.578174+00:00",
+      "adopted": true
+    },
+    "18": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/19_couple_sitting_together_looking/people_conversation_19706_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/19_couple_sitting_together_looking/people_conversation_19706_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 18,
+          "query": "couple_sitting_together_looking",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/19_couple_sitting_together_looking/people_conversation_19706_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/friendship/people_conversation_19706_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:49.075470+00:00",
+      "adopted": true
+    },
+    "19": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/20_confused_person_standing_crosswalk/urban_street_275498_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/20_confused_person_standing_crosswalk/urban_street_275498_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 19,
+          "query": "confused_person_standing_crosswalk",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/20_confused_person_standing_crosswalk/urban_street_275498_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/city_street/urban_street_275498_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:50.738983+00:00",
+      "adopted": true
+    },
+    "20": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/21_dense_crowd_pedestrians_walking/crowd_street_246384_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/21_dense_crowd_pedestrians_walking/crowd_street_246384_pixabay.mp4"
+      ],
+      "score": 10,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 20,
+          "query": "dense_crowd_pedestrians_walking",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/21_dense_crowd_pedestrians_walking/crowd_street_246384_pixabay.mp4",
+          "score": 10,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/society_crowd/crowd_street_246384_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:52.687719+00:00",
+      "adopted": true
+    },
+    "21": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/22_crowded_city_crosswalk_rush/crowded_city_crosswalk_rush_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/22_crowded_city_crosswalk_rush/crowded_city_crosswalk_rush_01_pixabay.mp4"
+      ],
+      "score": 10,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 21,
+          "query": "crowded_city_crosswalk_rush",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/22_crowded_city_crosswalk_rush/crowded_city_crosswalk_rush_01_pixabay.mp4",
+          "score": 10,
+          "verified": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:52.814139+00:00",
+      "adopted": true
+    },
+    "22": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/23_two_people_looking_through/intense_close_up_sad_01_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/23_two_people_looking_through/intense_close_up_sad_01_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 22,
+          "query": "two_people_looking_through",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/23_two_people_looking_through/intense_close_up_sad_01_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/series/intense_close_up_sad_01_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:53.964475+00:00",
+      "adopted": true
+    },
+    "23": {
+      "status": "done",
+      "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/24_couple_sitting_sofa_staring/lonely_person_window_43459_pixabay.mp4",
+      "files": [
+        "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/24_couple_sitting_sofa_staring/lonely_person_window_43459_pixabay.mp4"
+      ],
+      "score": 2,
+      "checked": 0,
+      "skipped_checks": 0,
+      "downloaded": [
+        {
+          "scene": 23,
+          "query": "couple_sitting_sofa_staring",
+          "file": "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/24_couple_sitting_sofa_staring/lonely_person_window_43459_pixabay.mp4",
+          "score": 2,
+          "verified": true,
+          "library_file": "/Volumes/video/broll_library/horizontal/solitude/lonely_person_window_43459_pixabay.mp4",
+          "from_library": true
+        }
+      ],
+      "ts": "2026-10-21T15:56:55.953883+00:00",
+      "adopted": true
+    }
+  },
+  "adopted_at": "2026-10-21T15:56:55.955555+00:00",
+  "updated_at": "2026-10-21T15:56:55.955561+00:00"
+}

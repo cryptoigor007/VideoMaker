@@ -15,6 +15,107 @@ from .stages import PipelineContext, Stage
 log = logging.getLogger(__name__)
 
 
+
+def _ce_burn_kinetic_if_needed(ctx, current: str, *, wide: bool) -> str:
+    """If kinetic mode on and ASS exists, burn onto video. Else return current."""
+    try:
+        ce = getattr(ctx, "cinematic_settings", None)
+        if not getattr(ctx, "cinematic_enabled", False) or ce is None:
+            return current
+        mode = str(getattr(ce, "kinetic_typography", "off") or "off").lower()
+        if mode in ("", "off", "none"):
+            return current
+        from video_maker.cinematic.pipeline_hooks import maybe_build_kinetic_ass, burn_kinetic_onto_video
+        segs = list(getattr(ctx, "cinematic_transcript_segments", None) or [])
+        if not segs:
+            tr = getattr(ctx, "transcription", None) or {}
+            if isinstance(tr, dict):
+                segs = list(tr.get("segments") or [])
+        if not segs:
+            return current
+        out_dir = getattr(ctx, "output_folder", None) or "/tmp"
+        name = "ce_kinetic_16x9.ass" if wide else "ce_kinetic_9x16.ass"
+        ass = os.path.join(out_dir, "_tmp", name)
+        fw, fh = (3840, 2160) if wide else (2160, 3840)
+        path = maybe_build_kinetic_ass(
+            settings=ce, transcript_segments=segs, output_path=ass,
+            play_res_x=fw, play_res_y=fh, aspect="16:9" if wide else "9:16",
+        )
+        if not path:
+            return current
+        burned = os.path.join(out_dir, "_tmp", ("final_k_h.mp4" if wide else "final_k_v.mp4"))
+        out = burn_kinetic_onto_video(current, path, burned)
+        if out:
+            ctx.log(f"[CE] kinetic burned → {out}")
+            return out
+    except Exception as e:
+        log.debug("CE kinetic burn skip: %s", e)
+    return current
+
+def _ce_maybe_kinetic(ctx: PipelineContext, *, wide: bool) -> str | None:
+    """Write kinetic ASS if enabled; return path or None."""
+    try:
+        ce = getattr(ctx, "cinematic_settings", None)
+        if not getattr(ctx, "cinematic_enabled", False) or ce is None:
+            return None
+        mode = str(getattr(ce, "kinetic_typography", "off") or "off").lower()
+        if mode in ("", "off", "none"):
+            return None
+        segs = list(getattr(ctx, "cinematic_transcript_segments", None) or [])
+        if not segs:
+            tr = getattr(ctx, "transcription", None) or {}
+            if isinstance(tr, dict):
+                segs = list(tr.get("segments") or [])
+        if not segs:
+            return None
+        from video_maker.cinematic.pipeline_hooks import maybe_build_kinetic_ass
+        out_dir = getattr(ctx, "output_folder", None) or "/tmp"
+        name = "ce_kinetic_16x9.ass" if wide else "ce_kinetic_9x16.ass"
+        path = os.path.join(out_dir, "_tmp", name)
+        fw, fh = (3840, 2160) if wide else (2160, 3840)
+        return maybe_build_kinetic_ass(
+            settings=ce,
+            transcript_segments=segs,
+            output_path=path,
+            play_res_x=fw,
+            play_res_y=fh,
+            aspect="16:9" if wide else "9:16",
+        )
+    except Exception as e:
+        log.debug("CE kinetic skip: %s", e)
+        return None
+
+
+def _ce_subtitle_layout(ctx: PipelineContext, *, wide: bool) -> dict | None:
+    """Optional ASS layout from Cinematic Enhancement (reuse existing styles)."""
+    try:
+        if not getattr(ctx, "cinematic_enabled", False):
+            return None
+        ce = getattr(ctx, "cinematic_settings", None)
+        reuse = True
+        if ce is not None:
+            reuse = bool(getattr(ce, "reuse_existing_subs", True))
+        if not reuse:
+            return None
+        from video_maker.cinematic.safe_zones import ass_style_hints
+        aspect = "16:9" if wide else "9:16"
+        # 4K masters: 3840x2160 H, 2160x3840 V
+        fw, fh = (3840, 2160) if wide else (2160, 3840)
+        max_scale = 1.0
+        if ce is not None:
+            try:
+                max_scale = float(getattr(ce, "max_zoom", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                max_scale = 1.0
+        return ass_style_hints(
+            aspect, frame_w=fw, frame_h=fh, max_scale=max_scale
+        )
+    except Exception:
+        return None
+
+
+
+
 class FinalHorizontal(Stage):
     """Финальное горизонтальное видео (16:9) = master_16x9 + обработка.
 
@@ -62,11 +163,16 @@ class FinalHorizontal(Stage):
         # Единственный полный encode wide: burn ASS (hooks/subs/strong)
         if ctx.h_enable_hooks or ctx.h_enable_subtitles or ctx.h_enable_strong_words:
             from ..engines.subtitles import burn_subtitles
+            _kin = _ce_maybe_kinetic(ctx, wide=True)
+            if _kin:
+                ctx.log(f"[CE] kinetic ASS → {_kin}")
+            # [VM-SB] кинетическая типографика заменяет караоке-субтитры (без дубля текста)
+            _subs_flag = False if _kin else ctx.h_enable_subtitles
             current = burn_subtitles(
                 video_path=current,
                 analysis=ctx.analysis,
                 enable_hooks=ctx.h_enable_hooks,
-                enable_subtitles=ctx.h_enable_subtitles,
+                enable_subtitles=_subs_flag,
                 enable_strong_words=ctx.h_enable_strong_words,
                 output_path=output_path,
                 log_fn=ctx.log,
@@ -74,8 +180,12 @@ class FinalHorizontal(Stage):
                 hook_style=getattr(ctx, "hook_style", "auto_aisie"),
                 transcription=ctx.transcription,
                 use_aisie=True,
+                subtitle_layout=_ce_subtitle_layout(ctx, wide=True),
+                # kinetic side-car ASS (optional)
+                # path logged via _ce_maybe_kinetic
             )
             did_burn = True
+            current = _ce_burn_kinetic_if_needed(ctx, current, wide=True)
 
         # Voice enhancement is a shared pre-master pass in the regular pipeline.
         # BGM is deferred to FinalizeStage per platform; do not invoke an obsolete
@@ -194,6 +304,12 @@ class FinalVertical(Stage):
                 or ctx.v_enable_strong_words
             )
 
+            # [VM-SB] кинетическая типографика для вертикали (заменяет караоке)
+            _kin_v = _ce_maybe_kinetic(ctx, wide=False)
+            if _kin_v:
+                ctx.log(f"[CE] kinetic ASS (9:16) → {_kin_v}")
+            _v_subs_flag = False if _kin_v else ctx.v_enable_subtitles
+
             ass_path = ""
             if need_burn:
                 t_ass = time.time()
@@ -202,7 +318,7 @@ class FinalVertical(Stage):
                     video_path=ctx.master_horizontal,
                     analysis=ctx.analysis,
                     enable_hooks=ctx.v_enable_hooks,
-                    enable_subtitles=ctx.v_enable_subtitles,
+                    enable_subtitles=_v_subs_flag,
                     enable_strong_words=ctx.v_enable_strong_words,
                     output_path=os.path.join(output_dir, "vertical.ass"),
                     log_fn=ctx.log,
@@ -212,6 +328,7 @@ class FinalVertical(Stage):
                     use_aisie=True,
                     force_size=(2160, 3840),
                     ass_only=True,
+                    subtitle_layout=_ce_subtitle_layout(ctx, wide=False),
                 )
                 ctx.log(f"[VERTICAL] ASS ready in {time.time()-t_ass:.1f}s → {ass_path}")
 
@@ -229,6 +346,8 @@ class FinalVertical(Stage):
                 top_ratio=getattr(ctx, "vstack_top_ratio", 0.6),
                 ass_path=ass_path or "",
             )
+            # [VM-SB] запись кинетической типографики на вертикаль
+            current = _ce_burn_kinetic_if_needed(ctx, current, wide=False)
             ctx.master_vertical = current
             one_encode = True
             ctx.log(f"[VERTICAL] one-encode elapsed={time.time()-t0:.1f}s")
@@ -254,11 +373,16 @@ class FinalVertical(Stage):
                 )
             if ctx.v_enable_hooks or ctx.v_enable_subtitles or ctx.v_enable_strong_words:
                 from ..engines.subtitles import burn_subtitles
+                _kin = _ce_maybe_kinetic(ctx, wide=False)
+                if _kin:
+                    ctx.log(f"[CE] kinetic ASS → {_kin}")
+                # [VM-SB] кинетическая типографика заменяет караоке-субтитры (без дубля текста)
+                _subs_flag = False if _kin else ctx.v_enable_subtitles
                 current = burn_subtitles(
                     video_path=current,
                     analysis=ctx.analysis,
                     enable_hooks=ctx.v_enable_hooks,
-                    enable_subtitles=ctx.v_enable_subtitles,
+                    enable_subtitles=_subs_flag,
                     enable_strong_words=ctx.v_enable_strong_words,
                     output_path=output_path,
                     log_fn=ctx.log,
@@ -266,7 +390,9 @@ class FinalVertical(Stage):
                     hook_style=getattr(ctx, "hook_style", "auto_aisie"),
                     transcription=ctx.transcription,
                     use_aisie=True,
+                    subtitle_layout=_ce_subtitle_layout(ctx, wide=False),
                 )
+                current = _ce_burn_kinetic_if_needed(ctx, current, wide=False)
 
         # BGM r22: mix ровно один раз на wide → vertical всегда reuse.
         # Запрещены: re-mix, skip reuse (IMO/duration). -t по длительности video.

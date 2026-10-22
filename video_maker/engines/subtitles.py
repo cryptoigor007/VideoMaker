@@ -178,8 +178,17 @@ def _weight_style(weight: str, base_size: int) -> tuple[str, int]:
     return color, size
 
 
-def _generate_ass_header(playres_x: int, playres_y: int, wide: bool) -> str:
-    """Premium CapCut-class styles via libass (WhisperX word timings → ASS)."""
+def _generate_ass_header(
+    playres_x: int,
+    playres_y: int,
+    wide: bool,
+    layout: dict | None = None,
+) -> str:
+    """Premium CapCut-class styles via libass (WhisperX word timings → ASS).
+
+    Optional layout (from CE ass_style_hints) may override MarginV/L/R and
+    karaoke Alignment without creating a second subtitle system.
+    """
     if wide:
         scale = max(playres_y / 1080.0, 1.0)
         sz = max(52, int(58 * scale))
@@ -193,6 +202,20 @@ def _generate_ass_header(playres_x: int, playres_y: int, wide: bool) -> str:
         margin_v = int(playres_y * 0.028)
         align_k, align_h = 5, 8
     ml = int(playres_x * 0.035)
+    mr = ml
+    if layout:
+        try:
+            if "MarginV" in layout:
+                margin_v = int(layout["MarginV"])
+            if "MarginL" in layout:
+                ml = int(layout["MarginL"])
+            if "MarginR" in layout:
+                mr = int(layout["MarginR"])
+            if "Alignment" in layout:
+                # Apply CE alignment to karaoke/body styles; keep hooks at top (8)
+                align_k = int(layout["Alignment"])
+        except (TypeError, ValueError):
+            pass
     # Outline 8–10px equivalent at 1080 → scale
     bord = max(6, int(8 * scale))
     bord_h = max(7, int(10 * scale))
@@ -207,18 +230,18 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hormozi,Arial Black,{sz},&H0000EBFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
-Style: HormoziGreen,Arial Black,{sz},&H004CFF00&,&H004CFF00&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
-Style: TikTokBox,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&HE0000000&,-1,0,0,0,100,100,0,0,3,0,0,{align_k},{ml},{ml},{margin_v},1
-Style: CleanPro,SF Pro Display,{sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,0,0,1,0,4,{align_k},{ml},{ml},{margin_v},1
-Style: BoldPop,Arial Black,{sz},&H000000FF&,&H0000A5FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,2,0,1,{bord+1},0,{align_k},{ml},{ml},{margin_v},1
-Style: Cliffhanger,Arial Black,{sz},&H000000FF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord+2},1,{align_k},{ml},{ml},{margin_v},1
-Style: Karaoke,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
-Style: Glow,Arial Black,{sz},&H00FFFFFF&,&H00000000&,&H00FFFFFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,0,0,{align_k},{ml},{ml},{margin_v},1
-Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
-Style: Hook,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
-Style: Strong,Arial Black,{max(sz, int(sz*1.12))},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_h},{ml},{ml},{margin_v},1
-Style: Default,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
+Style: Hormozi,Arial Black,{sz},&H0000EBFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{mr},{margin_v},1
+Style: HormoziGreen,Arial Black,{sz},&H004CFF00&,&H004CFF00&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{mr},{margin_v},1
+Style: TikTokBox,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&HE0000000&,-1,0,0,0,100,100,0,0,3,0,0,{align_k},{ml},{mr},{margin_v},1
+Style: CleanPro,SF Pro Display,{sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,0,0,1,0,4,{align_k},{ml},{mr},{margin_v},1
+Style: BoldPop,Arial Black,{sz},&H000000FF&,&H0000A5FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,2,0,1,{bord+1},0,{align_k},{ml},{mr},{margin_v},1
+Style: Cliffhanger,Arial Black,{sz},&H000000FF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord+2},1,{align_k},{ml},{mr},{margin_v},1
+Style: Karaoke,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{mr},{margin_v},1
+Style: Glow,Arial Black,{sz},&H00FFFFFF&,&H00000000&,&H00FFFFFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,0,0,{align_k},{ml},{mr},{margin_v},1
+Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{mr},{margin_v},1
+Style: Hook,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{mr},{margin_v},1
+Style: Strong,Arial Black,{max(sz, int(sz*1.12))},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_h},{ml},{mr},{margin_v},1
+Style: Default,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{mr},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1795,6 +1818,7 @@ def burn_subtitles(
     source_clips: list | None = None,
     force_size: tuple[int, int] | None = None,
     ass_only: bool = False,
+    subtitle_layout: dict | None = None,
 ) -> str:
     _log = log_fn or log.info
     _log("[СУБТИТРЫ] burn: karaoke in-line + hooks/CTA (без glow-overlay, strong только внутри строки)")
@@ -1811,6 +1835,12 @@ def burn_subtitles(
         f"[СУБТИТРЫ] caption={caption_style} hook={hook_style} aisie={use_aisie} "
         f"strong={enable_strong_words} subs={enable_subtitles} hooks={enable_hooks}"
     )
+    if subtitle_layout:
+        _log(
+            f"[СУБТИТРЫ] CE layout MarginV={subtitle_layout.get('MarginV')} "
+            f"Align={subtitle_layout.get('Alignment')} "
+            f"region={subtitle_layout.get('region')}"
+        )
 
     if use_aisie and transcription:
         try:
@@ -2020,7 +2050,7 @@ def burn_subtitles(
         return video_path
 
     ass_path = os.path.join(tempfile.gettempdir(), f"vm_subs_{uuid.uuid4().hex[:10]}.ass")
-    lines = [_generate_ass_header(playres_x, playres_y, wide)]
+    lines = [_generate_ass_header(playres_x, playres_y, wide, layout=subtitle_layout)]
     for ev in events:
         layer = int(ev.get("layer", 0))
         text = ev["text"].replace("\n", "\\N")

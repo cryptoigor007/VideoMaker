@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 
+from ..paths import resolve_existing_path
 from .stages import PipelineContext, Stage
 
 log = logging.getLogger(__name__)
@@ -202,6 +203,14 @@ class FinalizeStage(Stage):
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[ФИНАЛ] Копирование результатов...")
+        resolved_output = resolve_existing_path(ctx.output_folder, kind="dir")
+        if resolved_output:
+            if resolved_output != ctx.output_folder:
+                ctx.log(f"[ФИНАЛ] путь вывода нормализован: {resolved_output}")
+            ctx.output_folder = resolved_output
+        resolved_audio = resolve_existing_path(ctx.audio_path, kind="file")
+        if resolved_audio:
+            ctx.audio_path = resolved_audio
         root, base_name = resolve_series_dir(
             ctx.output_folder, ctx.series_name or "", ctx.audio_path or ""
         )
@@ -710,6 +719,25 @@ class FinalizeStage(Stage):
                 f"Finalization is incomplete: selected Shorts not rendered: {missing_short_indices}. "
                 f"Inspect {checklist_path} and {manifest_path}."
             )
+        # [VM-CREDITS] сертификаты использованных клипов (источник/лицензия/описание)
+        try:
+            import glob as _glob
+            _plans = _glob.glob(os.path.join(getattr(ctx, "output_folder", "") or "", "_tmp", "*.edit_plan.json"))
+            _used: list[str] = []
+            for _pl in _plans[:1]:
+                try:
+                    _pd = json.loads(open(_pl, encoding="utf-8").read())
+                    _used += [str(s.get("source_path") or "") for s in (_pd.get("scenes") or [])]
+                except Exception:
+                    pass
+            if not _used:
+                _used = [str(p) for p in (getattr(ctx, "broll_selected", None) or [])]
+            if _used:
+                from video_maker.semantic.library import write_clip_credits
+                write_clip_credits(_used, root, log=ctx.log)
+        except Exception as _ce:
+            ctx.log(f"[CREDITS] пропуск: {_ce}")
+
         _cleanup_intermediates()
 
         ctx.log(f"[ФИНАЛ] Готово → {root} | платформ: {len(platforms)}")

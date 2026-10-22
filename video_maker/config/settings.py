@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from ..paths import resolve_existing_path
+
 load_dotenv()
 
 _AUDIO_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", ".wma")
@@ -125,6 +127,24 @@ class Settings:
     shorts_desc_max_len: int = 280
     shorts_use_template: bool = True
 
+
+    # --- Cinematic Enhancement (OFF by default) ---
+    cinematic_enabled: bool = False
+    cinematic_profile: str = "cinematic_documentary"  # psychological_dark|cinematic_documentary|dynamic_shorts|clean_explainer|custom
+    cinematic_motion: str = "low"       # off|low|medium|high
+    cinematic_tempo: float = 1.0        # 0.5..2.0
+    cinematic_color: float = 0.5        # 0..1
+    cinematic_transitions: str = "modern_mix"  # hard_only|soft_dissolve|fade_to_black|all_safe
+    cinematic_framing: str = "center"   # center|safe_roi|manual
+    cinematic_reuse_subs: bool = True
+    cinematic_kinetic: str = "off"
+    cinematic_max_zoom: float = 1.25
+    cinematic_seed: int = 42
+    cinematic_transition_sfx: bool = False  # whoosh under soft dissolves
+    cinematic_smart_broll: bool = True      # умный подбор B-roll по смыслу (псевдо-нейролинк)
+    cinematic_keyword_cuts: bool = True     # смена кадра под ключевые слова озвучки
+    cinematic_min_shot: float = 1.3         # минимальная длина плана при пословном монтаже, сек
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Загрузить настройки из .env."""
@@ -152,6 +172,7 @@ class Settings:
         source = (folder or "").strip()
         if not source:
             return False
+        source = resolve_existing_path(source, kind="any") or source
         exts = (".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg", ".opus")
         if os.path.isfile(source):
             return not os.path.basename(source).startswith(".") and source.lower().endswith(exts)
@@ -217,10 +238,13 @@ class Settings:
         Поддерживаемые расширения: mp3, wav, flac, m4a, ogg, aac, wma.
         Игнорирует скрытые файлы и папки.
         """
-        if not path or not os.path.exists(path):
+        if not path:
+            return []
+        resolved_path = resolve_existing_path(path, kind="any")
+        if not resolved_path:
             return []
 
-        p = Path(path)
+        p = Path(resolved_path)
         result: list[str] = []
 
         def _is_audio(name: str) -> bool:
@@ -252,6 +276,20 @@ class Settings:
     def validate(self) -> list[str]:
         """Проверить настройки, вернуть список ошибок."""
         errors = []
+        # Unicode NFC/NFD + сетевые тома: фиксируем реальные пути один раз,
+        # чтобы дальше пайплайн работал с тем же написанием, что и файловая система.
+        for attr, kind in (
+            ("audio_path", "file"),
+            ("broll_horizontal", "dir"),
+            ("broll_vertical", "dir"),
+            ("output_folder", "dir"),
+            ("intro_middle_outro_folder", "dir"),
+            ("vertical_background", "file"),
+        ):
+            value = getattr(self, attr, "") or ""
+            resolved = resolve_existing_path(value, kind=kind)
+            if resolved:
+                setattr(self, attr, resolved)
         try:
             target_lufs = float(self.target_lufs)
         except (TypeError, ValueError):
@@ -298,7 +336,7 @@ class Settings:
                     f"Фоновая музыка {label} включена, но источник не выбран. "
                     "Выберите аудиофайл/папку или отключите BGM для этой площадки."
                 )
-            elif not os.path.exists(source):
+            elif not resolve_existing_path(source, kind="any"):
                 errors.append(f"Источник BGM {label} не найден: {source}")
             elif not self.folder_has_bgm_audio(source):
                 errors.append(

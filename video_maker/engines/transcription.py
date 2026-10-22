@@ -19,6 +19,8 @@ import os
 import time
 from pathlib import Path
 
+from ..paths import resolve_existing_path
+
 log = logging.getLogger(__name__)
 
 MLX_REPO = "mlx-community/whisper-large-v3-turbo"
@@ -27,6 +29,7 @@ DEFAULT_LANGUAGE = "ru"
 
 
 def _transcription_cache_key(audio_path: str, model_name: str, language: str) -> str:
+    audio_path = resolve_existing_path(audio_path, kind="file") or audio_path
     st = os.stat(audio_path)
     raw = f"{os.path.abspath(audio_path)}|{st.st_mtime_ns}|{st.st_size}|{model_name}|{language}|mlx"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]

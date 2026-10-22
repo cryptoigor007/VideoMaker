@@ -1,0 +1,171 @@
+{
+  "scene": "Человек держит смартфон и печатает сообщение",
+  "old": [
+    {
+      "label": "phone",
+      "score": 10,
+      "what": "крупный план рук, держащих смартфон и печатающих на экране"
+    },
+    {
+      "label": "lake",
+      "score": 0,
+      "what": "лебедь с лебедятами плавает в воде"
+    },
+    {
+      "label": "office",
+      "score": 1,
+      "what": "Человек пишет карандашом на бумаге, рядом стоит ноутбук. Смартфон отсутствует."
+    },
+    {
+      "label": "food",
+      "score": 0,
+      "what": "на кадрах показан процесс приготовления еды (тушение мяса или печени) на сковороде"
+    }
+  ],
+  "old_sec": 53.96,
+  "old_api_sec": 7.8,
+  "batch": [
+    {
+      "label": "phone",
+      "score": 10,
+      "what": "человек держит смартфон и печатает сообщение"
+    },
+    {
+      "label": "lake",
+      "score": 0,
+      "what": "лебеди с птенцами в воде"
+    },
+    {
+      "label": "office",
+      "score": 4,
+      "what": "человек пишет карандашом на бумаге"
+    },
+    {
+      "label": "food",
+      "score": 0,
+      "what": "приготовление еды на сковороде"
+    }
+  ],
+  "batch_sec": 59.09,
+  "batch_api_sec": 4.7,
+  "batch_log": [
+    "[VISION] батч 1/1: 4 кандидата → 1 вызов, 4.7с | лучший 10/10",
+    "[VISION] ✓ smartphone_hands_47743_pixabay.mp4 | 10/10 — человек держит смартфон и печатает сообщение",
+    "[VISION] · mother_child_39972_pixabay.mp4 | 0/10 — лебеди с птенцами в воде",
+    "[VISION] · office_people_working_87592_pixabay.mp4 | 4/10 — человек пишет карандашом на бумаге",
+    "[VISION] · cooking_kitchen_153727_pixabay.mp4 | 0/10 — приготовление еды на сковороде"
+  ],
+  "prefilter": {
+    "log": [
+      "[VISION] предфильтр: отсеяно 4 (дубли 1, hard 1, битые 2) | вызовов сэкономлено: 4"
+    ],
+    "dups": 1,
+    "entries": [
+      {
+        "file": "smartphone_hands_47743_pixabay.mp4",
+        "score": null,
+        "verified": false,
+        "what": null
+      },
+      {
+        "file": "mother_child_39972_pixabay.mp4",
+        "score": null,
+        "verified": false,
+        "what": null
+      },
+      {
+        "file": "office_people_working_87592_pixabay.mp4",
+        "score": null,
+        "verified": false,
+        "what": null
+      },
+      {
+        "file": "smartphone_hands_47743_pixabay.mp4",
+        "score": -1,
+        "verified": true,
+        "what": "предфильтр: дубль"
+      },
+      {
+        "file": "cooking_kitchen_153727_pixabay.mp4",
+        "score": 0,
+        "verified": true,
+        "what": "предфильтр: hard-тег «smiling»"
+      },
+      {
+        "file": "short.mp4",
+        "score": 0,
+        "verified": true,
+        "what": "предфильтр: короткий клип 1.0с"
+      },
+      {
+        "file": "broken.mp4",
+        "score": 0,
+        "verified": true,
+        "what": "предфильтр: нет видео"
+      }
+    ]
+  },
+  "split_fallback": {
+    "scores": [
+      8,
+      1,
+      8,
+      1,
+      1
+    ],
+    "log": [
+      "[VISION] батч 1/1: ответ невалиден — дробим 5 → 2+3",
+      "[VISION] батч 1a/1: 2 кандидата → 1 вызов, 0.0с | лучший 8/10",
+      "[VISION] ✓ c0.mp4 | 8/10 — cat 1",
+      "[VISION] · c1.mp4 | 1/10 — cat 2",
+      "[VISION] батч 1b/1: 3 кандидата → 1 вызов, 0.0с | лучший 8/10",
+      "[VISION] ✓ c2.mp4 | 8/10 — cat 1",
+      "[VISION] · c3.mp4 | 1/10 — cat 2",
+      "[VISION] · c4.mp4 | 1/10 — cat 3"
+    ],
+    "pass": true
+  },
+  "batch_calls": 1,
+  "preview_measure": {
+    "note": "те же 4 клипа через tiny/small preview (путь пула библиотеки в приложении)",
+    "batch_sec": 6.29,
+    "old_sec": 10.04,
+    "batch_call_sec": 3.7,
+    "batch": [
+      {
+        "label": "phone",
+        "score": 10
+      },
+      {
+        "label": "lake",
+        "score": 0
+      },
+      {
+        "label": "office",
+        "score": 3
+      },
+      {
+        "label": "food",
+        "score": 0
+      }
+    ],
+    "old": [
+      {
+        "label": "phone",
+        "score": 10
+      },
+      {
+        "label": "lake",
+        "score": 0
+      },
+      {
+        "label": "office",
+        "score": 1
+      },
+      {
+        "label": "food",
+        "score": 0
+      }
+    ]
+  }
+}

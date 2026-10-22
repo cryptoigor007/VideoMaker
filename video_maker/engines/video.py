@@ -10,6 +10,7 @@ import os
 import subprocess
 import uuid
 
+from ..paths import resolve_existing_path
 from .ffmpeg_resilient import (
     atomic_replace,
     ensure_storage,
@@ -104,6 +105,42 @@ def _ffprobe_video_info(video_path: str) -> tuple[int, int, float]:
     return int(width), int(height), float(fps)
 
 
+def _probe_av_durations(video_path: str) -> tuple[float, float]:
+    """(длительность видеопотока, длительность аудиопотока) через ffprobe.
+
+    Для жёсткого гейта «видео не короче озвучки»: если у видеопотока нет
+    своей duration — берём format=duration (для mp4 duration есть всегда).
+    """
+    import json as _json
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-show_entries", "stream=codec_type,duration:format=duration",
+        "-of", "json",
+        video_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        data = _json.loads((result.stdout or "").strip() or "{}")
+    except Exception:
+        return 0.0, 0.0
+    vdur = adur = 0.0
+    for st in data.get("streams") or []:
+        try:
+            d = float(st.get("duration") or 0.0)
+        except Exception:
+            d = 0.0
+        if st.get("codec_type") == "video" and d > vdur:
+            vdur = d
+        elif st.get("codec_type") == "audio" and d > adur:
+            adur = d
+    if vdur <= 0.0:
+        try:
+            vdur = float((data.get("format") or {}).get("duration") or 0.0)
+        except Exception:
+            vdur = 0.0
+    return vdur, adur
+
+
 # Папка использованных B-roll (исключается из ротации)
 USED_DIR_NAME = "used"
 _SKIP_SUBDIR_NAMES = frozenset({
@@ -111,24 +148,29 @@ _SKIP_SUBDIR_NAMES = frozenset({
     "_tmp", ".ds_store", "__macosx",
 })
 _VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif")
+_MEDIA_EXTS = _VIDEO_EXTS + _IMAGE_EXTS
 
 
 def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str]:
-    """Собрать видео из папки B-roll.
+    """Собрать видео и картинки из папки B-roll (тема/сток).
 
     Если есть подпапки (кроме used) — ротация по подпапкам:
       1-й клип из подпапки A, 2-й из B, … interleave.
     Папка used / использованная никогда не сканируется.
     Если подпапок нет — плоский список файлов в folder.
     """
-    if not folder or not os.path.isdir(folder):
+    resolved_folder = resolve_existing_path(folder, kind="dir")
+    if not resolved_folder:
         return []
+    folder = resolved_folder
 
     def _is_video(name: str) -> bool:
-        # ._file.mp4 — AppleDouble/resource fork на macOS (не видео)
+        # Video + still images (topic stock folders may mix both)
+        # ._file.mp4 — AppleDouble/resource fork на macOS
         if not name or name.startswith(".") or name.startswith("._"):
             return False
-        return name.lower().endswith(_VIDEO_EXTS)
+        return name.lower().endswith(_MEDIA_EXTS)
 
     try:
         entries = sorted(os.listdir(folder))
@@ -181,6 +223,50 @@ def collect_video_files(folder: str, rotate_subfolders: bool = True) -> list[str
         return result
 
     return root_files
+
+
+def collect_video_files_scene_order(folder: str) -> list[str]:
+    """Собрать пул смарт-B-roll в порядке СЦЕН, без round-robin.
+
+    `collect_video_files` перемежает подпапки (1-й клип из A, 1-й из B, …) —
+    для тематических папок это красиво, но для пула сцен ломает порядок:
+    клип сцены 01 оказывается рядом с клипом сцены 02 и т.д. Здесь подпапки
+    идут последовательно (01_, 02_, …, 13_), файлы внутри — по имени.
+    Папки used/ и служебные пропускаются.
+    """
+    resolved_folder = resolve_existing_path(folder, kind="dir")
+    if not resolved_folder:
+        return []
+    folder = resolved_folder
+
+    def _is_media(name: str) -> bool:
+        if not name or name.startswith(".") or name.startswith("._"):
+            return False
+        return name.lower().endswith(_MEDIA_EXTS)
+
+    try:
+        entries = sorted(os.listdir(folder))
+    except OSError:
+        return []
+
+    result: list[str] = []
+    for name in entries:
+        if name.startswith(".") or name.lower() in _SKIP_SUBDIR_NAMES:
+            continue
+        full = os.path.join(folder, name)
+        if os.path.isdir(full):
+            try:
+                files = [
+                    os.path.join(full, f)
+                    for f in sorted(os.listdir(full))
+                    if _is_media(f) and os.path.isfile(os.path.join(full, f))
+                ]
+            except OSError:
+                files = []
+            result.extend(files)
+        elif os.path.isfile(full) and _is_media(name):
+            result.append(full)
+    return result
 
 
 def move_to_used(root_folder: str, paths: list[str], log_fn=None) -> int:
@@ -252,42 +338,128 @@ def fit_video_to_duration(
     log_fn=None,
     broll_root: str = "",
     move_used: bool = True,
+    # Cinematic Enhancement (optional; OFF by default via DEFAULT settings)
+    cinematic_settings=None,
+    edit_plan=None,
+    transcript_segments=None,
+    output_format: str = "16:9",
+    # Geometry (default horizontal 4K; vertical path passes 2160x3840)
+    width: int = 3840,
+    height: int = 2160,
+    bitrate: str = "28M",
+    # [ORD] смарт-пул со сценными папками (01_, 02_, …): жёсткая привязка
+    # клипов к временным окнам сцен вместо смысловой перетасовки.
+    scene_bound: bool = False,
+    # Лучшие файлы сцены из манифеста (порядок = приоритет).
+    scene_preferred: dict | None = None,
 ) -> str:
-    """Одна команда 4K: scale на лету → concat → trim → твоё аудио.
-    Без промежуточных norm_XXX.mp4. 3840x2160 @ 28M.
-    """
+    """Scale+concat+trim under target duration. Default 3840x2160 @ 28M."""
     _log = log_fn or log.info
-    width, height = 3840, 2160
-    bitrate = "28M"
-    _log(f"[ВИДЕО 4K] Быстрая склейка под {target_duration:.1f}с ({width}x{height} @ {bitrate})")
+    width, height = int(width), int(height)
+    _log(f"[ВИДЕО] Склейка под {target_duration:.1f}с ({width}x{height} @ {bitrate})")
 
     if not video_files:
         raise FileNotFoundError("Нет видеофайлов для склейки")
 
     ffmpeg = _ffmpeg_bin()
 
+    # [VM-SB] Смысловой порядок B-roll под сцены («псевдо-нейролинк»).
+    # Только при включённом «Кинематографе» и наличии транскрипта.
+    # На каждый слот сцены — лучший неиспользованный клип пула; без совпадений
+    # порядок не меняется (поведение OFF идентично baseline).
+    if (
+        video_files
+        and transcript_segments
+        and not scene_bound
+        and getattr(cinematic_settings, "enabled", False)
+        and getattr(cinematic_settings, "smart_broll", True)
+    ):
+        try:
+            from video_maker.semantic.matcher import order_pool_for_scenes
+            _sb_ordered = order_pool_for_scenes(
+                list(video_files), list(transcript_segments), float(target_duration)
+            )
+            if _sb_ordered:
+                video_files = _sb_ordered
+                _log(f"[SB] смысловой подбор клипов под сцены (псевдо-нейролинк): пул {len(video_files)}")
+        except Exception as _sb_e:
+            _log(f"[SB] пропуск смыслового подбора: {_sb_e}")
+
+    # [VM-SB] Потолок вклада клипа = длина плана (9с/темп): чтобы набирались
+    # РАЗНЫЕ клипы короткими планами, а не 3 длинных куска.
+    _sb_cap = None
+    if (
+        transcript_segments
+        and getattr(cinematic_settings, "enabled", False)
+    ):  # потолок вклада клипа — НЕ зависит от перетасовки (иначе 2 клипа на весь ролик)
+        try:
+            _t = float(getattr(cinematic_settings, "plan_tempo", 1.0) or 1.0)
+            _sb_cap = max(4.0, 9.0 / max(0.5, min(2.0, _t)))
+            # [VM-SB] пословный монтаж: планы короче → берём больше разных клипов
+            if getattr(cinematic_settings, "keyword_cuts", False):
+                _ms = float(getattr(cinematic_settings, "min_shot_sec", 2.0) or 2.0)
+                _sb_cap = max(1.5, min(6.0, _ms) * 1.2)
+        except Exception:
+            _sb_cap = None
+    # [VM-FIX] с переходами (xfade) видео короче озвучки: берём клипов с запасом
+    _sb_stop = float(target_duration) * (1.08 if _sb_cap else 1.0)
+
     selected: list[str] = []
     total_dur = 0.0
     skipped_bad = 0
+    _img_ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"}
+    # [ORD] Нельзя останавливать выбор по сумме длительностей, пока не увидели
+    # хотя бы один клип из каждой сценной папки: иначе последние сцены
+    # остаются без клипов (финал замирает/повторяет чужой кадр).
+    _scene_targets: set[int] = set()
+    _scene_seen: set[int] = set()
+    _scene_idx_fn = None
+    if scene_bound:
+        try:
+            from video_maker.semantic.matcher import scene_index_from_path as _scene_idx_fn
+            _scene_targets = {
+                i for i in (_scene_idx_fn(p) for p in video_files) if i is not None
+            }
+            if _scene_targets:
+                _log(f"[ORD] сценный пул: папок сцен {len(_scene_targets)} "
+                     f"({min(_scene_targets)}–{max(_scene_targets)})")
+        except Exception as _ord_e:
+            _log(f"[ORD] сценная привязка выключена: {_ord_e}")
     for vf in video_files:
         base = os.path.basename(vf)
         if base.startswith(".") or base.startswith("._"):
             skipped_bad += 1
             continue
-        try:
-            dur = probe_duration(vf)
-        except Exception as e:
-            skipped_bad += 1
-            _log(f"[ВИДЕО] пропуск (ffprobe): {base} — {e}")
-            continue
-        if dur <= 0.05:
-            skipped_bad += 1
-            # не спамим лог на каждый битый/пустой — только итог
-            continue
+        ext = os.path.splitext(base)[1].lower()
+        is_img = ext in _img_ext
+        if is_img:
+            # Still: contributes hold time (slot-sized), looped later in CE graph
+            remaining = max(0.5, float(target_duration) - total_dur)
+            dur = min(remaining, 6.0)  # one still fills at most 6s per pick
+            if not os.path.isfile(vf):
+                skipped_bad += 1
+                continue
+        else:
+            try:
+                dur = probe_duration(vf)
+            except Exception as e:
+                skipped_bad += 1
+                _log(f"[ВИДЕО] пропуск (ffprobe): {base} — {e}")
+                continue
+            if dur <= 0.05:
+                skipped_bad += 1
+                continue
         selected.append(vf)
-        total_dur += dur
-        _log(f"[ВИДЕО] + {os.path.basename(vf)} ({dur:.1f}s) → сумма {total_dur:.1f}s")
-        if total_dur >= target_duration:
+        total_dur += min(dur, _sb_cap) if _sb_cap else dur
+        if scene_bound and _scene_idx_fn is not None:
+            _si = _scene_idx_fn(vf)
+            if _si is not None:
+                _scene_seen.add(_si)
+        tag = "IMG" if is_img else "VID"
+        _log(f"[ВИДЕО] + [{tag}] {base} ({dur:.1f}s) → сумма {total_dur:.1f}s")
+        # [ORD] Сценный пул выбираем ЦЕЛИКОМ: иначе обрыв по сумме может
+        # отрезать preferred-клип последней сцены (он ещё не встретился).
+        if total_dur >= _sb_stop and not scene_bound:
             break
 
     if skipped_bad:
@@ -306,8 +478,8 @@ def fit_video_to_duration(
                 if dur <= 0.05:
                     continue
                 selected.append(vf)
-                total_dur += dur
-                if total_dur >= target_duration:
+                total_dur += min(dur, _sb_cap) if _sb_cap else dur
+                if total_dur >= _sb_stop:
                     break
 
     if not selected:
@@ -317,64 +489,448 @@ def fit_video_to_duration(
 
     n = len(selected)
     inputs: list[str] = []
+    _img_ext3 = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"}
+    # [VM-FIX] VideoToolbox имеет лимит одновременных сессий: при многих входах
+    # (пословный монтаж) энкодер падает с -22. Тогда декод — на CPU.
+    _ce_many = bool(getattr(cinematic_settings, "enabled", False)) and n > 6
     for vf in selected:
-        # decode B-roll на VideoToolbox (Apple Silicon)
-        inputs.extend(["-hwaccel", "videotoolbox", "-i", vf])
+        if os.path.splitext(vf)[1].lower() in _img_ext3:
+            # Still: loop for later trim/hold; duration refined by CE filter -t
+            inputs.extend(["-loop", "1", "-framerate", "30", "-t", "30", "-i", vf])
+        elif _ce_many:
+            inputs.extend(["-i", vf])
+        else:
+            # decode B-roll на VideoToolbox (Apple Silicon)
+            inputs.extend(["-hwaccel", "videotoolbox", "-i", vf])
 
     has_audio = bool(audio_file and os.path.exists(audio_file))
     if has_audio:
         # аудио — без hwaccel
         inputs.extend(["-i", audio_file])
 
-    filters = []
-    for i in range(n):
-        filters.append(
-            f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{i}]"
+    # Cinematic Enhancement: rebuild plan on FINAL selected list (P1-01)
+    _ce_debug = os.environ.get("CE_DEBUG_PLAN", "").strip().lower() in ("1", "true", "yes")
+    _ce_plan = None
+    try:
+        from video_maker.cinematic.vm_bridge import (
+            build_ce_filter_complex,
+            plan_from_selected_clips,
         )
-    concat_in = "".join(f"[v{i}]" for i in range(n))
-    filters.append(f"{concat_in}concat=n={n}:v=1:a=0[v]")
-    filter_complex = ";".join(filters)
+        from video_maker.cinematic.config import DEFAULT_CINEMATIC_SETTINGS
+        _ce = cinematic_settings if cinematic_settings is not None else DEFAULT_CINEMATIC_SETTINGS
+        _plan = edit_plan
+        try:
+            from video_maker.cinematic.feature_flag import is_4k_geometry, is_enabled_for_geometry
+            _ce_4k = is_enabled_for_geometry(_ce, width, height)
+        except Exception:
+            _ce_4k = bool(getattr(_ce, "enabled", False)) and (width, height) in ((3840, 2160), (2160, 3840))
+        if not _ce_4k and getattr(_ce, "enabled", False):
+            _log(f"[CE] skip non-4K {width}x{height} → legacy")
+        if _ce_4k:
+            # durations for the exact selected sequence (incl. repeats)
+            durs = []
+            _img_ext2 = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"}
+            for vf in selected:
+                if os.path.splitext(vf)[1].lower() in _img_ext2:
+                    # Still can hold any slot length — do not cap plan slice
+                    durs.append(max(float(target_duration), 30.0))
+                else:
+                    try:
+                        durs.append(float(probe_duration(vf)))
+                    except Exception:
+                        durs.append(2.0)
+            _plan = plan_from_selected_clips(
+                selected,
+                target_duration=float(target_duration),
+                settings=_ce,
+                transcript_segments=list(transcript_segments or []),
+                output_format=output_format or "16:9",
+                clip_durations=durs,
+                scene_bound=scene_bound,
+                scene_preferred=scene_preferred,
+            )
+            _ce_plan = _plan
+            _log(f"[CE] plan rebuilt on selected={len(selected)} scenes={len(_plan.scenes)}")
+            # [VM-FIX][ГЕЙТ] До рендера: контент плана обязан покрывать озвучку.
+            # Если клипов не хватает — повторяем пул циклом и пересобираем план
+            # (иначе видео короче аудио и последний кадр замирает).
+            try:
+                _cover = sum(
+                    max(0.0, float(sc.source_out) - float(sc.source_in))
+                    for sc in _plan.scenes
+                )
+                _need = float(target_duration) * 1.01
+                if _cover < _need and selected:
+                    _log(f"[ГЕЙТ] покрытие плана {_cover:.1f}с < {_need:.1f}с — повторяю клипы и пересобираю план")
+                    _extra = list(selected)
+                    _safety = 0
+                    _extra_cover = _cover
+                    while _extra_cover < _need and _safety < 300:
+                        _safety += 1
+                        for _vf in list(_extra):
+                            try:
+                                _dd = float(probe_duration(_vf))
+                            except Exception:
+                                continue
+                            _extra.append(_vf)
+                            _extra_cover += min(_dd, 9.0)
+                            if _extra_cover >= _need:
+                                break
+                    _durs2: list[float] = []
+                    for _vf in _extra:
+                        try:
+                            _durs2.append(float(probe_duration(_vf)))
+                        except Exception:
+                            _durs2.append(2.0)
+                    _plan = plan_from_selected_clips(
+                        _extra,
+                        target_duration=float(target_duration),
+                        settings=_ce,
+                        transcript_segments=list(transcript_segments or []),
+                        output_format=output_format or "16:9",
+                        clip_durations=_durs2,
+                        scene_bound=scene_bound,
+                        scene_preferred=scene_preferred,
+                    )
+                    _ce_plan = _plan
+                    _cover = sum(
+                        max(0.0, float(sc.source_out) - float(sc.source_in))
+                        for sc in _plan.scenes
+                    )
+                    _log(f"[ГЕЙТ] план пересобран: сцен {len(_plan.scenes)}, покрытие {_cover:.1f}с")
+                    if _cover < _need:
+                        raise RuntimeError(
+                            f"[ГЕЙТ] план не покрывает озвучку: {_cover:.1f}с < {_need:.1f}с")
+            except RuntimeError:
+                raise
+            except Exception as _g_e:
+                _log(f"[ГЕЙТ] проверка покрытия плана пропущена: {_g_e}")
+            # [VM-FIX] Рендерим ИМЕННО план: входы = пути сцен плана, в его порядке.
+            # Иначе фильтр (по плану) и входы (по списку выбора) расходятся по
+            # индексам — энкодер получает не те кадры и падает.
+            try:
+                _plan_paths = [
+                    str(getattr(sc, "source_path", "") or "")
+                    for sc in _plan.scenes
+                ]
+                if _plan_paths and all(_plan_paths):
+                    selected = _plan_paths
+                    n = len(selected)
+                    inputs = []
+                    for _vf in selected:
+                        if os.path.splitext(_vf)[1].lower() in _img_ext3:
+                            inputs.extend(["-loop", "1", "-framerate", "30", "-t", "30", "-i", _vf])
+                        else:
+                            inputs.extend(["-i", _vf])
+                    if has_audio:
+                        inputs.extend(["-i", audio_file])
+                    _log(f"[CE] входы синхронизированы с планом: {len(selected)}")
+            except Exception as _syn_e:
+                _log(f"[CE] синхронизация входов пропущена: {_syn_e}")
+            if _ce_debug and _plan is not None:
+                try:
+                    from video_maker.cinematic.plan_io import write_plan_json
+                    side = output_path + ".edit_plan.json"
+                    write_plan_json(_plan, side)
+                    _log(f"[CE] debug plan → {side}")
+                except Exception as _pe:
+                    _log(f"[CE] plan dump skipped: {_pe}")
+        filter_complex = build_ce_filter_complex(
+            selected,
+            width=width,
+            height=height,
+            target_duration=target_duration,
+            settings=_ce,
+            plan=_plan,
+        )
+        # Optional transition SFX under narration (whoosh on soft dissolves)
+        if (
+            has_audio
+            and _ce_plan is not None
+            and getattr(_ce, "transition_sfx", False)
+            and getattr(_ce, "allowed_transitions", "hard_only") != "hard_only"
+        ):
+            try:
+                from video_maker.cinematic.timeline import apply_rhythm
+                from video_maker.cinematic.pipeline_hooks import maybe_render_transition_sfx
+                _tl = apply_rhythm(
+                    _ce_plan.scenes, _ce,
+                    target_duration=float(target_duration),
+                )
+                _stage = os.path.join(
+                    os.path.dirname(output_path) or ".",
+                    f"ce_sfx_{uuid.uuid4().hex[:8]}",
+                )
+                os.makedirs(_stage, exist_ok=True)
+                _sfx = maybe_render_transition_sfx(
+                    settings=_ce,
+                    timeline_transitions=_tl.transitions,
+                    total_duration=float(target_duration),
+                    staging_dir=_stage,
+                    narration_path=audio_file,
+                )
+                if _sfx.get("mixed_narration_path") and os.path.isfile(_sfx["mixed_narration_path"]):
+                    audio_file = _sfx["mixed_narration_path"]
+                    # rebuild inputs tail: last -i is audio — replace path in inputs list
+                    # inputs built earlier; update has_audio path by rewriting last audio -i
+                    for _ii in range(len(inputs) - 1, -1, -1):
+                        if inputs[_ii] == "-i" and _ii + 1 < len(inputs):
+                            # find audio input (last -i that is not a video from selected)
+                            pass
+                    # Safer: rebuild audio input only
+                    # Remove previous audio -i if present at end
+                    if len(inputs) >= 2 and inputs[-2] == "-i":
+                        inputs[-1] = audio_file
+                    _log(f"[CE] transition SFX mixed under narration ({len(_tl.transitions)} transitions)")
+                elif _sfx.get("warnings"):
+                    _log(f"[CE] SFX skipped: {_sfx['warnings']}")
+            except Exception as _sfx_err:
+                _log(f"[CE] SFX path skipped: {_sfx_err}")
+    except Exception as _ce_err:
+        _log(f"[CE] fallback to legacy filters ({_ce_err})")
+        filters = []
+        for i in range(n):
+            filters.append(
+                f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{i}]"
+            )
+        concat_in = "".join(f"[v{i}]" for i in range(n))
+        filters.append(f"{concat_in}concat=n={n}:v=1:a=0[v]")
+        filter_complex = ";".join(filters)
 
-    cmd = [
-        ffmpeg, "-y",
-        *inputs,
-        "-filter_complex", filter_complex,
-        "-map", "[v]",
-        "-t", str(target_duration),
-        "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-    ]
-    if has_audio:
-        cmd += [
-            "-map", f"{n}:a",
-            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
-        ]
-    else:
-        cmd += ["-an"]
+    # [VM-FIX] 80+ входов × авто-потоки декодера = исчерпание потоков macOS
+    # («Error reinitializing filters / Resource temporarily unavailable», -35) —
+    # капим потоки декодера на вход (локальный пул тоже падал).
+    if n >= 20:
+        _capped: list[str] = []
+        for _x in inputs:
+            if _x == "-i":
+                _capped += ["-threads", "1", "-i"]
+            else:
+                _capped.append(_x)
+        inputs = _capped
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     # P0-6: пишем в tmp → verify → атомарная подмена (битый мастер не уедет в ветки)
     tmp_out = output_path + f".vm_tmp_{uuid.uuid4().hex[:8]}.mp4"
-    cmd.append(tmp_out)
-    cmd = inject_hwaccel(cmd)
-
-    _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
     check_inputs = list(selected) + ([audio_file] if has_audio else [])
+    # [VM-FIX] сериализованный граф медленнее: таймаут 14× реального времени
+    _enc_timeout = max(3600.0, float(target_duration) * 14.0)
+    _chunk_files: list[str] = []
+
+    def _build_cmd(fc_local: str, paths_local: list[str], out_file: str,
+                   with_audio: bool) -> list[str]:
+        """Команда кодирования одного графа (чанка): пути → filter → файл."""
+        _ins: list[str] = []
+        for _vf in paths_local:
+            if os.path.splitext(_vf)[1].lower() in _img_ext3:
+                _ins.extend(["-loop", "1", "-framerate", "30", "-t", "30", "-i", _vf])
+            else:
+                _ins.extend(["-i", _vf])
+        if len(paths_local) >= 8:
+            _c1: list[str] = []
+            for _x in _ins:
+                if _x == "-i":
+                    _c1 += ["-threads", "1", "-i"]
+                else:
+                    _c1.append(_x)
+            _ins = _c1
+        if with_audio and has_audio:
+            # [VM-FIX] аудио — ПОСЛЕ видео-входов (индекс = len(paths)); без него
+            # ffmpeg падал с «Invalid input file index: N» при -map N:a
+            _ins += ["-i", audio_file]
+        _c2 = [ffmpeg, "-y"]
+        if len(paths_local) >= 8:
+            # [VM-FIX] сериализация графа — меньше пик памяти (8ГБ Mac)
+            _c2 += ["-filter_complex_threads", "1"]
+        _c2 += [
+            *_ins,
+            "-filter_complex", fc_local,
+            "-map", "[v]",
+            "-t", str(target_duration),
+            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+        ]
+        if with_audio and has_audio:
+            _c2 += ["-map", f"{len(paths_local)}:a",
+                    "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000"]
+        else:
+            _c2 += ["-an"]
+        _c2.append(out_file)
+        return _c2 if _ce_many else inject_hwaccel(_c2)
+
+    def _run_encode(cmd_local: list[str], label: str = "") -> str:
+        """VT-энкод с повтором на CPU (libx264). Возвращает 'vt'/'cpu' или ''."""
+        res = run_ffmpeg(cmd_local, log_fn=_log, media_duration=target_duration,
+                         timeout=_enc_timeout)
+        if res.returncode == 0 and verify_mp4(cmd_local[-1], log_fn=_log):
+            return "vt"
+        err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
+        _log(f"[ВИДЕО] VT-энкод не удался{label}, повтор на CPU (libx264): {err[-160:]}")
+        cpu_cmd = list(cmd_local)
+        try:
+            i_v = cpu_cmd.index("h264_videotoolbox")
+            cpu_cmd[i_v] = "libx264"
+            if "-allow_sw" in cpu_cmd:
+                k = cpu_cmd.index("-allow_sw")
+                del cpu_cmd[k:k + 2]
+            if "-b:v" in cpu_cmd:
+                k = cpu_cmd.index("-b:v")
+                del cpu_cmd[k:k + 2]
+            cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18", "-threads", "4"]
+        except ValueError:
+            pass
+        res = run_ffmpeg(cpu_cmd, log_fn=_log, media_duration=target_duration,
+                         timeout=_enc_timeout)
+        if res.returncode == 0 and verify_mp4(cmd_local[-1], log_fn=_log):
+            return "cpu"
+        err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
+        _log(f"[ВИДЕО] Ошибка: {err}")
+        return ""
+
+    def _render_chunked() -> bool:
+        """[VM-FIX] Чанковый рендер мастера: большой 4K-граф (70+ планов) копит
+        кадры со всех входов (swap → SIGKILL на 8ГБ Mac). Режем план на чанки
+        по ЖЁСТКИМ склейкам: память каждого чанка ограничена; финал — concat
+        демультиплексором (stream copy) + озвучка. False → обычный путь.
+        """
+        try:
+            from video_maker.cinematic.timeline import apply_rhythm as _apply_rhythm2
+            from video_maker.cinematic.render_graph import assemble_render_graph as _assemble
+        except Exception as _im_e:
+            _log(f"[ВИДЕО 4K] чанки: импорт не удался ({_im_e})")
+            return False
+        try:
+            _tl2 = _apply_rhythm2(_ce_plan.scenes, _ce,
+                                  target_duration=_ce_plan.target_duration or _ce_plan.total_duration)
+            _scenes2 = list(_tl2.scenes)
+            _trans2 = list(_tl2.transitions)
+            # [ORD] 8ГБ Mac: даже 13 4K-планов при занятой памяти дают SIGKILL.
+            # Режем на чанки начиная с 8 планов (раньше — только 30+).
+            if len(_scenes2) < 8:
+                return False
+            _chunk_size = min(8, max(4, -(-len(_scenes2) // 5)))
+            _groups: list[list[int]] = []
+            _cur: list[int] = []
+            for _i in range(len(_scenes2)):
+                _cur.append(_i)
+                if len(_cur) >= _chunk_size and _i + 1 < len(_scenes2):
+                    _tr = _trans2[_i] if _i < len(_trans2) else None
+                    if _tr is not None and (_tr.spec.kind == "hard" or _tr.spec.duration <= 0.01):
+                        _groups.append(_cur)
+                        _cur = []
+            if _cur:
+                _groups.append(_cur)
+            if len(_groups) <= 1:
+                return False
+            _log(f"[ВИДЕО 4K] Чанковый рендер: {len(_groups)} чанков "
+                 f"(память 4K-графа ограничена)")
+            _enc_used: set[str] = set()
+            for _gi, _g in enumerate(_groups):
+                _g_scenes = [_scenes2[_j] for _j in _g]
+                _g_tr = [_trans2[_j] for _j in _g[:-1]]
+                _g_graph = _assemble(_g_scenes, _g_tr, _ce,
+                                     out_w=width, out_h=height, fps=30)
+                _g_fc = _g_graph.concat_or_xfade
+                if "[vout]" in _g_fc:
+                    _g_fc = _g_fc.replace("[vout]", "[v]")
+                _g_paths = [str(getattr(_sc, "source_path", "") or "") for _sc in _g_scenes]
+                _g_out = output_path + f".chunk{_gi:02d}.mp4"
+                _chunk_files.append(_g_out)
+                _log(f"[ВИДЕО 4K] чанк {_gi + 1}/{len(_groups)}: {len(_g_paths)} планов, "
+                     f"{_g_graph.total_duration:.1f}с → {os.path.basename(_g_out)}")
+                ensure_storage(_g_paths, _g_out, log_fn=_log)
+                _enc = _run_encode(_build_cmd(_g_fc, _g_paths, _g_out, with_audio=False),
+                                   label=f" (чанк {_gi + 1})")
+                if not _enc:
+                    return False
+                _enc_used.add(_enc)
+            # склейка чанков (stream copy) + озвучка
+            _lst = output_path + f".chunks_{uuid.uuid4().hex[:6]}.txt"
+            with open(_lst, "w", encoding="utf-8") as _f:
+                for _cf in _chunk_files:
+                    _f.write(f"file '{os.path.abspath(_cf)}'\n")
+            _ccmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", _lst]
+            if has_audio:
+                _ccmd += ["-i", audio_file]
+            _ccmd += ["-map", "0:v"]
+            if has_audio:
+                _ccmd += ["-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000"]
+            else:
+                _ccmd += ["-an"]
+            if len(_enc_used) <= 1:
+                # все чанки одним энкодером — честная склейка без перекодирования
+                _ccmd += ["-c:v", "copy"]
+            else:
+                # VT + CPU вперемешку: SPS разные — перекодируем при склейке
+                # (один вход, без графа — память в норме)
+                _log("[ВИДЕО 4K] чанки разными энкодерами — склейка с перекодированием")
+                _ccmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "4"]
+            _ccmd += ["-t", str(target_duration), tmp_out]
+            res = run_ffmpeg(_ccmd, log_fn=_log, media_duration=target_duration)
+            try:
+                os.remove(_lst)
+            except OSError:
+                pass
+            if res.returncode != 0 or not verify_mp4(tmp_out, log_fn=_log):
+                err = ((res.stderr or res.stdout or "")[-600:]) or "concat failed"
+                _log(f"[ВИДЕО] Ошибка сборки чанков: {err}")
+                return False
+            return True
+        except Exception as _ch_e:
+            _log(f"[ВИДЕО 4K] Чанковый рендер не удался ({_ch_e}) — обычный путь")
+            return False
+
+    cmd = _build_cmd(filter_complex, selected, tmp_out, with_audio=True)
+    _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
     try:
         ensure_storage(check_inputs, tmp_out, log_fn=_log)
-        res = run_ffmpeg(cmd, log_fn=_log, media_duration=target_duration)
-        if res.returncode != 0 or not verify_mp4(tmp_out, log_fn=_log):
-            err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
-            _log(f"[ВИДЕО] Ошибка: {err}")
-            raise RuntimeError(f"Быстрая склейка failed: {err}")
+        _done = False
+        # [VM-FIX] большие 4K-графы → чанковый рендер (память)
+        if _ce_4k and _ce_plan is not None and n >= 8:
+            _done = _render_chunked()
+        if not _done:
+            if not _run_encode(cmd):
+                raise RuntimeError("Быстрая склейка failed (VT и CPU)" )
+        # [ГЕЙТ] Жёсткая проверка: видео не короче озвучки (иначе стоп-кадр).
+        # Короче 0.95×аудио — ОШИБКА: файл не отдаём, стадия падает.
+        try:
+            _vdur, _adur = _probe_av_durations(tmp_out)
+            if has_audio and _adur > 0.5 and _vdur < 0.95 * _adur:
+                _log(f"[ГЕЙТ] ОШИБКА: видео {_vdur:.1f}с < 0.95×аудио {_adur:.1f}с — стоп-кадр, файл не отдаём")
+                raise RuntimeError(
+                    f"[ГЕЙТ] видео {_vdur:.1f}с короче озвучки {_adur:.1f}с (стоп-кадр)")
+            _log(f"[ГЕЙТ] OK: видео {_vdur:.1f}с / аудио {_adur:.1f}с")
+        except RuntimeError:
+            raise
+        except Exception as _ge:
+            _log(f"[ГЕЙТ] проверка длительностей пропущена: {_ge}")
         atomic_replace(tmp_out, output_path)
+        if _ce_debug and os.path.isfile(output_path):
+            try:
+                from video_maker.cinematic.quality_report import probe_media, write_report
+                qr = probe_media(output_path)
+                write_report(output_path + ".quality_report.json", {
+                    "path": output_path,
+                    "target_duration": float(target_duration),
+                    "probe": qr.to_dict(),
+                    "plan_scenes": len(_ce_plan.scenes) if _ce_plan else 0,
+                })
+                _log(f"[CE] quality_report → {output_path}.quality_report.json")
+            except Exception as _qe:
+                _log(f"[CE] quality_report skipped: {_qe}")
     finally:
         if os.path.exists(tmp_out):
             try:
                 os.remove(tmp_out)
             except OSError:
                 pass
+        for _cf in _chunk_files:
+            if os.path.exists(_cf):
+                try:
+                    os.remove(_cf)
+                except OSError:
+                    pass
 
     if move_used and broll_root:
         move_to_used(broll_root, selected, log_fn=_log)

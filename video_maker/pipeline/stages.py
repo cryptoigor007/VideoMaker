@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..paths import resolve_existing_path
+
 log = logging.getLogger(__name__)
 
 
@@ -105,6 +107,13 @@ class PipelineContext:
     # r51: YouTube description packaging (from GUI settings)
     packaging_opts: dict = field(default_factory=dict)
 
+    # Cinematic Enhancement (filled when cinematic_enabled)
+    cinematic_enabled: bool = False
+    edit_plan: object = None          # EditPlan | None
+    cinematic_settings: object = None # CinematicSettings | None
+    cinematic_transcript_segments: list = field(default_factory=list)
+    cinematic_output_format: str = "16:9"
+
     # Чекбоксы
     h_enable_intro: bool = False
     h_enable_middle: bool = False
@@ -159,6 +168,16 @@ class AudioStage(Stage):
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log(f"[АУДИО] Загрузка: {ctx.audio_path}")
 
+        resolved_audio = resolve_existing_path(ctx.audio_path, kind="file")
+        if resolved_audio and resolved_audio != ctx.audio_path:
+            ctx.log(f"[АУДИО] путь источника нормализован: {resolved_audio}")
+            ctx.audio_path = resolved_audio
+
+        resolved_output = resolve_existing_path(ctx.output_folder, kind="dir")
+        if resolved_output and resolved_output != ctx.output_folder:
+            ctx.log(f"[АУДИО] путь вывода нормализован: {resolved_output}")
+            ctx.output_folder = resolved_output
+
         from ..engines.audio import probe_duration
 
         ctx.audio_duration = probe_duration(ctx.audio_path)
@@ -175,6 +194,16 @@ class TranscribeStage(Stage):
 
     def run(self, ctx: PipelineContext) -> PipelineContext:
         ctx.log("[WHISPER] Запуск транскрибации...")
+
+        resolved_audio = resolve_existing_path(ctx.audio_path, kind="file")
+        if resolved_audio and resolved_audio != ctx.audio_path:
+            ctx.log(f"[WHISPER] путь источника нормализован: {resolved_audio}")
+            ctx.audio_path = resolved_audio
+
+        resolved_output = resolve_existing_path(ctx.output_folder, kind="dir")
+        if resolved_output and resolved_output != ctx.output_folder:
+            ctx.log(f"[WHISPER] путь вывода нормализован: {resolved_output}")
+            ctx.output_folder = resolved_output
 
         from ..engines.transcription import transcribe
 

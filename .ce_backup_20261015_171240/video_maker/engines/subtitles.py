@@ -1,0 +1,2188 @@
+# VideoMaker FIX | 2026.09.16-r55-cover-hook-parity | 2026-09-16
+# CHANGED:
+#   r49-hyphen: склейка ASR-токенов с дефисом (кто-то) до группировки;
+#               join без пробела после хвостового дефиса/тире.
+#   r48: _group_by_strong_runs — strong не смешивается с ordinary.
+#   r47: max_words=2, max_chars=13.
+# PREV: 2026.09.10-r43.3-stable (+r47/r48 на master)
+# REPLACE: video_maker/engines/subtitles.py
+
+"""Субтитры: karaoke (vertical/shorts) + classic YouTube (wide) + AISIE hooks."""
+from __future__ import annotations
+
+import logging
+import re
+import os
+import shutil
+import subprocess
+import tempfile
+import uuid
+
+# r24: display durations (long + shorts)
+HOOK_DUR = 4.5   # was ~2.5–3.2
+CTA_DUR = 7.0    # was 5.0
+
+# Цвета on-screen хука (и обложки Shorts) — один источник правды
+HOOK_MARKER_COLORS = (
+    "&H00952DFF&",  # fuchsia
+    "&H0000FFB8&",  # lime
+    "&H00006BFF&",  # orange
+    "&H00FFF000&",  # cyan
+)
+HOOK_MARKER_BLACK = "&H00000000&"
+
+from .ffmpeg_resilient import (
+    SubtitleStageFailed,
+    calculate_adaptive_bitrate,
+    classify_ffmpeg_error,
+    ensure_storage,
+    path_is_readable,
+    run_ffmpeg,
+    atomic_replace,
+    verify_mp4,
+    inject_hwaccel,
+)
+
+log = logging.getLogger(__name__)
+
+def _strip_ass_overrides(text: str) -> str:
+    r"""Remove leaked ASS override tags from Gemini/hook/CTA plain text."""
+    if not text:
+        return ""
+    t = str(text)
+    # { ... } override blocks
+    t = re.sub(r"\{[^}]*\}", "", t)
+    # bare tags like \fad(100,150) \shad0 \be0
+    t = re.sub(
+        r"\\(?:fad|shad|be|bord|fs|fn|an|pos|c|3c|4c|alpha|a|b|i|u|s|r|q|move|org|clip|iclip|t)\b[^\\{]*",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    )
+    t = t.replace("\\", " ")
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+try:
+    from ..external.aisie.styles import VISUAL_WEIGHTS, HOOK_TYPES
+except Exception:
+    VISUAL_WEIGHTS = {
+        "L0": {"font_scale": 0.85, "text_color": "#FFFFFF"},
+        "L1": {"font_scale": 0.92, "text_color": "#FFFFFF"},
+        "L2": {"font_scale": 1.00, "text_color": "#FFFF00"},
+        "L3": {"font_scale": 1.08, "text_color": "#FF3B30"},
+        "L4": {"font_scale": 1.15, "text_color": "#FF3B30"},
+    }
+    HOOK_TYPES = {}
+
+
+# Топ-пресеты 2025–2026 (выбор в GUI)
+
+def _ass_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _ass_color(hex_color: str, fallback: str = "&H00FFFFFF&") -> str:
+    if not hex_color or not str(hex_color).startswith("#") or len(str(hex_color)) < 7:
+        return fallback
+    try:
+        r = int(hex_color[1:3], 16)
+        g = int(hex_color[3:5], 16)
+        b = int(hex_color[5:7], 16)
+        return f"&H00{b:02X}{g:02X}{r:02X}&"
+    except (ValueError, IndexError):
+        return fallback
+
+
+def _ffmpeg_bin() -> str:
+    for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"):
+        path = candidate if candidate.startswith("/") else shutil.which(candidate)
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            r = subprocess.run([path, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=8)
+            out = (r.stdout or "") + (r.stderr or "")
+            if "subtitles" in out.lower() or " ass " in out.lower():
+                return path
+        except Exception:
+            return path
+    try:
+        import imageio_ffmpeg
+        p = imageio_ffmpeg.get_ffmpeg_exe()
+        if p and os.path.exists(p):
+            return str(p)
+    except Exception:
+        pass
+    return "ffmpeg"
+
+
+def _probe_video_resolution(video_path: str) -> tuple[int, int]:
+    import json
+    cmd = ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+           "-show_entries", "stream=width,height", "-of", "json", video_path]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+    stream = json.loads(result.stdout)["streams"][0]
+    return int(stream["width"]), int(stream["height"])
+
+
+def _filter_and_shift_events(events: list[dict], clip: dict | None) -> list[dict]:
+    if not clip:
+        return events
+    clip_start = float(clip.get("start", 0))
+    clip_end = float(clip.get("end", 0))
+    clip_dur = clip_end - clip_start
+    out = []
+    for ev in events:
+        if ev["end"] <= clip_start or ev["start"] >= clip_end:
+            continue
+        ns = max(0.0, ev["start"] - clip_start)
+        ne = min(clip_dur, ev["end"] - clip_start)
+        if ne > ns:
+            e = ev.copy()
+            e["start"], e["end"] = ns, ne
+            out.append(e)
+    return out
+
+
+def _escape_ass_path(path: str) -> str:
+    return path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+
+
+def _is_wide(playres_x: int, playres_y: int) -> bool:
+    return playres_x >= playres_y
+
+
+def _caption_pos(playres_x: int, playres_y: int, wide: bool) -> str:
+    """Vertical/shorts: центр текста на 56% (≈6% ниже середины), \an5.
+    Wide: низ кадра, \an2.
+    Важно: \an2 на mid поднимает тело строки ВЫШЕ середины — не использовать.
+    """
+    cx = playres_x // 2
+    if wide:
+        cy = int(playres_y * 0.90)
+        return "{\\an2\\pos(%d,%d)}" % (cx, cy)
+    cy = int(playres_y * 0.56)
+    return "{\\an5\\pos(%d,%d)}" % (cx, cy)
+
+
+
+def _weight_style(weight: str, base_size: int) -> tuple[str, int]:
+    w = VISUAL_WEIGHTS.get(weight) or VISUAL_WEIGHTS.get("L1") or {}
+    color = _ass_color(w.get("text_color", "#FFFFFF"))
+    scale = float(w.get("font_scale", 1.0))
+    size = max(36, int(base_size * scale))
+    return color, size
+
+
+def _generate_ass_header(playres_x: int, playres_y: int, wide: bool) -> str:
+    """Premium CapCut-class styles via libass (WhisperX word timings → ASS)."""
+    if wide:
+        scale = max(playres_y / 1080.0, 1.0)
+        sz = max(52, int(58 * scale))
+        hook_sz = max(68, int(78 * scale))
+        margin_v = max(56, int(playres_y * 0.07))
+        align_k, align_h = 2, 8
+    else:
+        scale = max(playres_x / 1080.0, 1.0)
+        sz = max(70, int(78 * scale))
+        hook_sz = max(88, int(102 * scale))
+        margin_v = int(playres_y * 0.028)
+        align_k, align_h = 5, 8
+    ml = int(playres_x * 0.035)
+    # Outline 8–10px equivalent at 1080 → scale
+    bord = max(6, int(8 * scale))
+    bord_h = max(7, int(10 * scale))
+    return f"""[Script Info]
+Title: VideoMaker Premium Captions
+ScriptType: v4.00+
+PlayResX: {playres_x}
+PlayResY: {playres_y}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Arial Black,{sz},&H0000EBFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
+Style: HormoziGreen,Arial Black,{sz},&H004CFF00&,&H004CFF00&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
+Style: TikTokBox,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&HE0000000&,-1,0,0,0,100,100,0,0,3,0,0,{align_k},{ml},{ml},{margin_v},1
+Style: CleanPro,SF Pro Display,{sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,0,0,1,0,4,{align_k},{ml},{ml},{margin_v},1
+Style: BoldPop,Arial Black,{sz},&H000000FF&,&H0000A5FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,2,0,1,{bord+1},0,{align_k},{ml},{ml},{margin_v},1
+Style: Cliffhanger,Arial Black,{sz},&H000000FF&,&H000000FF&,&H00000000&,&HA0000000&,-1,0,0,0,100,100,1,0,1,{bord+2},1,{align_k},{ml},{ml},{margin_v},1
+Style: Karaoke,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
+Style: Glow,Arial Black,{sz},&H00FFFFFF&,&H00000000&,&H00FFFFFF&,&H00000000&,-1,0,0,0,100,100,0,0,1,0,0,{align_k},{ml},{ml},{margin_v},1
+Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
+Style: Hook,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,{align_h},{ml},{ml},{margin_v},1
+Style: Strong,Arial Black,{max(sz, int(sz*1.12))},&H0000EBFF&,&H000000FF&,&H00000000&,&H90000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_h},{ml},{ml},{margin_v},1
+Style: Default,Arial Black,{sz},&H00FFFFFF&,&H0000EBFF&,&H00000000&,&H64000000&,-1,0,0,0,100,100,1,0,1,{bord},0,{align_k},{ml},{ml},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+
+def _words_from_transcription(transcription: dict | None) -> list[dict]:
+    if not transcription:
+        return []
+    words = []
+    for seg in transcription.get("segments") or []:
+        seg_words = seg.get("words") or []
+        if seg_words:
+            for w in seg_words:
+                text = (w.get("word") or w.get("text") or "").strip()
+                if not text:
+                    continue
+                start = float(w.get("start", seg.get("start", 0)))
+                end = float(w.get("end", start + 0.25))
+                if end <= start:
+                    end = start + 0.2
+                words.append({"text": text, "start": start, "end": end})
+        else:
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            parts = text.split()
+            s0 = float(seg.get("start", 0))
+            s1 = float(seg.get("end", s0 + 1))
+            dur = max(0.05, (s1 - s0) / max(len(parts), 1))
+            for i, p in enumerate(parts):
+                words.append({"text": p, "start": s0 + i * dur, "end": s0 + (i + 1) * dur})
+    return words
+
+
+# Краевая пунктуация (Whisper / ASR). Fullwidth-знаки тоже.
+_EDGE_PUNCT = (
+    r"\s\.,!?;:«»\"'()\[\]…"
+    r"\u2026\u3002\uff0c\uff01\uff1f\uff1b\uff1a"  # … 。，！？；：
+    r"—–\-"
+)
+_EDGE_PUNCT_RE_L = re.compile(f"^[{_EDGE_PUNCT}]+")
+_EDGE_PUNCT_RE_R = re.compile(f"[{_EDGE_PUNCT}]+$")
+_CLOSE_QUOTE_RE = re.compile(r"[\u00bb\"'\)\]\}]+$")
+# Жёсткий обрыв группы: только конец предложения (. ! ? …).
+# Запятая/точка с запятой НЕ рвут — иначе 1–2 слова и «дёрганье» + ощущение каши.
+# Тире/дефис не рвут (кто-то, переносы ASR).
+_PHRASE_END_RE = re.compile(
+    r"[.!?\u2026\u3002\uff01\uff1f]+$"
+)
+# Ведущий конец предложения на следующем токене (".Слово")
+_PHRASE_LEAD_RE = re.compile(
+    r"^[.!?\u2026\u3002\uff01\uff1f]+"
+)
+
+
+def _norm_word_key(text: str) -> str:
+    """Ключ для strong_map: lower, ё→е, без пунктуации."""
+    t = (text or "").strip().lower().replace("ё", "е")
+    t = _EDGE_PUNCT_RE_L.sub("", t)
+    t = _EDGE_PUNCT_RE_R.sub("", t)
+    return t
+
+
+def _is_pure_punct(text: str) -> bool:
+    """Токен без букв/цифр — только знаки (., -, —, …). Не рендерим, не solo-группа."""
+    return not _norm_word_key(text)
+
+
+def _display_word(text: str) -> str:
+    """Текст на экран: сохраняем пунктуацию и дефисы (кто-то, слово, слово.).
+
+    Раньше (r43-phrase) срезали краевые знаки — из-за этого на видео
+    пропали запятые/точки/тире. Norm-ключ для strong по-прежнему без пунктуации.
+    """
+    return (text or "").strip()
+
+
+def _deconflict_events(events: list[dict], min_dur: float = 0.10) -> list[dict]:
+    """Гарантировать: events[i].start >= events[i-1].end (одна строка karaoke).
+
+    Layer 1 (captions) только; hooks/CTA (layer 2) не трогаем здесь.
+    """
+    if not events:
+        return events
+    # стабильный порядок
+    events = sorted(events, key=lambda e: (float(e.get("start", 0)), float(e.get("end", 0))))
+    prev_end = -1.0
+    out: list[dict] = []
+    for ev in events:
+        e = dict(ev)
+        t0 = float(e.get("start", 0))
+        t1 = float(e.get("end", t0 + min_dur))
+        if t0 < prev_end:
+            t0 = prev_end
+        if t1 < t0 + min_dur:
+            t1 = t0 + min_dur
+        e["start"], e["end"] = t0, t1
+        out.append(e)
+        prev_end = t1
+    return out
+
+
+def _assemble_group_display(words: list[dict], group: list[int]) -> dict[int, str]:
+    """Склеить pure-punct с соседним словом; вернуть idx → текст для ASS.
+
+    Пример: [«друг», «.», «Да»] → {0: «друг.», 2: «Да»}
+    После r49 hyphen-merge «кто-то» обычно один токен; если нет — pure «-»
+    клеится к соседу без пробела.
+    """
+    out: dict[int, str] = {}
+    pending_lead = ""
+    last_idx: int | None = None
+    for j in group:
+        raw = str(words[j].get("text") or "").strip()
+        if not raw:
+            continue
+        if _is_pure_punct(raw):
+            if last_idx is not None and last_idx in out:
+                out[last_idx] = out[last_idx] + raw
+            else:
+                pending_lead += raw
+            continue
+        wt = _display_word(raw)
+        if not wt:
+            continue
+        # «-то» после уже собранного слова → без пробела (страховка, если merge не сработал)
+        if (
+            last_idx is not None
+            and last_idx in out
+            and wt[:1] in "-–—"
+            and not _is_pure_punct(wt)
+        ):
+            out[last_idx] = out[last_idx] + wt
+            continue
+        if pending_lead:
+            wt = pending_lead + wt
+            pending_lead = ""
+        # предыдущий токен оканчивается дефисом → склеить без пробела
+        if (
+            last_idx is not None
+            and last_idx in out
+            and out[last_idx]
+            and out[last_idx][-1] in "-–—"
+        ):
+            out[last_idx] = out[last_idx] + wt
+            continue
+        out[j] = wt
+        last_idx = j
+    return out
+
+
+# Дефис состава (кто-то). Длинное тире «—» — пауза, не склеиваем.
+_COMPOUND_HYPHEN_CHARS = frozenset("-–")
+
+
+def _merge_hyphenated_tokens(words: list[dict]) -> list[dict]:
+    """Склеить разорванные ASR дефисные слова до группировки (r49).
+
+    Паттерны Whisper/MLX:
+      «кто» + «-» + «то»  → «кто-то»
+      «кто-» + «то»       → «кто-то»
+      «кто» + «-то»       → «кто-то»
+    Не склеиваем паузу: «слово» «—» «другое».
+    """
+    if not words or len(words) < 2:
+        return list(words or [])
+
+    def _txt(w: dict) -> str:
+        return str(w.get("text") or "").strip()
+
+    def _ends_hyphen(t: str) -> bool:
+        return bool(t) and t[-1] in _COMPOUND_HYPHEN_CHARS and not _is_pure_punct(t)
+
+    def _starts_hyphen(t: str) -> bool:
+        return bool(t) and t[0] in _COMPOUND_HYPHEN_CHARS and not _is_pure_punct(t)
+
+    def _is_hyphen_only(t: str) -> bool:
+        return bool(t) and all(c in _COMPOUND_HYPHEN_CHARS for c in t)
+
+    out: list[dict] = []
+    i = 0
+    n = len(words)
+    while i < n:
+        cur = dict(words[i])
+        t0 = _txt(cur)
+        # «кто» + «-» + «то»
+        if (
+            i + 2 < n
+            and t0
+            and not _is_pure_punct(t0)
+            and not _ends_hyphen(t0)
+            and _is_hyphen_only(_txt(words[i + 1]))
+            and _txt(words[i + 2])
+            and not _is_pure_punct(_txt(words[i + 2]))
+        ):
+            t2 = _txt(words[i + 2])
+            hy = _txt(words[i + 1])
+            cur["text"] = f"{t0}{hy}{t2}"
+            try:
+                cur["end"] = float(words[i + 2].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 3
+            continue
+        # «кто-» + «то»
+        if (
+            i + 1 < n
+            and _ends_hyphen(t0)
+            and _txt(words[i + 1])
+            and not _is_pure_punct(_txt(words[i + 1]))
+            and not _starts_hyphen(_txt(words[i + 1]))
+        ):
+            cur["text"] = t0 + _txt(words[i + 1])
+            try:
+                cur["end"] = float(words[i + 1].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 2
+            continue
+        # «кто» + «-то»
+        if (
+            i + 1 < n
+            and t0
+            and not _is_pure_punct(t0)
+            and not _ends_hyphen(t0)
+            and _starts_hyphen(_txt(words[i + 1]))
+        ):
+            cur["text"] = t0 + _txt(words[i + 1])
+            try:
+                cur["end"] = float(words[i + 1].get("end", cur.get("end", 0)))
+            except (TypeError, ValueError):
+                pass
+            out.append(cur)
+            i += 2
+            continue
+        out.append(cur)
+        i += 1
+    return out
+
+
+def _join_ass_parts(parts: list[str]) -> str:
+    """Склеить ASS-фрагменты; не ставить пробел после хвостового дефиса/тире."""
+    if not parts:
+        return ""
+    out = parts[0]
+    for p in parts[1:]:
+        # видимый хвост предыдущего фрагмента (после последнего '}')
+        prev_tail = out
+        br = prev_tail.rfind("}")
+        visible = prev_tail[br + 1 :] if br >= 0 else prev_tail
+        if visible.endswith(("-", "–", "—")):
+            out = out + p
+        else:
+            out = out + " " + p
+    return out
+
+
+def _word_ends_sentence(text: str) -> bool:
+    """True, если слово заканчивает предложение (. ! ? …). Сохранено для совместимости."""
+    return _word_ends_phrase(text, sentence_only=True)
+
+
+def _word_ends_phrase(text: str, sentence_only: bool = False) -> bool:
+    """Обрыв группы по хвосту токена.
+
+    sentence_only=True → только . ! ? …
+    иначе также , ; : и хвостовой дефис/тире (не «кто-то» — дефис не в хвосте).
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    t = _CLOSE_QUOTE_RE.sub("", t)
+    if not t:
+        return False
+    if sentence_only:
+        return bool(re.search(r"[.!?\u2026\u3002\uff01\uff1f]+$", t))
+    return bool(_PHRASE_END_RE.search(t))
+
+
+def _word_starts_new_phrase(text: str) -> bool:
+    """Токен начинается с фразового знака (Whisper: '.Далее' / ',и')."""
+    t = (text or "").strip()
+    if not t or _is_pure_punct(t):
+        return False
+    return bool(_PHRASE_LEAD_RE.search(t))
+
+
+def _strong_lookup(strong: dict, word_text: str) -> str:
+    """Точное совпадение ключа (без prefix — иначе красятся чужие слова)."""
+    if not strong or not word_text:
+        return ""
+    key = _norm_word_key(word_text)
+    if not key:
+        return ""
+    if key in strong:
+        return str(strong[key] or "").upper()
+    k2 = key.replace("-", "")
+    if k2 and k2 in strong:
+        return str(strong[k2] or "").upper()
+    return ""
+
+
+def _strong_map(analysis: dict, word_texts: list | None = None) -> dict:
+    """Сильные слова: лексикон + идиомы + Gemini/AISIE (только если в лексиконе или идиома).
+
+    «друг для друга» — только целиком (не одно «друг»).
+    Цвета: L2 yellow, L3 orange, L4 pink.
+    """
+    from .highlight_lexicon import (
+        build_lexicon_strong_map,
+        lexicon_level,
+        find_idioms_in_words,
+        SINGLE_BLOCKLIST,
+        IDIOM_PHRASES,
+        _norm,
+    )
+
+    m: dict = {}
+    rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
+
+    def put(key: str, weight: str):
+        if not key or len(key) < 2:
+            return
+        w = (weight or "L2").upper()
+        if w not in rank:
+            w = "L2"
+        prev = m.get(key)
+        if prev is None or rank.get(w, 0) >= rank.get(str(prev).upper(), 0):
+            m[key] = w
+
+    texts = list(word_texts or [])
+    if not texts:
+        # собрать из strong_words / hooks тексты как fallback
+        for sw in analysis.get("strong_words") or []:
+            if isinstance(sw, dict):
+                texts.extend(str(sw.get("word") or sw.get("text") or "").split())
+
+    # 1) лексикон + идиомы по реальной цепочке слов
+    if texts:
+        for k, lv in build_lexicon_strong_map(texts).items():
+            put(k, lv)
+
+    # 2) Gemini strong_words — только если слово в лексиконе или часть идиомы
+    for sw in analysis.get("strong_words") or []:
+        if not isinstance(sw, dict):
+            continue
+        raw = sw.get("word") or sw.get("text") or ""
+        wt = (sw.get("weight") or sw.get("visual_weight") or "L2").upper()
+        parts = str(raw).split()
+        if len(parts) >= 2:
+            phrase = " ".join(_norm(x) for x in parts)
+            if phrase in IDIOM_PHRASES:
+                for part in parts:
+                    put(_norm(part), IDIOM_PHRASES[phrase])
+                continue
+        for part in parts:
+            k = _norm(part)
+            if not k or k in SINGLE_BLOCKLIST:
+                continue
+            lv = lexicon_level(part)
+            if lv:
+                # Gemini может поднять вес не ниже лексикона
+                put(k, wt if rank.get(wt, 0) >= rank.get(lv, 0) else lv)
+            # иначе игнор — нет в перечне
+
+    # 3) AISIE keyword groups — фильтр через лексикон; идиомы приоритетнее
+    hooks = list(analysis.get("aisie", {}).get("hooks") or []) + list(analysis.get("hooks") or [])
+    for h in hooks:
+        if not isinstance(h, dict):
+            continue
+        for g in h.get("semantic_groups") or []:
+            if not isinstance(g, dict) or not bool(g.get("is_keyword_group")):
+                continue
+            raw = g.get("words") or g.get("text") or ""
+            parts = raw if isinstance(raw, list) else str(raw).split()
+            parts = [str(x).strip() for x in parts if str(x).strip()]
+            if not parts:
+                continue
+            phrase = " ".join(_norm(x) for x in parts)
+            if phrase in IDIOM_PHRASES:
+                for part in parts:
+                    put(_norm(part), IDIOM_PHRASES[phrase])
+                continue
+            for part in parts:
+                k = _norm(part)
+                if k in SINGLE_BLOCKLIST:
+                    continue
+                lv = lexicon_level(part)
+                if lv:
+                    put(k, lv)
+
+    return m
+
+
+
+
+def _shorts_phrase_boundaries(words: list[dict], clips: list | None) -> tuple[set[int], set[int]]:
+    """Индексы слов: must_start / must_end по клипам Gemini (clips_for_shorts).
+
+    Для каждого шорта: первое слово окна = начало словосочетания на экране,
+    последнее слово окна = конец словосочетания. Так cut с vertical не режет
+    фразу посередине.
+    """
+    must_start: set[int] = set()
+    must_end: set[int] = set()
+    if not words or not clips:
+        return must_start, must_end
+    n = len(words)
+    for clip in clips:
+        if not isinstance(clip, dict):
+            continue
+        try:
+            c0 = float(clip.get("start", 0) or 0)
+            c1 = float(clip.get("end", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if c1 <= c0:
+            continue
+        # Слова, пересекающие окно шорта (не только «полностью внутри»)
+        idxs = [
+            i for i, w in enumerate(words)
+            if float(w.get("end", 0)) > c0
+            and float(w.get("start", 0)) < c1
+        ]
+        if not idxs:
+            continue
+        # Убрать слово, почти целиком ДО start (overlap < 30% длительности слова)
+        while idxs:
+            w = words[idxs[0]]
+            ws, we = float(w.get("start", 0)), float(w.get("end", 0))
+            dur = max(we - ws, 1e-3)
+            overlap = max(0.0, min(we, c1) - max(ws, c0))
+            if ws < c0 and overlap / dur < 0.30:
+                idxs.pop(0)
+                continue
+            break
+        while idxs:
+            w = words[idxs[-1]]
+            ws, we = float(w.get("start", 0)), float(w.get("end", 0))
+            dur = max(we - ws, 1e-3)
+            overlap = max(0.0, min(we, c1) - max(ws, c0))
+            if we > c1 and overlap / dur < 0.30:
+                idxs.pop()
+                continue
+            break
+        if not idxs:
+            continue
+        must_start.add(idxs[0])
+        must_end.add(idxs[-1])
+    return must_start, must_end
+
+
+def _group_words_with_boundaries(
+    words: list[dict],
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    max_words: int = 2,
+    max_chars: int = 13,
+) -> list[list[int]]:
+    """Группы 1–2 слова (читаемость vertical/shorts).
+
+    r47:
+    - max_words default 2 (hard cap 2) — реально соблюдается в теле;
+    - max_chars default 13: «большой риск»(12) вместе,
+      «главный секрет»(14) / «проблема серьёзная» — разбиваются;
+    - must_start / must_end — границы шортов Gemini (не раздувают группу!);
+    - phrase-break после .!?… , ; : и хвостового дефиса/тире;
+    - leading-punct / pure-punct — барьер фразы; pure-punct не стартует группу;
+    - LONG (≥8 букв по _norm_word_key): solo; исключение [sticky_short, LONG]
+      (если пара ≤ max_chars).
+    """
+    n = len(words)
+    if n == 0:
+        return []
+    must_start = set(must_start or ())
+    must_end = set(must_end or ())
+    sticky = {
+        "и", "а", "но", "да", "или", "либо", "ни",
+        "в", "на", "по", "к", "с", "у", "о", "об", "обо", "из", "от", "до",
+        "для", "при", "без", "над", "под", "про", "через",
+        "не", "же", "ли", "бы", "то", "это", "как", "что", "чтобы",
+        "я", "ты", "он", "она", "мы", "вы", "они",
+    }
+    LONG_MIN = 8  # букв после нормализации
+    max_words = max(1, min(int(max_words or 2), 2))  # hard cap 2
+    max_chars = max(1, min(int(max_chars or 13), 13))  # hard cap 13
+
+    def _key(idx: int) -> str:
+        return _norm_word_key(str(words[idx].get("text") or ""))
+
+    def _is_long(idx: int) -> bool:
+        k = _key(idx)
+        return len(k) >= LONG_MIN
+
+    def _is_sticky(idx: int) -> bool:
+        return _key(idx) in sticky
+
+    def _chars_span(a: int, b: int) -> int:
+        """Сумма длин display-текста слов [a, b) + пробелы между ними."""
+        if b <= a:
+            return 0
+        total = 0
+        for k in range(a, b):
+            total += len(str(words[k].get("text") or ""))
+        total += max(0, (b - a) - 1)
+        return total
+
+    groups: list[list[int]] = []
+    i = 0
+    while i < n:
+        # Голые знаки (".", "-", "—") не начинают группу
+        while i < n and _is_pure_punct(str(words[i].get("text") or "")):
+            i += 1
+        if i >= n:
+            break
+
+        hard_end = n
+        for e in sorted(must_end):
+            if e >= i:
+                hard_end = min(hard_end, e + 1)
+                break
+        for s in sorted(must_start):
+            if s > i:
+                hard_end = min(hard_end, s)
+                break
+        # Фразовый барьер: , ; : . ! ? … / хвостовой дефис / pure-punct / leading-punct
+        for j in range(i, hard_end):
+            raw_j = str(words[j].get("text") or "")
+            if j > i and _is_pure_punct(raw_j):
+                # отдельный знак — конец текущей фразы (знак можно включить в окно, не рендерим)
+                hard_end = min(hard_end, j + 1)
+                break
+            if j > i and _word_starts_new_phrase(raw_j):
+                # ".Слово" / ",и" — новая фраза с j, текущая заканчивается до j
+                hard_end = min(hard_end, j)
+                break
+            if _word_ends_phrase(raw_j):
+                hard_end = min(hard_end, j + 1)
+                break
+
+        remain = hard_end - i
+        if remain <= 0:
+            i += 1
+            continue
+
+        # --- LONG: solo (не раздуваем за счёт max_chars) ---
+        if _is_long(i):
+            end = i + 1
+            groups.append(list(range(i, end)))
+            i = end
+            continue
+
+        # sticky + LONG → одна группа из двух, только если влезает в max_chars
+        if (
+            remain >= 2
+            and max_words >= 2
+            and _is_sticky(i)
+            and (i + 1) < hard_end
+            and _is_long(i + 1)
+            and _chars_span(i, i + 2) <= max_chars
+        ):
+            end = i + 2
+            groups.append(list(range(i, end)))
+            i = end
+            continue
+
+        # не втягивать следующее LONG в обычную группу
+        for j in range(i + 1, hard_end):
+            if _is_long(j):
+                hard_end = j
+                break
+
+        remain = hard_end - i
+        if remain <= 0:
+            groups.append([i])
+            i += 1
+            continue
+
+        # целевой размер: 1 или 2 (max_words hard-cap)
+        target = 1
+        if remain >= 2 and max_words >= 2 and _chars_span(i, i + 2) <= max_chars:
+            target = 2
+
+        end = min(i + target, hard_end, i + max_words)
+
+        # sticky: частица в конце → +1, только в пределах max_words / max_chars
+        if end < hard_end and (end - i) < max_words:
+            if _is_sticky(end - 1) and not _is_long(end):
+                trial = min(end + 1, hard_end, i + max_words)
+                if _chars_span(i, trial) <= max_chars:
+                    end = trial
+
+        # не оставлять одно слово, если можно 2 и влезает по chars
+        if end - i == 1 and end < hard_end and max_words >= 2 and not _is_long(i):
+            if not _is_long(end) and _chars_span(i, end + 1) <= max_chars:
+                end = min(i + 2, hard_end, i + max_words)
+
+        # сирота: забрать только если ≤ max_words и влезает по chars
+        if hard_end - end == 1 and (end - i + 1) <= max_words:
+            if not _is_long(end) and _chars_span(i, hard_end) <= max_chars:
+                end = hard_end
+
+        end = min(end, i + max_words, hard_end)
+        if end <= i:
+            end = i + 1
+
+        groups.append(list(range(i, end)))
+        i = end
+    return groups
+
+
+
+def _group_words_static(
+    words: list[dict],
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+) -> list[list[int]]:
+    """Статичные группы 1–2 слова + границы шортов Gemini."""
+    return _group_words_with_boundaries(
+        words, must_start=must_start, must_end=must_end, max_words=2, max_chars=13,
+    )
+
+
+def _group_by_strong_runs(
+    words: list[dict],
+    strong: dict[str, str] | None,
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    max_words: int = 2,
+    max_chars: int = 13,
+) -> list[list[int]]:
+    """Группировка с изоляцией strong от ordinary (r48).
+
+    Поток слов режется на runs одного типа (ordinary | strong).
+    Внутри каждого run — стандартные лимиты max_words/max_chars
+    через _group_words_with_boundaries (LONG, sticky, punct, must_*).
+
+    Правила:
+    - strong никогда не в одной группе с non-strong;
+    - подряд strong группируются только если влезают в маску (2 / 13);
+    - isolated strong → solo-группа;
+    - пустой strong → обычная группировка без изменений.
+    """
+    if not words:
+        return []
+    if not strong:
+        return _group_words_with_boundaries(
+            words,
+            must_start=must_start,
+            must_end=must_end,
+            max_words=max_words,
+            max_chars=max_chars,
+        )
+
+    must_start_s = set(must_start or ())
+    must_end_s = set(must_end or ())
+
+    def is_strong_idx(idx: int) -> bool:
+        key = _norm_word_key(str(words[idx].get("text") or ""))
+        if not key:
+            return False
+        return bool(strong.get(key))
+
+    n = len(words)
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        flag = is_strong_idx(i)
+        j = i + 1
+        while j < n and is_strong_idx(j) == flag:
+            j += 1
+        runs.append((i, j))
+        i = j
+
+    out: list[list[int]] = []
+    for a, b in runs:
+        if a >= b:
+            continue
+        sub = words[a:b]
+        local_ms = {x - a for x in must_start_s if a <= x < b}
+        local_me = {x - a for x in must_end_s if a <= x < b}
+        local_groups = _group_words_with_boundaries(
+            sub,
+            must_start=local_ms or None,
+            must_end=local_me or None,
+            max_words=max_words,
+            max_chars=max_chars,
+        )
+        for g in local_groups:
+            if g:
+                out.append([a + idx for idx in g])
+    return out
+
+
+def _group_words_one_line(
+    words: list[dict],
+    max_chars: int = 13,
+    max_words: int = 2,
+    must_start: set[int] | None = None,
+    must_end: set[int] | None = None,
+    strong: dict | None = None,
+) -> list[list[int]]:
+    """Clean Pro: фразы 1–2 слова; strong-словосочетания не рвутся.
+
+    Phrase karaoke: важное слово + соседняя частица/слово держатся в одной группе.
+    """
+    groups = _group_words_with_boundaries(
+        words, must_start=must_start, must_end=must_end,
+        max_words=max_words, max_chars=max_chars,
+    )
+    if not strong or not words:
+        return groups
+
+    sticky = {"не", "ни"}  # только отрицание перед strong; «для» уже в идиоме
+    rank = {"L1": 1, "L2": 2, "L3": 3, "L4": 4}
+
+    def level_idx(i: int) -> str:
+        k = _norm_word_key(words[i].get("text") or "")
+        if not k or k not in strong:
+            return ""
+        return str(strong[k] or "").upper()
+
+    def is_strong_idx(i: int) -> bool:
+        return rank.get(level_idx(i), 0) >= 2
+
+    def is_sticky_idx(i: int) -> bool:
+        return _norm_word_key(words[i].get("text") or "") in sticky
+
+    n = len(words)
+    out: list[list[int]] = []
+    i = 0
+    while i < n:
+        lv = level_idx(i)
+        # Strong: только одинаковый цвет в одной строке; max 2, или 3 если все короткие
+        if rank.get(lv, 0) >= 2 or (is_sticky_idx(i) and i + 1 < n and rank.get(level_idx(i + 1), 0) >= 2):
+            cluster = []
+            # ведущая частица только если следующий strong
+            if is_sticky_idx(i) and rank.get(lv, 0) < 2:
+                cluster.append(i)
+                i += 1
+                lv = level_idx(i) if i < n else ""
+            base_lv = lv
+            while i < n and rank.get(level_idx(i), 0) >= 2:
+                cur = level_idx(i)
+                # разный цвет → другая строка
+                if cluster and cur != base_lv and rank.get(base_lv, 0) >= 2:
+                    break
+                if not base_lv:
+                    base_lv = cur
+                # один цвет: до 3 слов (идиомы вроде «друг для друга»)
+                if len(cluster) >= 3:
+                    break
+                cluster.append(i)
+                i += 1
+            if cluster:
+                out.append(cluster)
+                continue
+        # Ordinary: 2–3, не забирать strong
+        take = 2 if i + 1 < n else 1
+        if i + 2 < n:
+            take = 3
+        end = min(i + take, n)
+        while end > i + 1 and is_sticky_idx(end - 1) and end < n and is_strong_idx(end):
+            end -= 1
+        while end > i and is_strong_idx(end - 1):
+            end -= 1
+        if end <= i:
+            end = i + 1
+        out.append(list(range(i, end)))
+        i = end
+    return out if out else groups
+
+
+
+def _parity_strong_lookup(analysis: dict | None, honor_strong: bool) -> dict[str, str]:
+    """Простой exact-lookup strong из Gemini analysis['strong_words'].
+
+    r43: только Gemini, без highlight_lexicon, без AISIE hooks, без prefix.
+    Возвращает {norm_key: "L2"|"L3"|"L4"}.
+    """
+    if not honor_strong or not analysis:
+        return {}
+    out: dict[str, str] = {}
+    rank = {"L2": 2, "L3": 3, "L4": 4, "L1": 1}
+    for sw in analysis.get("strong_words") or []:
+        if not isinstance(sw, dict):
+            continue
+        text = str(sw.get("word") or sw.get("text") or "").strip()
+        if len(text) < 2:
+            continue
+        weight = str(sw.get("visual_weight") or sw.get("weight") or "L2").upper()
+        if weight not in ("L2", "L3", "L4"):
+            weight = "L2"
+        key = _norm_word_key(text)
+        if not key:
+            continue
+        prev = out.get(key)
+        if prev is None or rank.get(weight, 0) > rank.get(prev, 0):
+            out[key] = weight
+    return out
+
+
+def _build_shorts_parity_window(
+    words,
+    playres_x: int,
+    playres_y: int,
+    base_size: int,
+    wide: bool = False,
+    must_start: set | None = None,
+    must_end: set | None = None,
+    analysis: dict | None = None,
+    honor_strong: bool = True,
+):
+    """Clean Pro / shorts_parity (r42 + r43 strong + r47 density + r48 isolate).
+
+    1. Группы 1–2 слова, max_chars=13 (_group_by_strong_runs).
+    2. r48: strong и ordinary не смешиваются в одной группе.
+    3. non-active = base white. Без pre-color neon.
+    4. Active non-strong = mild yellow.
+    5. strong color + scale ТОЛЬКО когда is_active.
+    """
+    if not words:
+        return []
+
+    try:
+        from .colors import (
+            PARITY_ASS,
+            get_strong_ass_color,
+            get_strong_scale,
+        )
+        COL_BASE = PARITY_ASS["base"]
+        COL_ACTIVE = PARITY_ASS["active"]
+    except Exception:
+        COL_BASE = "&H00FFFFFF&"
+        COL_ACTIVE = "&H0000FFFF&"
+
+        def get_strong_ass_color(level: str) -> str:
+            return {
+                "L2": "&H0000FFFF&",
+                "L3": "&H00005EFF&",
+                "L4": "&H00FF00FF&",
+            }.get(level, "&H0000FFFF&")
+
+        def get_strong_scale(level: str) -> float:
+            return {"L2": 1.14, "L3": 1.22, "L4": 1.28}.get(level, 1.14)
+
+    fs = max(52, int(base_size * 1.05))
+    pos = _caption_pos(playres_x, playres_y, wide)
+    strong = _parity_strong_lookup(analysis, honor_strong)
+
+    # r48: ordinary и strong не смешиваются в одной группе; лимиты те же (2/13)
+    groups = _group_by_strong_runs(
+        words,
+        strong,
+        must_start=must_start,
+        must_end=must_end,
+        max_words=2,
+        max_chars=13,
+    )
+
+    events: list[dict] = []
+    bs = chr(92)
+    prev_end = -1.0  # деконфликт: одна caption-строка на экране
+
+    for group in groups:
+        if not group:
+            continue
+        edges = [float(words[i]["start"]) for i in group]
+        edges.append(float(words[group[-1]]["end"]))
+        for i in range(1, len(edges)):
+            if edges[i] <= edges[i - 1]:
+                edges[i] = edges[i - 1] + 0.05
+        if edges[-1] - edges[-2] < 0.12:
+            edges[-1] = edges[-2] + 0.18
+
+        disp = _assemble_group_display(words, group)
+        for gi, active_idx in enumerate(group):
+            t0 = edges[gi]
+            t1 = edges[gi + 1]
+            # одна caption-строка: следующий event только после prev_end
+            if t0 < prev_end:
+                t0 = prev_end
+            if t1 <= t0:
+                t1 = t0 + 0.12
+            parts = []
+            for j in group:
+                wt = disp.get(j)
+                if not wt:
+                    continue
+                raw = str(words[j].get("text") or "").strip()
+                is_active = (j == active_idx)
+                key = _norm_word_key(raw)
+                level = strong.get(key, "") if key else ""
+
+                if is_active and level:
+                    color = get_strong_ass_color(level)
+                    scale = get_strong_scale(level)
+                    size = max(36, int(fs * scale))
+                    parts.append(f"{{{bs}c{color}{bs}fs{size}}}{wt}")
+                elif is_active:
+                    parts.append(f"{{{bs}c{COL_ACTIVE}{bs}fs{fs}}}{wt}")
+                else:
+                    parts.append(f"{{{bs}c{COL_BASE}{bs}fs{fs}}}{wt}")
+            if not parts:
+                continue
+            # \q2 = не переносить строку (иначе «две строки» на 4K)
+            # r49: без пробела после хвостового дефиса
+            line = f"{pos}{{{bs}q2}}" + _join_ass_parts(parts)
+            events.append({
+                "start": t0,
+                "end": t1,
+                "style": "CleanPro",
+                "text": line,
+                "layer": 1,
+            })
+            prev_end = t1
+
+    return _deconflict_events(events)
+
+
+def _build_karaoke_window(
+    words, analysis, playres_x, playres_y, base_size,
+    wide: bool = False, caption_style: str = "auto_aisie",
+    honor_strong: bool = True,
+    must_start: set | None = None, must_end: set | None = None,
+):
+    """Karaoke-группы с РЕАЛЬНО разными пресетами.
+
+    Одна строка субтитров (ниже середины / низ для wide).
+    Strong-слова (AISIE/Gemini) внутри строки: другой цвет + увеличение.
+    Без второго слоя Glow — он давал визуальное «раздваивание» (увеличенный текст сверху).
+    Karaoke-active (текущее слово) подсвечивается цветом, без агрессивного scale,
+    чтобы не выглядеть как отдельный overlay.
+    """
+    if not words:
+        return []
+
+    key = (caption_style or "auto_aisie").strip().lower()
+    # r42/r43: clean_pro / shorts_parity → parity + optional Gemini strong
+    if key in ("clean_pro", "shorts_parity"):
+        return _build_shorts_parity_window(
+            words, playres_x, playres_y, base_size, wide=wide,
+            must_start=must_start, must_end=must_end,
+            analysis=analysis, honor_strong=honor_strong,
+        )
+
+    # r43-clean: auto / auto_aisie → Clean Pro (parity) для H и V/Shorts
+    key = (caption_style or "auto_aisie").strip().lower()
+    if key in ("", "auto_aisie", "auto"):
+        key = "clean_pro"
+    if key in ("clean_pro", "shorts_parity"):
+        return _build_shorts_parity_window(
+            words, playres_x, playres_y, base_size, wide=wide,
+            must_start=must_start, must_end=must_end,
+            analysis=analysis, honor_strong=honor_strong,
+        )
+    pos = _caption_pos(playres_x, playres_y, wide)
+
+    # ASS BGR. Пресеты: active/dim цвет, box, лёгкий pop только для strong.
+    # use_glow ВЫКЛЮЧЕН — отдельный glow-слой создавал «вторую» увеличенную копию слова.
+    PRESETS = {
+        "hormozi": {
+            "style": "Hormozi",
+            "active": "&H0000EBFF&",
+            "dim": "&H00C8C8C8&",
+            "use_pop": True,
+            "pop_pct": 112,
+            "box": False,
+            "active_scale": 1.06,
+            "strong_scale": 1.18,
+        },
+        "hormozi_green": {
+            "style": "HormoziGreen",
+            "active": "&H004CFF00&",
+            "dim": "&H00B0B0B0&",
+            "use_pop": True,
+            "pop_pct": 112,
+            "box": False,
+            "active_scale": 1.06,
+            "strong_scale": 1.18,
+        },
+        "tiktok_box": {
+            "style": "TikTokBox",
+            "active": "&H0000EBFF&",
+            "dim": "&H00FFFFFF&",
+            "use_pop": False,
+            "pop_pct": 100,
+            "box": True,
+            "active_scale": 1.04,
+            "strong_scale": 1.12,
+        },
+        "clean_pro": {
+            "style": "CleanPro",
+            "active": "&H00FFFFFF&",
+            "dim": "&H00A0A0A0&",
+            "use_pop": False,
+            "pop_pct": 100,
+            "box": False,
+            "active_scale": 1.02,
+            "strong_scale": 1.10,
+        },
+        "bold_pop": {
+            "style": "BoldPop",
+            "active": "&H000000FF&",
+            "dim": "&H00B8B8B8&",
+            "use_pop": True,
+            "pop_pct": 118,
+            "box": False,
+            "active_scale": 1.08,
+            "strong_scale": 1.28,
+        },
+        "cliffhanger": {
+            "style": "Cliffhanger",
+            "active": "&H000000FF&",
+            "dim": "&H00666699&",
+            "use_pop": True,
+            "pop_pct": 120,
+            "box": False,
+            "active_scale": 1.08,
+            "strong_scale": 1.32,
+        },
+    }
+    preset = PRESETS.get(key, PRESETS["hormozi"])
+    style_name = preset["style"]
+    col_active = preset["active"]
+    col_dim = preset["dim"]
+    use_pop = bool(preset["use_pop"])
+    pop_pct = int(preset["pop_pct"])
+    active_scale = float(preset["active_scale"])
+    strong_scale = float(preset.get("strong_scale") or (active_scale + 0.12))
+    is_box = bool(preset["box"])
+
+    strong = (_strong_map(analysis, [str(w.get("text") or "") for w in words]) if honor_strong else {})
+
+    # Neon yellow / orange / pink (без cyan)
+    NEON_YELLOW = "&H0000FFFF&"
+    NEON_ORANGE = "&H00005EFF&"
+    NEON_PINK = "&H00FF00FF&"
+    NEON_ORANGE_SOFT = "&H0000A5FF&"
+
+    def strong_weight(word_text: str) -> str:
+        if not honor_strong or not strong:
+            return ""
+        return _strong_lookup(strong, word_text)
+
+    BASE_SCALE_K = {"L4": 1.12, "L3": 1.10, "L2": 1.06, "L1": 1.04}
+    ACTIVE_SCALE_K = {"L4": 1.32, "L3": 1.24, "L2": 1.16, "L1": 1.10}
+    STRONG_COLOR_K = {
+        "L4": NEON_PINK,
+        "L3": NEON_ORANGE,
+        "L2": NEON_YELLOW,
+        "L1": NEON_ORANGE_SOFT,
+    }
+
+    normal_size = max(40, int(base_size * 0.90))
+    bord_a = max(5, int(base_size * (0.14 if key == "cliffhanger" else 0.11)))
+    bord_d = max(3, int(base_size * 0.07))
+
+    def tags_word(text: str, is_active: bool) -> str:
+        w = strong_weight(text)
+        is_strong = w in STRONG_COLOR_K
+        bs = chr(92)
+
+        if is_strong:
+            color = STRONG_COLOR_K[w]
+            if is_active:
+                size = max(int(base_size * ACTIVE_SCALE_K[w]), normal_size + 4)
+                size = min(size, int(base_size * 1.40))
+                if is_box:
+                    return (
+                        "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1}"
+                        + text + "{" + bs + "r}"
+                    )
+                return (
+                    "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1"
+                    + bs + "bord" + str(bord_a) + bs + "shad0" + bs + "be1"
+                    + bs + "t(0,100," + bs + "fscx118" + bs + "fscy118)"
+                    + bs + "t(100,220," + bs + "fscx100" + bs + "fscy100)}"
+                    + text + "{" + bs + "r}"
+                )
+            size = max(int(base_size * BASE_SCALE_K[w]), normal_size + 2)
+            if is_box:
+                return (
+                    "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1}"
+                    + text + "{" + bs + "r}"
+                )
+            return (
+                "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b1"
+                + bs + "bord" + str(bord_d) + "}"
+                + text + "{" + bs + "r}"
+            )
+
+        # ordinary: active white, no scale (ShortsMaker: color-only karaoke;
+        # у нас без rainbow на каждое слово — только white/dim)
+        if is_active:
+            color, size, bold, bord = col_active, normal_size, "1", bord_a
+        else:
+            color, size, bold, bord = col_dim, normal_size, "0", bord_d
+        if is_box:
+            return (
+                "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b" + bold + "}"
+                + text + "{" + bs + "r}"
+            )
+        return (
+            "{" + bs + "c" + color + bs + "fs" + str(size) + bs + "b" + bold
+            + bs + "bord" + str(bord) + "}"
+            + text + "{" + bs + "r}"
+        )
+
+
+
+    events: list[dict] = []
+    prev_end = -1.0
+    groups = _group_words_static(words, must_start=must_start, must_end=must_end)
+    strong_hit_count = 0
+
+    for group in groups:
+        if not group:
+            continue
+        # Точные стыки: интервалы [t0,t1), [t1,t2), ... без дыр
+        edges = []
+        for idx in group:
+            edges.append(float(words[idx]["start"]))
+        edges.append(float(words[group[-1]]["end"]))
+        for i in range(1, len(edges)):
+            if edges[i] <= edges[i - 1]:
+                edges[i] = edges[i - 1] + 0.05
+        if edges[-1] - edges[-2] < 0.12:
+            edges[-1] = edges[-2] + 0.18
+
+        for gi, active in enumerate(group):
+            t0, t1 = edges[gi], edges[gi + 1]
+            if t0 < prev_end:
+                t0 = prev_end
+            if t1 <= t0:
+                t1 = t0 + 0.08
+            disp = _assemble_group_display(words, group)
+            parts = []
+            for j in group:
+                wt = disp.get(j)
+                if not wt:
+                    continue
+                raw = str(words[j].get("text") or "")
+                if strong_weight(raw):
+                    strong_hit_count += 1
+                parts.append(tags_word(wt, j == active))
+            if not parts:
+                continue
+            line = f"{pos}{{\\q2}}" + " ".join(parts)
+            events.append({
+                "start": t0, "end": t1, "style": style_name,
+                "text": line, "layer": 1,
+            })
+            prev_end = t1
+
+    return _deconflict_events(events)
+
+
+
+def _probe_video_duration(video_path: str) -> float:
+    """Длительность видео в секундах (ffprobe)."""
+    try:
+        import json
+        cmd = [
+            "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+            "-of", "json", video_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=30)
+        return float(json.loads(result.stdout)["format"]["duration"])
+    except Exception:
+        return 0.0
+
+
+def _build_hook_events(
+    analysis, playres_x, playres_y, wide, base_size,
+    hook_style: str = "auto_aisie",
+    clip: dict | None = None,
+    cta_start: float | None = None,
+    video_duration: float = 0.0,
+    log_fn=None,
+):
+    """Хуки-маркеры сверху.
+
+    - Первый хук: с 0.0 (сразу на первом кадре / обложка).
+    - Остальные: строго по таймингу Gemini (start/end).
+    - Последний хук отбрасывается, если пересекается с CTA или до CTA/конца < 5 с
+      (предпочтительно 10 с). CTA в конце достаточно.
+    - Без glow. Тонкий чёрный outline.
+    """
+    _log = log_fn or log.info
+    if wide:
+        hooks_list = (
+            analysis.get("hooks_wide")
+            or analysis.get("hooks")
+            or analysis.get("aisie", {}).get("hooks")
+            or []
+        )
+    else:
+        hooks_list = (
+            analysis.get("hooks_vertical")
+            or analysis.get("hooks")
+            or analysis.get("aisie", {}).get("hooks")
+            or []
+        )
+    if not hooks_list:
+        h = analysis.get("hook")
+        if isinstance(h, dict) and h.get("text"):
+            hooks_list = [h]
+        else:
+            hooks_list = []
+
+    # Shorts: один packaging-хук клипа (абсолютные времена на полном ролике;
+    # burn_subtitles потом сдвинет через _filter_and_shift_events)
+    if clip is not None:
+        c0 = float(clip.get("start", 0) or 0)
+        c1 = float(clip.get("end", c0 + 15) or (c0 + 15))
+        hook_text = (clip.get("hook") or "").strip()
+        if not hook_text:
+            # fallback: title / package-level hook, чтобы в начале шорта всегда был хук
+            hook_text = (clip.get("title") or "").strip()
+            if not hook_text:
+                ph = analysis.get("package_hook") or analysis.get("hook")
+                if isinstance(ph, dict):
+                    hook_text = (ph.get("text") or "").strip()
+                elif isinstance(ph, str):
+                    hook_text = ph.strip()
+        if clip.get("_skip_hook"):
+            hooks_list = []
+        elif hook_text:
+            hs = float(clip.get("hook_start", c0) or 0)
+            he = float(clip.get("hook_end", hs + HOOK_DUR) or (hs + HOOK_DUR))
+            # относительные 0..dur → абсолютные
+            if hs < c0 - 0.05:
+                hs = c0 + max(0.0, hs)
+            if he < c0 - 0.05:
+                he = c0 + max(0.0, he)
+            if hs < c0:
+                hs = c0
+            if he <= hs:
+                he = hs + HOOK_DUR
+            # хук только в начале клипа (не в конце — там CTA)
+            if hs > c0 + HOOK_DUR:
+                hs = c0
+                he = min(c0 + HOOK_DUR, max(c0 + 2.0, c1 - CTA_DUR))
+            # гарантируем начало на первом кадре клипа, длительность ~HOOK_DUR
+            hs = c0
+            he = min(max(he, c0 + HOOK_DUR), c0 + HOOK_DUR + 0.5, max(c0 + 2.5, c1 - CTA_DUR))
+            if he <= hs:
+                he = hs + HOOK_DUR
+            hooks_list = [{
+                "text": hook_text,
+                "start": hs,
+                "end": he,
+                "timing": hs,
+                "type": "CURIOSITY",
+                "visual_weight": "L4",
+            }]
+    if not hooks_list:
+        return []
+
+    def _hstart(h):
+        return float(h.get("start", h.get("timing", 0)) or 0)
+    hooks_list = sorted(
+        [h for h in hooks_list if isinstance(h, dict) and (h.get("text") or "").strip()],
+        key=_hstart,
+    )
+
+    # Long video (no clip): STRICTLY 1 Hook. Shorts already force 1 packaging hook above.
+    if clip is None and len(hooks_list) > 1:
+        _log(
+            f"[ХУКИ] long: limiting {len(hooks_list)} → 1 "
+            f"(keep first «{(hooks_list[0].get('text') or '')[:40]}»)"
+        )
+        hooks_list = hooks_list[:1]
+
+    # Граница CTA / конца ролика — для фильтра последнего хука
+    cta_t = float(cta_start) if cta_start is not None and cta_start > 0 else None
+    if cta_t is None and video_duration and video_duration > 3:
+        cta_t = max(0.0, float(video_duration) - CTA_DUR)
+    MIN_GAP_BEFORE_CTA = CTA_DUR  # не пересекаться с CTA-зоной
+
+    MARKER_COLORS = HOOK_MARKER_COLORS
+    BLACK = HOOK_MARKER_BLACK
+
+    # Предрасчёт таймингов, затем фильтр последнего vs CTA
+    prepared: list[dict] = []
+    for idx, hook in enumerate(hooks_list):
+        text_h = (hook.get("text") or "").strip()
+        if not text_h:
+            continue
+        words = text_h.split()
+        if len(words) > 7:
+            text_h = " ".join(words[:7])
+        text_h = text_h.upper()
+
+        start_t = float(hook.get("start", hook.get("timing", 0)) or 0)
+        end_t = float(hook.get("end", start_t + HOOK_DUR) or (start_t + HOOK_DUR))
+
+        if idx == 0:
+            # Первый хук — сразу на первом кадре. Длительность ~HOOK_DUR (r24).
+            # Для Shorts (clip=) времена АБСОЛЮТНЫЕ на полном ролике → start = clip.start.
+            if clip:
+                c0 = float(clip.get("start", 0) or 0)
+                c1 = float(clip.get("end", c0 + 15) or (c0 + 15))
+                start_t = c0
+                end_t = min(c0 + HOOK_DUR, max(c0 + 3.0, c1 - CTA_DUR))
+                if end_t <= start_t:
+                    end_t = start_t + HOOK_DUR
+            else:
+                start_t = 0.0
+                if end_t < HOOK_DUR - 0.5:
+                    end_t = HOOK_DUR
+                if end_t > HOOK_DUR + 0.5:
+                    end_t = HOOK_DUR
+        else:
+            n_words = max(1, len(text_h.split()))
+            min_dur = max(HOOK_DUR * 0.8, n_words * 0.5)
+            if end_t - start_t < min_dur:
+                end_t = start_t + min_dur
+
+        prepared.append({
+            "text": text_h,
+            "start": start_t,
+            "end": end_t,
+            "raw": hook,
+            "idx": idx,
+        })
+
+    if prepared and cta_t is not None and not clip:
+        last = prepared[-1]
+        # overlap или слишком близко к CTA
+        if last["end"] > cta_t or (cta_t - last["start"]) < MIN_GAP_BEFORE_CTA:
+            _log(
+                f"[ХУКИ] последний хук отброшен (start={last['start']:.2f} end={last['end']:.2f} "
+                f"cta_start={cta_t:.2f} gap={cta_t - last['start']:.2f}s < {MIN_GAP_BEFORE_CTA}s): "
+                f"«{last['text'][:40]}»"
+            )
+            prepared = prepared[:-1]
+
+    events = []
+    for p in prepared:
+        text_h = _strip_ass_overrides(p["text"])
+        start_t = p["start"]
+        end_t = p["end"]
+        hook = p["raw"]
+        idx = p["idx"]
+
+        size = max(int(base_size * 1.25), int(base_size * 1.15))
+        size = min(size, int(base_size * 1.55))
+        bord = max(2, int(base_size * 0.03))
+
+        if hook.get("color") and str(hook.get("color")).startswith("#"):
+            color = _ass_color(hook["color"])
+        else:
+            color = MARKER_COLORS[(idx + int(start_t * 10)) % len(MARKER_COLORS)]
+
+        if wide:
+            cy = int(playres_y * 0.10)
+            cx = playres_x // 2
+            pos_t = f"\\an8\\pos({cx},{cy})"
+        else:
+            y_pct = float(hook.get("y_percent") or 12)
+            y_pct = max(8.0, min(y_pct, 16.0))
+            cy = int(playres_y * (y_pct / 100.0))
+            cx = int(playres_x * float(hook.get("x_percent", 50)) / 100.0)
+            pos_t = f"\\an8\\pos({cx},{cy})"
+
+        main = (
+            f"{{{pos_t}\\c{color}\\3c{BLACK}\\4c{BLACK}"
+            f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0"
+            f"\\fad(80,150)}}"
+            f"{text_h}"
+        )
+        events.append({
+            "start": start_t,
+            "end": end_t,
+            "style": "HookMarker",
+            "text": main,
+            "layer": 2,
+            "_hook_text": text_h,
+        })
+        _log(f"[ХУКИ] #{len(events)} «{text_h[:48]}» {start_t:.2f}–{end_t:.2f}s")
+
+    return events
+
+
+def _build_cta_events(
+    analysis, playres_x, playres_y, wide, base_size,
+    clip=None, video_duration: float = 0.0,
+):
+    """CTA только в конце: последние ~CTA_DUR секунд, позиция КАК У ХУКА (верх)."""
+    if clip and clip.get("_skip_cta"):
+        return []
+
+    text_c = ""
+    start_t = 0.0
+    end_t = 0.0
+
+    if clip and (clip.get("cta") or "").strip():
+        text_c = str(clip.get("cta")).strip()
+        c_end = float(clip.get("end", 0) or 0)
+        c_start = float(clip.get("start", 0) or 0)
+        # absolute times (burn later shifts by clip)
+        end_t = float(clip.get("cta_end") or c_end or 0)
+        start_t = float(clip.get("cta_start") or 0)
+        if end_t <= 0:
+            end_t = c_end
+        if start_t <= 0 or (end_t - start_t) < 2.0 or start_t < (c_end - CTA_DUR - 1):
+            # принудительно последние CTA_DUR сек клипа
+            end_t = c_end
+            start_t = max(c_start, c_end - CTA_DUR)
+    else:
+        key = "cta_wide" if wide else "cta_vertical"
+        raw = analysis.get(key) or analysis.get("cta")
+        if isinstance(raw, dict):
+            text_c = (raw.get("text") or "").strip()
+            start_t = float(raw.get("start") or 0)
+            end_t = float(raw.get("end") or 0)
+        elif isinstance(raw, str):
+            text_c = raw.strip()
+
+        dur = float(video_duration or 0)
+        if dur <= 0:
+            dur = float(analysis.get("duration") or 0)
+        if dur <= 0:
+            for h in (analysis.get("hooks_wide") or analysis.get("hooks_vertical")
+                      or analysis.get("hooks") or []):
+                dur = max(dur, float(h.get("end") or 0))
+            for s in (analysis.get("subtitles") or []):
+                dur = max(dur, float(s.get("end") or 0))
+            for seg in (analysis.get("segments") or []):
+                dur = max(dur, float(seg.get("end") or 0))
+
+        if not text_c:
+            return []
+
+        # Всегда последние ~CTA_DUR секунд ролика (игнорируем start=0 от Gemini)
+        if dur > 3:
+            end_t = dur
+            start_t = max(0.0, dur - CTA_DUR)
+        else:
+            # короткий ролик — вторая половина
+            end_t = max(dur, 3.0)
+            start_t = max(0.0, end_t - min(CTA_DUR, end_t * 0.5))
+
+    if not text_c:
+        return []
+
+    words = text_c.split()
+    if len(words) > 10:
+        text_c = " ".join(words[:10])
+    text_c = text_c.upper()
+
+    if end_t <= start_t:
+        end_t = start_t + CTA_DUR
+
+    MARKER_COLORS = HOOK_MARKER_COLORS
+    BLACK = HOOK_MARKER_BLACK
+    size = max(int(base_size * 1.15), int(base_size * 1.05))
+    size = min(size, int(base_size * 1.45))
+    bord = max(2, int(base_size * 0.03))
+    color = MARKER_COLORS[2]  # orange — отличается от типичного первого хука
+
+    # ТА ЖЕ зона, что и хук — ВЕРХ
+    if wide:
+        cy = int(playres_y * 0.10)
+        cx = playres_x // 2
+        pos_t = f"\\an8\\pos({cx},{cy})"
+    else:
+        cy = int(playres_y * 0.12)
+        cx = playres_x // 2
+        pos_t = f"\\an8\\pos({cx},{cy})"
+
+    main = (
+        f"{{{pos_t}\\c{color}\\3c{BLACK}"
+        f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0"
+        f"\\fad(100,150)}}"
+        f"{_strip_ass_overrides(text_c)}"
+    )
+    return [{
+        "start": start_t,
+        "end": end_t,
+        "style": "HookMarker",
+        "text": main,
+        "layer": 2,
+    }]
+
+
+def build_short_hook_cover_ass(
+    hook_text: str,
+    play_w: int = 1080,
+    play_h: int = 1920,
+    color_index: int = 0,
+) -> str:
+    """ASS для обложки Shorts — тот же визуал, что on-screen хук на первых кадрах.
+
+    Копирует правила _build_hook_events (vertical, idx=0, start≈0):
+    UPPERCASE, max 7 слов, цвет MARKER, \\an8\\pos y≈12%, fs/bord/shad.
+    Без \\fad: на одном JPG-кадре fade-in с t=0 делает текст невидимым.
+    """
+    text_h = _strip_ass_overrides((hook_text or "").strip())
+    if not text_h:
+        return ""
+    words = text_h.split()
+    if len(words) > 7:
+        text_h = " ".join(words[:7])
+    text_h = text_h.upper()
+
+    # base_size как burn_subtitles для vertical 1080
+    scale = max(play_w / 1080.0, 1.0)
+    base_size = max(72, int(82 * scale))
+    size = max(int(base_size * 1.25), int(base_size * 1.15))
+    size = min(size, int(base_size * 1.55))
+    bord = max(2, int(base_size * 0.03))
+
+    color = HOOK_MARKER_COLORS[int(color_index) % len(HOOK_MARKER_COLORS)]
+    black = HOOK_MARKER_BLACK
+
+    # vertical short: y_percent default 12
+    cy = int(play_h * 0.12)
+    cx = play_w // 2
+    pos_t = f"\\an8\\pos({cx},{cy})"
+
+    # Полная непрозрачность — без fad (иначе JPG с t≈0 почти пустой)
+    body = (
+        f"{{{pos_t}\\c{color}\\3c{black}\\4c{black}"
+        f"\\fs{size}\\b1\\bord{bord}\\shad0\\be0}}"
+        f"{text_h}"
+    )
+
+    # Style: минимальный header; реальный вид — в override Dialogue
+    hook_sz = max(88, int(102 * scale))
+    bord_h = max(7, int(10 * scale))
+    ml = int(play_w * 0.035)
+    margin_v = int(play_h * 0.028)
+
+    return f"""[Script Info]
+Title: VideoMaker Short Cover Hook
+ScriptType: v4.00+
+PlayResX: {play_w}
+PlayResY: {play_h}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: HookMarker,Arial Black,{hook_sz},&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,1,0,1,{bord_h},0,8,{ml},{ml},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 2,0:00:00.00,0:00:01.00,HookMarker,,0,0,0,,{body}
+"""
+
+
+
+def burn_subtitles(
+    video_path: str,
+    analysis: dict,
+    enable_hooks: bool = True,
+    enable_subtitles: bool = True,
+    enable_strong_words: bool = True,
+    clip: dict = None,
+    output_path: str = "",
+    log_fn=None,
+    transcription: dict = None,
+    use_aisie: bool = True,
+    caption_style: str = "auto_aisie",
+    hook_style: str = "auto_aisie",
+    bitrate: str | None = None,
+    source_clips: list | None = None,
+    force_size: tuple[int, int] | None = None,
+    ass_only: bool = False,
+) -> str:
+    _log = log_fn or log.info
+    _log("[СУБТИТРЫ] burn: karaoke in-line + hooks/CTA (без glow-overlay, strong только внутри строки)")
+    if not output_path:
+        output_path = video_path + ".subtitled.mp4"
+
+    if force_size:
+        playres_x, playres_y = int(force_size[0]), int(force_size[1])
+    else:
+        playres_x, playres_y = _probe_video_resolution(video_path)
+    wide = _is_wide(playres_x, playres_y)
+    platform = "youtube_16_9" if wide else "youtube_shorts"
+    _log(
+        f"[СУБТИТРЫ] caption={caption_style} hook={hook_style} aisie={use_aisie} "
+        f"strong={enable_strong_words} subs={enable_subtitles} hooks={enable_hooks}"
+    )
+
+    if use_aisie and transcription:
+        try:
+            from .aisie_integration import enhance_analysis_with_aisie
+            analysis = enhance_analysis_with_aisie(
+                analysis=analysis,
+                transcription=transcription,
+                video_size=(playres_x, playres_y),
+                platform=platform,
+                log_fn=log_fn,
+            )
+            aisie_hooks = len((analysis.get("aisie") or {}).get("hooks") or [])
+            aisie_subs = len((analysis.get("aisie") or {}).get("subtitles") or [])
+            _log(f"[СУБТИТРЫ] AISIE: hooks={aisie_hooks} subtitles={aisie_subs}")
+        except Exception as e:
+            _log(f"[СУБТИТРЫ] AISIE failed: {e}")
+
+    if wide:
+        scale = max(playres_y / 1080.0, 1.0)
+        base_size = max(52, int(60 * scale))
+    else:
+        scale = max(playres_x / 1080.0, 1.0)
+        base_size = max(72, int(82 * scale))
+    events = []
+    n_sub_events = 0
+    n_hook_events = 0
+    n_cta_events = 0
+
+    # Karaoke: всегда при наличии words (full + clip). Fallback — только если words пусто.
+    if enable_subtitles:
+        words = _words_from_transcription(transcription)
+        # r49: склеить «кто»+«-»+«то» / «кто-»+«то» до группировки и strong
+        if words:
+            before_m = len(words)
+            words = _merge_hyphenated_tokens(words)
+            if len(words) != before_m:
+                _log(f"[СУБТИТРЫ] hyphen-merge tokens {before_m} → {len(words)}")
+        # strong_map (lexicon) считаем только для legacy-стилей; parity берёт Gemini отдельно
+        _cs_pre = (caption_style or "auto_aisie").strip().lower()
+        _is_parity = _cs_pre in ("clean_pro", "shorts_parity", "", "auto", "auto_aisie")
+        strong_map = {}
+        if enable_strong_words and not _is_parity:
+            _wt = [str(w.get("text") or "") for w in (words or [])]
+            strong_map = _strong_map(analysis, _wt)
+        if words:
+            # Shorts/clip: окно только реально произнесённых слов
+            if clip:
+                c0 = float(clip.get("start", 0) or 0)
+                c1 = float(clip.get("end", 0) or 0)
+                if c1 > c0:
+                    before = len(words)
+                    eps = 0.02
+                    inside = [
+                        w for w in words
+                        if float(w.get("end", 0)) > c0 + eps * 0.5
+                        and float(w.get("start", 0)) < c1 - eps * 0.5
+                    ]
+                    while inside and float(inside[0].get("end", 0)) <= c0 + 0.08 and float(inside[0].get("start", 0)) < c0:
+                        inside.pop(0)
+                    while inside and float(inside[-1].get("start", 0)) >= c1 - 0.08 and float(inside[-1].get("end", 0)) > c1:
+                        inside.pop()
+                    while inside and float(inside[0].get("start", 0)) < c0 - 0.12:
+                        inside.pop(0)
+                    while inside and float(inside[-1].get("end", 0)) > c1 + 0.12:
+                        inside.pop()
+                    words = inside
+                    _log(
+                        f"[СУБТИТРЫ] clip speech window {c0:.2f}-{c1:.2f}s: "
+                        f"words {before} → {len(words)}"
+                        + (f" first=«{words[0]['text']}» last=«{words[-1]['text']}»" if words else "")
+                    )
+            if strong_map:
+                sample = list(strong_map.items())[:8]
+                _log(f"[СУБТИТРЫ] strong sample: {sample}")
+            _log(
+                f"[СУБТИТРЫ] words={len(words)} strong_map={len(strong_map)} "
+                f"pos={'bottom' if wide else 'mid+6%(an5@56%)'}"
+            )
+            # Границы словосочетаний: clip → first/last; full → shorts Gemini
+            must_start: set = set()
+            must_end: set = set()
+            if clip and words:
+                must_start.add(0)
+                must_end.add(len(words) - 1)
+                _log(
+                    f"[СУБТИТРЫ] phrase bounds (clip): first=«{words[0].get('text')}» "
+                    f"last=«{words[-1].get('text')}»"
+                )
+            else:
+                clips = (analysis or {}).get("clips_for_shorts") or []
+                must_start, must_end = _shorts_phrase_boundaries(words, clips)
+                if must_start or must_end:
+                    _log(
+                        f"[СУБТИТРЫ] phrase bounds (shorts×{len(clips)}): "
+                        f"starts={sorted(must_start)[:12]} ends={sorted(must_end)[:12]}"
+                    )
+            sub_ev = _build_karaoke_window(
+                words, analysis, playres_x, playres_y, base_size, wide=wide,
+                caption_style=caption_style or "auto_aisie",
+                honor_strong=bool(enable_strong_words),
+                must_start=must_start, must_end=must_end,
+            )
+            events.extend(sub_ev)
+            n_sub_events = len(sub_ev)
+            # r43: явный лог parity vs legacy + strong count/source
+            _cs = (caption_style or "auto_aisie").strip().lower()
+            if _cs in ("clean_pro", "shorts_parity", "", "auto", "auto_aisie"):
+                _sm = _parity_strong_lookup(
+                    analysis, bool(enable_strong_words)
+                )
+                _src = "gemini" if _sm else "none"
+                _log(
+                    f"[СУБТИТРЫ] style=shorts_parity words={len(words)} "
+                    f"events={n_sub_events} strong={len(_sm)} "
+                    f"strong_source={_src}"
+                )
+            else:
+                _log(
+                    f"[СУБТИТРЫ] style=legacy({_cs}) words={len(words)} "
+                    f"events={n_sub_events}"
+                )
+        else:
+            # Нет words совсем — сегменты analysis (редкий fallback)
+            for sub in analysis.get("subtitles") or []:
+                t = (sub.get("text") or "").strip()
+                if not t:
+                    continue
+                pos = _caption_pos(playres_x, playres_y, wide)
+                events.append({
+                    "start": float(sub.get("start", 0)),
+                    "end": float(sub.get("end", 0) or 1),
+                    "style": "Default",
+                    "text": f"{pos}{t}",
+                    "layer": 0,
+                })
+                n_sub_events += 1
+            _log(f"[СУБТИТРЫ] fallback segment subs={n_sub_events} (нет word-timings)")
+
+    if enable_hooks:
+        vid_dur = _probe_video_duration(video_path)
+        if clip:
+            try:
+                vid_dur = max(vid_dur, float(clip.get("end", 0)) - float(clip.get("start", 0)))
+            except Exception:
+                pass
+        # CTA start заранее, чтобы отфильтровать последний хук
+        cta_start_guess = max(0.0, float(vid_dur) - CTA_DUR) if vid_dur > 3 else None
+        if clip:
+            try:
+                c_end = float(clip.get("end", 0) or 0)
+                cta_start_guess = max(
+                    float(clip.get("start", 0) or 0),
+                    float(clip.get("cta_start") or (c_end - CTA_DUR)),
+                )
+            except Exception:
+                pass
+
+        hook_ev = _build_hook_events(
+            analysis, playres_x, playres_y, wide, base_size,
+            hook_style=hook_style or "auto_aisie",
+            clip=clip,
+            cta_start=cta_start_guess,
+            video_duration=vid_dur,
+            log_fn=_log,
+        )
+        events.extend(hook_ev)
+        n_hook_events = len(hook_ev)
+
+        cta_ev = _build_cta_events(
+            analysis, playres_x, playres_y, wide, base_size,
+            clip=clip, video_duration=vid_dur,
+        )
+        events.extend(cta_ev)
+        n_cta_events = len(cta_ev)
+        for ce in cta_ev:
+            _log(f"[CTA] «{_strip_ass_overrides(ce.get('text') or '')[-60:]}» {ce['start']:.2f}–{ce['end']:.2f}s")
+
+    # Отдельные top-aligned Strong events БОЛЬШЕ НЕ добавляем:
+    # они и давали «увеличенные слова выше» поверх karaoke.
+    # Strong только in-line через honor_strong в karaoke / clean_pro.
+    if enable_strong_words and not _words_from_transcription(transcription):
+        # fallback только если нет word-timings — и тогда ставим В ТУ ЖЕ зону субтитров, не наверх
+        pos = _caption_pos(playres_x, playres_y, wide)
+        n_fb = 0
+        for sw in analysis.get("strong_words") or []:
+            word = (sw.get("word") or "").strip()
+            if not word:
+                continue
+            timing = float(sw.get("timing", 0))
+            weight = sw.get("visual_weight") or "L2"
+            color, size = _weight_style(weight, base_size)
+            events.append({
+                "start": float(sw.get("start", timing)),
+                "end": float(sw.get("end", timing + 1.2)),
+                "style": "Strong",
+                "text": ("{0}{{\\c{1}\\fs{2}}}{3}").format(pos, color, size, word),
+                "layer": 1,
+            })
+            n_fb += 1
+        if n_fb:
+            _log(f"[СУБТИТРЫ] fallback strong (no words) n={n_fb} pos=subtitle-zone")
+
+    if clip:
+        events = _filter_and_shift_events(events, clip)
+    if not events:
+        _log("[СУБТИТРЫ] Нет событий")
+        return video_path
+
+    ass_path = os.path.join(tempfile.gettempdir(), f"vm_subs_{uuid.uuid4().hex[:10]}.ass")
+    lines = [_generate_ass_header(playres_x, playres_y, wide)]
+    for ev in events:
+        layer = int(ev.get("layer", 0))
+        text = ev["text"].replace("\n", "\\N")
+        lines.append(
+            f"Dialogue: {layer},{_ass_time(ev['start'])},{_ass_time(ev['end'])},"
+            f"{ev.get('style', 'Default')},,0,0,0,,{text}"
+        )
+    with open(ass_path, "w", encoding="utf-8-sig") as f:
+        f.write("\n".join(lines))
+    _log(
+        f"[СУБТИТРЫ] events total={len(events)} "
+        f"(subs={n_sub_events} hooks={n_hook_events} cta={n_cta_events}) → ASS"
+    )
+
+    if ass_only:
+        _log(f"[СУБТИТРЫ] ass_only → {ass_path}")
+        return ass_path
+
+    ffmpeg = _ffmpeg_bin()
+    esc = _escape_ass_path(ass_path)
+
+    # --- adaptive / explicit bitrate (4K: clamp 18–40M) ---
+    pixels = playres_x * playres_y
+    if bitrate:
+        br = bitrate if str(bitrate).upper().endswith("M") else f"{bitrate}M"
+    else:
+        if pixels >= 3000 * 1600:
+            br = calculate_adaptive_bitrate(
+                clips=source_clips,
+                video_path=video_path,
+                target_w=playres_x,
+                target_h=playres_y,
+                min_mbps=18.0,
+                max_mbps=40.0,
+                safety=1.12,
+                log_fn=_log,
+            )
+        elif pixels >= 1800 * 1000:
+            br = calculate_adaptive_bitrate(
+                clips=source_clips,
+                video_path=video_path,
+                target_w=playres_x,
+                target_h=playres_y,
+                min_mbps=10.0,
+                max_mbps=25.0,
+                safety=1.12,
+                log_fn=_log,
+            )
+        else:
+            br = "12M"
+    _log(f"[СУБТИТРЫ] VT target bitrate={br} ({playres_x}x{playres_y})")
+
+    out_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    tmp_out = os.path.join(out_dir, f".vm_subs_{uuid.uuid4().hex[:10]}.mp4")
+
+    vt = [
+        "-c:v", "h264_videotoolbox", "-b:v", br, "-allow_sw", "0",
+        "-pix_fmt", "yuv420p", "-c:a", "copy",
+    ]
+
+    def _cleanup_tmp():
+        for pth in (tmp_out, ass_path):
+            try:
+                if pth and os.path.exists(pth):
+                    os.remove(pth)
+            except OSError:
+                pass
+
+    def _run_vt(vf_expr: str):
+        ensure_storage(video_path, tmp_out, log_fn=_log)
+        cmd = [
+            ffmpeg, "-y",
+            "-hwaccel", "videotoolbox",
+            "-i", video_path,
+            "-vf", vf_expr, *vt, tmp_out,
+        ]
+        cmd = inject_hwaccel(cmd)
+        return run_ffmpeg(cmd, log_fn=_log)
+
+    filters_to_try = [
+        f"subtitles='{esc}'",
+        f"ass='{esc}'",
+    ]
+    last_err = ""
+    max_io_rounds = 4
+
+    try:
+        for vf_expr in filters_to_try:
+            filter_name = "subtitles" if "subtitles=" in vf_expr else "ass"
+            for io_round in range(max_io_rounds):
+                _log(
+                    f"[СУБТИТРЫ] VT encode filter={filter_name} "
+                    f"round={io_round + 1}/{max_io_rounds}"
+                )
+                result = None
+                try:
+                    result = _run_vt(vf_expr)
+                except SubtitleStageFailed:
+                    raise
+                except Exception as e:
+                    last_err = str(e)
+                    _log(f"[СУБТИТРЫ] exception: {e}")
+
+                if (
+                    result is not None
+                    and result.returncode == 0
+                    and verify_mp4(tmp_out, log_fn=_log)
+                ):
+                    atomic_replace(tmp_out, output_path)
+                    _cleanup_tmp()
+                    _log(f"[СУБТИТРЫ] готово → {output_path}")
+                    return output_path
+
+                stderr = (result.stderr if result else last_err) or ""
+                rc = result.returncode if result else -1
+                reason = classify_ffmpeg_error(stderr, rc)
+                last_err = stderr[-400:] if stderr else last_err
+                _log(f"[СУБТИТРЫ] fail reason={reason} rc={rc}: {last_err[-200:]}")
+
+                try:
+                    if os.path.exists(tmp_out):
+                        os.remove(tmp_out)
+                except OSError:
+                    pass
+
+                if reason == "io":
+                    try:
+                        ensure_storage(video_path, tmp_out, log_fn=_log)
+                    except SubtitleStageFailed:
+                        _cleanup_tmp()
+                        msg = (
+                            "SUBTITLE_STAGE_FAILED: SSD недоступен во время "
+                            "наложения субтитров. Подключите диск и повторите.\n"
+                            + (last_err or "")
+                        )
+                        raise SubtitleStageFailed(msg)
+                    continue
+
+                if reason == "filter":
+                    break
+
+                if reason == "encoder":
+                    _cleanup_tmp()
+                    msg = (
+                        "SUBTITLE_STAGE_FAILED: VideoToolbox encoder error "
+                        "(без fallback на libx264 4K).\n" + (last_err or "")
+                    )
+                    raise SubtitleStageFailed(msg)
+
+                if io_round < 1:
+                    continue
+                break
+
+        _cleanup_tmp()
+        msg = (
+            "SUBTITLE_STAGE_FAILED: не удалось наложить субтитры через "
+            "VideoToolbox.\n" + (last_err or "")
+        )
+        raise SubtitleStageFailed(msg)
+    except SubtitleStageFailed:
+        raise
+    except Exception as e:
+        _cleanup_tmp()
+        raise SubtitleStageFailed(f"SUBTITLE_STAGE_FAILED: {e}") from e

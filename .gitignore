@@ -6,13 +6,10 @@ venv
 __pycache__
 .DS_Store
 *.app
-*.command
-!setup.command
-!start.command
-!start-headless.command
-!doctor.command
 .pytest_cache
 .ruff_cache
 .cache
 _tmp/
 bench/
+.venv.backup.*
+.venv.*.tmp

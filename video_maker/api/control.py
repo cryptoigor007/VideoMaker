@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 #: поле Settings → имя Tk-переменной в App (см. App._start)
 SETTINGS_VAR_MAP: dict[str, str] = {
     "audio_path": "audio_var",
+    "cinematic_transition_sfx": "cinematic_transition_sfx_var",
     "output_folder": "output_var",
     "broll_horizontal": "broll_h_var",
     "broll_vertical": "broll_v_var",

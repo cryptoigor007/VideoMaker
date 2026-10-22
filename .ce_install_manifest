@@ -1,0 +1,10 @@
+installed_at=2026-10-15T17:12:40+03:00
+backup=/Users/dreamstore/VideoMaker-r57cp34/.ce_backup_20261015_171240
+expected_commit=d107be727319f4f6bbef59b2106ab9a6d170707b
+present video_maker/config/settings.py    18046 bytes
+present video_maker/pipeline/stages.py    13296 bytes
+present video_maker/pipeline/master.py     5826 bytes
+present video_maker/pipeline/branches.py    21980 bytes
+present video_maker/engines/video.py    67430 bytes
+present video_maker/engines/subtitles.py    84647 bytes
+present video_maker/gui/app.py   196441 bytes

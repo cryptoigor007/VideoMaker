@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -28,6 +29,28 @@ from tkinter import filedialog, messagebox, ttk
 
 from ..config.settings import Settings
 from ..pipeline.stages import PipelineContext
+
+# Cinematic Enhancement GUI hooks (optional module)
+try:
+    from video_maker.cinematic.gui_integration import (
+        init_ce_vars,
+        apply_ce_vars_to_settings,
+        settings_to_ce_vars,
+        attach_ce_tab,
+        ce_kwargs_for_pipeline_context,
+        CE_BOOL_VARS,
+        CE_OTHER_VARS,
+    )
+    _CE_GUI = True
+except Exception:
+    _CE_GUI = False
+    CE_BOOL_VARS = []
+    CE_OTHER_VARS = []
+    def init_ce_vars(app): pass
+    def apply_ce_vars_to_settings(app): pass
+    def settings_to_ce_vars(app): pass
+    def attach_ce_tab(app, notebook): return None
+    def ce_kwargs_for_pipeline_context(settings): return {}
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +76,206 @@ COLORS = {
 
 # ─── Settings persistence ───────────────────────────────────────────────
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+GEMINI_ENV_FILE = os.path.join(os.path.expanduser("~"), ".vm_gemini_keys.env")
+
+
+def normalize_gemini_keys(value) -> list[str]:
+    """Список ключей из list/строки; порядок сохраняется, дубли убираются."""
+    raw = value if isinstance(value, (list, tuple)) else re.split(r"[\n,;]+", str(value or ""))
+    keys: list[str] = []
+    for item in raw:
+        key = str(item or "").strip().strip("'\"")
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def read_gemini_keys_env(path: str | None = None) -> list[str]:
+    """Прочитать GEMINI_API_KEY(S) из env-файла (значения не логируются)."""
+    env_path = path or GEMINI_ENV_FILE
+    keys: list[str] = []
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                line = line.removeprefix("export ").strip()
+                if "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                value = value.strip().strip("'\"")
+                if name.strip() == "GEMINI_API_KEYS":
+                    keys.extend(normalize_gemini_keys(value))
+                elif name.strip() == "GEMINI_API_KEY" and value:
+                    keys.append(value)
+    except OSError:
+        pass
+    return normalize_gemini_keys(keys)
+
+
+def load_gemini_keys_from_settings(path: str | None = None) -> list[str]:
+    """Ключи из JSON настроек приложения (с fallback на одиночный ключ)."""
+    settings_path = path or SETTINGS_FILE
+    try:
+        with open(settings_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    keys = normalize_gemini_keys(data.get("gemini_api_keys"))
+    if not keys:
+        keys = normalize_gemini_keys(data.get("gemini_api_key"))
+    return keys
+
+
+def persist_gemini_keys_to_settings(keys: list[str], path: str | None = None) -> bool:
+    """Сохранить ключи в JSON настроек, не раскрывая значения в логах."""
+    settings_path = path or SETTINGS_FILE
+    try:
+        data: dict = {}
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, encoding="utf-8") as handle:
+                    loaded = json.load(handle)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, ValueError, TypeError):
+                data = {}
+        clean = normalize_gemini_keys(keys)
+        data["gemini_api_keys"] = clean
+        data["gemini_api_key"] = clean[0] if clean else ""
+        tmp_path = settings_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, settings_path)
+        with contextlib.suppress(OSError):
+            os.chmod(settings_path, 0o600)
+        return True
+    except Exception as exc:
+        log.warning("[GUI] Не удалось сохранить ключи Gemini: %s", exc)
+        return False
+
+# Живые события подбора клипов (smart_broll / Vision).
+# Fallback, если SMART_BROLL_PER_SCENE из master.py недоступен.
+POOL_PER_SCENE_DEFAULT = 1
+_POOL_SERIES_RE = re.compile(
+    r"\[SB\]\s+серия\b.*?\|\s*сцен:\s*(\d+)"
+    r"(?:.*?\|\s*per_scene:\s*(\d+))?",
+    re.IGNORECASE,
+)
+_POOL_SCENE_ANY_RE = re.compile(
+    r"\[SB\]\s*(?:[⬡↓★⚠]\s*)?сцена\s+(\d+)\s*:", re.IGNORECASE
+)
+_POOL_SCENE_CLIP_RE = re.compile(r"\[SB\]\s*[⬡↓]\s*сцена\s+(\d+)\s*:", re.IGNORECASE)
+_POOL_SCENE_DONE_RE = re.compile(r"\[SB\]\s*[★⚠]\s*сцена\s+(\d+)\s*:")
+_POOL_CLIP_FILE_RE = re.compile(
+    r"\[SB\]\s*[⬡↓]\s*сцена\s+\d+\s*:\s*(.+?)(?:\s+—|\s+\(|$)"
+)
+_POOL_SCENE_BEST_FILE_RE = re.compile(
+    r"\[SB\]\s*[★⚠]\s*сцена\s+\d+\s*:\s*(?:лучший\s+)?(.+?)\s*—\s*"
+    r"-?\d+(?:[.,]\d+)?\s*/\s*10"
+)
+_POOL_PAREN_SCORE_RE = re.compile(r"\((\d+(?:[.,]\d+)?)\s*/\s*10")
+_POOL_ANY_SCORE_RE = re.compile(r"(-?\d+(?:[.,]\d+)?)\s*/\s*10")
+_POOL_VISION_RE = re.compile(
+    r"\[VISION\]\s*[✓✗·•]\s+(.+?)\s*\|\s*(-?\d+(?:[.,]\d+)?)\s*/\s*10\b"
+)
+_POOL_INGEST_NUM_RE = re.compile(r"\[SB\]\s*⊕.*?:\s*(\d+)\s*$")
+_POOL_VISION_CACHE_RE = re.compile(r"\[VISION\]\s+из кэша:\s*(\d+)", re.IGNORECASE)
+_POOL_VISION_PREFILTER_RE = re.compile(
+    r"\[VISION\]\s+предфильтр:\s*отсеяно\s+(\d+)", re.IGNORECASE
+)
+_GEMINI_CHUNK_RE = re.compile(r"\[GEMINI\]\s+сцены:\s+чанк\s+(\d+)/(\d+)")
+_GEMINI_CHUNK_DONE_RE = re.compile(r"чанк\s+\d+/\d+\s*→\s*\d+\s+сцен")
+_GEMINI_CHUNKS_TOTAL_RE = re.compile(
+    r"\[GEMINI\]\s+сцены:\s+ИТОГ:\s*(\d+)/(\d+)\s+чанков"
+)
+_POOL_ANALYSIS_START_RE = re.compile(r"\[SB\]\s+свежий анализ Gemini", re.IGNORECASE)
+_POOL_ANALYSIS_SCENES_RE = re.compile(
+    r"\[SB\]\s+(?:Gemini-описания сцен получены|Gemini-запросы найдены в кэше анализа):\s*(\d+)",
+    re.IGNORECASE,
+)
+
+# Поля сводки smart_broll: "[SB] ИТОГ: сцен 13 | подходящих (≥6) 19 | ..."
+_POOL_STATS_PATTERNS = {
+    "scenes": r"сцен\s+(\d+)",
+    "ok": r"подходящих\s*\((?:≥|>=)\s*6\)\s*(\d+)",
+    "need": r"добрать\s*~?\s*(\d+)",
+    "lib": r"из\s+базы\s+(\d+)",
+    "dl": r"скачано\s+(\d+)",
+    "avg": r"средний\s+балл\s+(\d+(?:[.,]\d+)?)",
+}
+
+
+def parse_pool_stats_line(text: str) -> dict | None:
+    """Разобрать строку "[SB] ИТОГ: ..." в числа. None — если это не сводка."""
+    if not text or "[SB] ИТОГ:" not in text:
+        return None
+    stats: dict = {}
+    for key, pattern in _POOL_STATS_PATTERNS.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            return None
+        stats[key] = match.group(1)
+    try:
+        return {
+            "scenes": int(stats["scenes"]),
+            "ok": int(stats["ok"]),
+            "need": int(stats["need"]),
+            "lib": int(stats["lib"]),
+            "dl": int(stats["dl"]),
+            "avg": float(stats["avg"].replace(",", ".")),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def format_pool_stats(
+    scenes: int, ok: int, need: int, lib: int, dl: int, avg: float,
+    ingested: int = 0, per_scene: int = POOL_PER_SCENE_DEFAULT,
+    verified: int = 0, skipped: int = 0,
+) -> str:
+    """Финальная строка статистики пула для нижней панели."""
+    target = max(0, int(scenes) * max(1, int(per_scene or POOL_PER_SCENE_DEFAULT)))
+    have = int(lib) + int(dl)
+    pending = max(0, have - int(verified or 0))
+    skipped_text = (
+        f"пропущено (предфильтр) {int(skipped)} | " if int(skipped or 0) > 0 else ""
+    )
+    return (
+        f"Клипы: нужно {target} | есть {have} (база {lib} + скачано {dl}) | "
+        f"найдено {have} | проверено {int(verified or 0)} | "
+        f"ждут проверки {pending} | {skipped_text}в базу: {ingested} | из базы: {lib} | "
+        f"скачано: {dl} | сцен: {scenes} | подходящих ≥6: {ok} | "
+        f"добрать: {need} | ср. балл: {avg:.1f}/10"
+    )
+
+
+def new_pool_live_stats() -> dict:
+    """Счётчики живого подбора для текущего прогона."""
+    return {
+        "found": 0,
+        "verified": 0,
+        "score_sum": 0.0,
+        "score_count": 0,
+        "score_events": set(),
+        "prefilter_skipped": 0,
+        "ok_scenes": set(),
+        "file_scene": {},
+        "vision_scores": {},
+        "pending_final": None,
+        "scenes": set(),
+        "scene_total": 0,
+        "scene_total_locked": False,
+        "chunks_total": 0,
+        "chunks_done": set(),
+        "analysis_scenes": 0,
+        "downloaded": 0,
+        "ingested": 0,
+        "phase": "idle",
+    }
 
 # Диагностика доставки колеса мыши (включается переменной окружения).
 _SCROLL_DEBUG = bool(os.environ.get("VIDEO_MAKER_SCROLL_DEBUG"))
@@ -97,6 +320,15 @@ OTHER_VARS = [
     "required_hashtags_var", "shorts_desc_max_len_var",
     "speech_rate_mode_var", "speech_rate_target_wpm_var", "speech_rate_coefficient_var",
     "s_speech_rate_mode_var", "s_speech_rate_target_wpm_var", "s_speech_rate_coefficient_var",
+    # Cinematic Enhancement
+    "cinematic_profile_var",
+    "cinematic_motion_var",
+    "cinematic_tempo_var",
+    "cinematic_color_var",
+    "cinematic_transitions_var",
+    "cinematic_framing_var",
+    "cinematic_max_zoom_var",
+    "cinematic_kinetic_var",
 ]
 
 BOOL_VARS = [
@@ -112,6 +344,12 @@ BOOL_VARS = [
     "align_speech_rate_var",
     "cut_extra_words_var",
     "s_cut_extra_words_var",
+    # Cinematic Enhancement
+    "cinematic_enabled_var",
+    "cinematic_reuse_subs_var",
+    "cinematic_transition_sfx_var",
+    "cinematic_smart_broll_var",
+    "cinematic_keyword_cuts_var",
 ]
 
 
@@ -338,6 +576,11 @@ def collect_settings_from_gui(app) -> None:
     app.settings.output_folder = out
     log.info(f"[GUI] output_folder (final) = {app.settings.output_folder}")
 
+    # Cinematic Enhancement → Settings
+    if _CE_GUI:
+        apply_ce_vars_to_settings(app)
+        log.info(f"[GUI] cinematic_enabled = {getattr(app.settings, 'cinematic_enabled', False)}")
+
 
 class App:
     """Главное окно приложения ВидеоМейкер."""
@@ -418,6 +661,9 @@ class App:
         self.settings = Settings.from_env()
         log.info(f"[GUI] Настройки загружены: model={self.settings.gemini_model}, "
                  f"whisper={self.settings.whisper_model}")
+        if _CE_GUI:
+            init_ce_vars(self)
+            log.info("[GUI] Cinematic Enhancement vars initialized")
 
         self.model_var = tk.StringVar(value=self.settings.gemini_model)
         # r51 packaging
@@ -506,6 +752,7 @@ class App:
         log.info("[GUI] Вызов _load_settings()...")
         self._load_settings()
         log.info("[GUI] _load_settings() завершён")
+        self.root.after(1200, self._log_pool_stats_widget_state)
         if not getattr(self, "_imo_traces_bound", False):
             self._bind_imo_path_traces()
         self._sync_imo_checkboxes()
@@ -702,6 +949,12 @@ class App:
             "Progress.TLabel",
             background=COLORS["bg"],
             foreground=COLORS["text"],
+            font=("SF Mono", 10),
+        )
+        style.configure(
+            "PoolStats.TLabel",
+            background=COLORS["bg"],
+            foreground=COLORS["primary"],
             font=("SF Mono", 10),
         )
 
@@ -1124,6 +1377,14 @@ class App:
         self.notebook.add(self.tab_monitor, text="  Журнал и пульт  ")
         self._build_monitoring_tab(self.tab_monitor)
 
+        # Cinematic Enhancement tab
+        if _CE_GUI:
+            try:
+                attach_ce_tab(self, self.notebook)
+                log.info("[GUI] Вкладка «Кинематограф» подключена")
+            except Exception as _ce_tab_err:
+                log.warning("[GUI] CE tab failed: %s", _ce_tab_err)
+
         log.info("[GUI] _build_ui(): интерфейс построен")
 
     def _build_main_tab(self, parent) -> None:
@@ -1515,18 +1776,36 @@ class App:
         time_row.pack(fill=tk.X, pady=(0, 8))
         self.progress_label = ttk.Label(time_row, text="0%", style="Progress.TLabel")
         self.progress_label.pack(side=tk.LEFT)
-        self.stage_label = ttk.Label(time_row, text="", style="Progress.TLabel")
+        self.stage_label = ttk.Label(time_row, text="ожидание", style="Progress.TLabel")
         self.stage_label.pack(side=tk.LEFT, padx=(12, 0))
-        self.time_label = ttk.Label(time_row, text="", style="Progress.TLabel")
+        self.time_label = ttk.Label(time_row, text="⏱ —", style="Progress.TLabel")
         self.time_label.pack(side=tk.RIGHT)
 
         # Строка «что сейчас происходит» — последнее действие пайплайна
         self.activity_label = ttk.Label(
             parent, text="", style="Progress.TLabel", anchor="w", justify="left",
         )
-        self.activity_label.pack(fill=tk.X, pady=(0, 6))
+        self.activity_label.pack(fill=tk.X, pady=(0, 2))
         self._activity_text = ""
         self._pipeline_t0 = 0.0
+
+        # Сводка подбора клипов: обновляется из лог-строк "[SB] …" / "[VISION] …"
+        # и не стирается обновлениями прогресса/активности.
+        self.pool_stats_var = tk.StringVar(value="Клипы: —")
+        self.pool_stats_label = ttk.Label(
+            parent, textvariable=self.pool_stats_var, style="PoolStats.TLabel",
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.pool_stats_label.pack(fill=tk.X, pady=(0, 8))
+        parent.bind(
+            "<Configure>",
+            lambda event, lbl=self.pool_stats_label: lbl.configure(
+                wraplength=max(300, event.width - 16)
+            ),
+            add="+",
+        )
+        self._pool_live = new_pool_live_stats()
+        self._pool_per_scene = POOL_PER_SCENE_DEFAULT
 
         # ─── Правая панель: пульт + живой журнал (без своего внешнего скролла) ───
         right = ttk.Frame(self.monitor_pane, padding=12)
@@ -2375,16 +2654,46 @@ class App:
         keys_list = list(self.settings.gemini_api_keys or [])
         if not keys_list and self.settings.gemini_api_key:
             keys_list = [self.settings.gemini_api_key]
+        try:  # ключи из ~/.vm_gemini_keys.env — видны в приложении
+            from pathlib import Path as _P
+            _envf = _P.home() / ".vm_gemini_keys.env"
+            if _envf.exists():
+                for _ln in _envf.read_text(encoding="utf-8").splitlines():
+                    _ln = _ln.strip().removeprefix("export ").strip()
+                    if "=" not in _ln:
+                        continue
+                    _k, _v = _ln.split("=", 1)
+                    _v = _v.strip().strip("'\"")
+                    if _k == "GEMINI_API_KEY":
+                        _ks = [_v]
+                    elif _k == "GEMINI_API_KEYS":
+                        _ks = [x.strip() for x in _v.split(",")]
+                    else:
+                        _ks = []
+                    for _x in _ks:
+                        if _x and _x not in keys_list:
+                            keys_list.append(_x)
+        except Exception:
+            pass
+        keys_frame = ttk.Frame(tab_m)
+        keys_frame.pack(fill=tk.X, pady=(4, 4))
         keys_box = tk.Text(
-            tab_m, height=5, wrap="word", bg=COLORS["input_bg"], fg=COLORS["input_fg"],
+            keys_frame, height=10, wrap="word", bg=COLORS["input_bg"], fg=COLORS["input_fg"],
             insertbackground=COLORS["text"], selectbackground=COLORS["primary"],
             relief="flat", borderwidth=0, highlightthickness=1,
             highlightbackground=COLORS["border"], highlightcolor=COLORS["primary"],
             padx=8, pady=8,
         )
-        keys_box.pack(fill=tk.X, pady=(4, 8))
+        keys_scroll = ttk.Scrollbar(keys_frame, command=keys_box.yview)
+        keys_box.configure(yscrollcommand=keys_scroll.set)
+        keys_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        keys_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         keys_box.insert("1.0", "\n".join(keys_list))
         self._settings_keys_box = keys_box
+        ttk.Label(
+            tab_m, text=f"Ключей Gemini: {len(keys_list)}",
+            font=("SF Pro Text", 9),
+        ).pack(anchor="w", pady=(0, 8))
         ttk.Label(tab_m, text="Whisper", style="Section.TLabel").pack(anchor="w", pady=(8, 0))
         row = ttk.Frame(tab_m); row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Модель:", width=12).pack(side=tk.LEFT)
@@ -2522,6 +2831,15 @@ class App:
                 keys = [k.strip() for k in raw.replace(",", "\n").replace(";", "\n").splitlines() if k.strip()]
                 self.settings.gemini_api_keys = keys
                 self.settings.gemini_api_key = keys[0] if keys else ""
+                try:  # синхронизация в ~/.vm_gemini_keys.env (для инструментов/скриптов)
+                    from pathlib import Path as _P2
+                    (_P2.home() / ".vm_gemini_keys.env").write_text(
+                        "export GEMINI_API_KEY=" + (keys[0] if keys else "") + "\n"
+                        + "export GEMINI_API_KEYS=" + ",".join(keys) + "\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
             self.settings.whisper_model = self.whisper_model_var.get() or "large-v3"
             self.settings.whisper_language = self.whisper_lang_var.get()
             self.settings.whisper_device = self.whisper_dev_var.get()
@@ -2640,6 +2958,385 @@ class App:
         }
 
 
+    def _detect_pool_per_scene(self) -> int:
+        """Фактический per_scene: константа master.py → настройка → fallback 1."""
+        try:
+            from ..pipeline.master import SMART_BROLL_PER_SCENE
+            value = int(SMART_BROLL_PER_SCENE)
+            if value > 0:
+                return value
+        except Exception:
+            pass
+        sources = [getattr(self, "settings", None)]
+        snapshot = getattr(self, "_pipeline_snapshot", None)
+        if isinstance(snapshot, dict):
+            sources.append(snapshot.get("settings"))
+        for source in sources:
+            value = getattr(source, "smart_broll_per_scene", None)
+            try:
+                if value is not None and int(value) > 0:
+                    return int(value)
+            except (TypeError, ValueError):
+                continue
+        return POOL_PER_SCENE_DEFAULT
+
+    def _reset_pool_stats(self) -> None:
+        """Новый прогон: обнулить живую статистику и убрать цифры прошлого ролика."""
+        self._pool_live = new_pool_live_stats()
+        self._pool_live["phase"] = "live"
+        self._pool_per_scene = self._detect_pool_per_scene()
+        if hasattr(self, "pool_stats_var"):
+            self.pool_stats_var.set("Клипы: подбор… 0")
+
+    def _live_pool_stats_text(self) -> str:
+        live = getattr(self, "_pool_live", None) or new_pool_live_stats()
+        phase = str(live.get("phase") or "live")
+        if phase in ("analysis", "analysis_done"):
+            total_chunks = int(live.get("chunks_total", 0) or 0)
+            done_chunks = len(live.get("chunks_done") or ())
+            chunks = f" ({done_chunks}/{total_chunks} чанков)" if total_chunks else ""
+            if phase == "analysis":
+                return f"Клипы: идёт анализ сцен{chunks} | поиск ещё не начат"
+            scenes_ready = int(live.get("analysis_scenes", 0) or 0)
+            detail = chunks or (f" ({scenes_ready} сцен)" if scenes_ready else "")
+            return f"Клипы: анализ сцен завершён{detail} | поиск ещё не начат"
+        verified = int(live.get("verified", 0) or 0)
+        score_sum = float(live.get("score_sum", 0.0) or 0.0)
+        score_count = int(live.get("score_count", 0) or 0)
+        avg_text = f"{score_sum / score_count:.1f}" if score_count else "—"
+        found = int(live.get("found", 0) or 0)
+        downloaded = int(live.get("downloaded", 0) or 0)
+        base = max(0, found - downloaded)
+        scenes = len(live.get("scenes") or ())
+        total = int(live.get("scene_total", 0) or 0)
+        per_scene = int(
+            getattr(self, "_pool_per_scene", POOL_PER_SCENE_DEFAULT)
+            or POOL_PER_SCENE_DEFAULT
+        )
+        target = total * max(1, per_scene)
+        scene_text = f"{scenes}/{total}" if total else str(scenes)
+        pending = max(0, found - verified)
+        skipped = int(live.get("prefilter_skipped", 0) or 0)
+        skipped_text = f" | пропущено (предфильтр) {skipped}" if skipped else ""
+        return (
+            f"Клипы: нужно {target} | есть {found} "
+            f"(база {base} + скачано {downloaded}) | "
+            f"проверено {verified} | ждут проверки {pending}{skipped_text} | "
+            f"ср. балл {avg_text} | "
+            f"сцен {scene_text} | подходящих ≥6 {len(live.get('ok_scenes') or ())} | "
+            f"в базу {int(live.get('ingested', 0) or 0)}"
+        )
+
+    def _refresh_pool_live(self) -> None:
+        if hasattr(self, "pool_stats_var"):
+            self.pool_stats_var.set(self._live_pool_stats_text())
+
+    @staticmethod
+    def _pool_lookup(mapping: dict, name: str):
+        """Точное имя или самое длинное совпадение по префиксу."""
+        if not name or not mapping:
+            return None
+        if name in mapping:
+            return mapping[name]
+        best_key = None
+        for key in mapping:
+            if key and (key.startswith(name) or name.startswith(key)):
+                if best_key is None or len(key) > len(best_key):
+                    best_key = key
+        return mapping[best_key] if best_key is not None else None
+
+    def _pool_apply_scene_score(self, live: dict, scene_no: int, score: float) -> None:
+        if 0 <= score <= 10 and score >= 6:
+            live.setdefault("ok_scenes", set()).add(int(scene_no))
+
+    def _pool_add_score(self, live: dict, fname: str, score: float) -> None:
+        """Средний балл по уникальным оценкам файлов (клип и Vision не дублируются)."""
+        if not (0 <= score <= 10):
+            return
+        name = str(fname or "")
+        key = (name, round(float(score), 2))
+        events = live.setdefault("score_events", set())
+        if key not in events:
+            events.add(key)
+            live["score_sum"] += float(score)
+            live["score_count"] += 1
+        scores = live.setdefault("vision_scores", {})
+        prev = scores.get(name)
+        if prev is None or score > prev:
+            scores[name] = float(score)
+
+    def _apply_pending_pool_final(self, live: dict) -> None:
+        """Подтверждённый финал: ИТОГ + следующая строка «[SB] готово»."""
+        stats = live.pop("pending_final", None)
+        if not isinstance(stats, dict):
+            return
+        per_scene = int(
+            getattr(self, "_pool_per_scene", POOL_PER_SCENE_DEFAULT)
+            or POOL_PER_SCENE_DEFAULT
+        )
+        verified = int(live.get("verified", 0) or 0)
+        fmt = dict(stats)
+        fmt["ok"] = max(int(stats.get("ok", 0) or 0),
+                        len(live.get("ok_scenes") or ()))
+        # «Добрать» должно соответствовать показанному (монотонному) ok.
+        fmt["need"] = max(0, int(stats["scenes"]) - int(fmt["ok"]))
+        fmt["ingested"] = int(live.get("ingested", 0) or 0)
+        if hasattr(self, "pool_stats_var"):
+            self.pool_stats_var.set(
+                format_pool_stats(
+                    **fmt, per_scene=per_scene, verified=verified,
+                    skipped=int(live.get("prefilter_skipped", 0) or 0),
+                )
+            )
+        live["phase"] = "final"
+        live["found"] = int(stats["lib"]) + int(stats["dl"])
+        live["downloaded"] = int(stats["dl"])
+        live["scene_total"] = int(stats["scenes"])
+        live["scene_total_locked"] = True
+        live["scenes"] = set(range(1, int(stats["scenes"]) + 1))
+
+    def _handle_pool_stats_log(self, msg: str) -> None:
+        """Живая статистика пула из событий smart_broll/Vision + финальный ИТОГ."""
+        try:
+            live = getattr(self, "_pool_live", None)
+            if live is None:
+                self._pool_live = new_pool_live_stats()
+                live = self._pool_live
+            changed = False
+            for raw in (msg or "").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+
+                # Начало новой серии/пула — счётчики текущего ролика с нуля.
+                match = _POOL_SERIES_RE.search(line)
+                if match:
+                    self._pool_live = new_pool_live_stats()
+                    live = self._pool_live
+                    live["phase"] = "live"
+                    live["scene_total"] = int(match.group(1))
+                    live["scene_total_locked"] = True
+                    if match.group(2):
+                        self._pool_per_scene = int(match.group(2))
+                    changed = True
+                    continue
+
+                # Подтверждение финала: ИТОГ применяем только вместе со
+                # следующей строкой «[SB] готово», чтобы промежуточный ИТОГ
+                # не сбросил живые счётчики.
+                if line.startswith("[SB] готово:"):
+                    self._apply_pending_pool_final(live)
+                    changed = False
+                    continue
+
+                # Финальная сводка — откладываем до подтверждения «готово».
+                stats = parse_pool_stats_line(line)
+                if stats is not None:
+                    if live.get("phase") == "final":
+                        continue
+                    live["pending_final"] = stats
+                    changed = False
+                    continue
+
+                # Любое событие после ИТОГа означает, что это был промежуточный
+                # ИТОГ (добор/старый пул) — не применяем его.
+                if live.get("pending_final") is not None:
+                    live["pending_final"] = None
+
+                # После подтверждённого финала живые события не меняют строку.
+                if live.get("phase") == "final":
+                    continue
+
+                # ─── Период анализа сцен: подбор ещё не начат ───────────────
+                if _POOL_ANALYSIS_START_RE.search(line):
+                    live["phase"] = "analysis"
+                    live["chunks_total"] = 0
+                    live["chunks_done"] = set()
+                    live["analysis_scenes"] = 0
+                    changed = True
+                    continue
+
+                match = _POOL_ANALYSIS_SCENES_RE.search(line)
+                if match:
+                    live["phase"] = "analysis_done"
+                    live["analysis_scenes"] = int(match.group(1))
+                    changed = True
+                    continue
+
+                match = _GEMINI_CHUNKS_TOTAL_RE.search(line)
+                if match:
+                    done, total = int(match.group(1)), int(match.group(2))
+                    live["phase"] = "analysis_done"
+                    live["chunks_total"] = total
+                    live["chunks_done"] = set(range(1, done + 1))
+                    changed = True
+                    continue
+
+                match = _GEMINI_CHUNK_RE.search(line)
+                if match:
+                    chunk_no, total = int(match.group(1)), int(match.group(2))
+                    live["phase"] = "analysis"
+                    live["chunks_total"] = total
+                    if _GEMINI_CHUNK_DONE_RE.search(line) or any(
+                        marker in line for marker in (
+                            "— пусто", "чанк пуст", "JSON не разобран", "сбой воркера",
+                        )
+                    ):
+                        live["chunks_done"].add(chunk_no)
+                    changed = True
+                    continue
+
+                # Кэш Vision: N оценок уже проверены, отдельных строк не будет.
+                match = _POOL_VISION_CACHE_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    live["verified"] += int(match.group(1))
+                    changed = True
+                    continue
+
+                # Предфильтр Vision: отсеяно до вызова модели.
+                match = _POOL_VISION_PREFILTER_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    live["prefilter_skipped"] += int(match.group(1))
+                    changed = True
+                    continue
+
+                # Пополнение базы: [LIB] ⊕ — по одному клипу, [SB] ⊕ — итог.
+                if "⊕" in line and line.startswith(("[LIB]", "[SB]")):
+                    live["phase"] = "live"
+                    if line.startswith("[LIB]"):
+                        live["ingested"] += 1
+                    else:
+                        number = _POOL_INGEST_NUM_RE.search(line)
+                        if number:
+                            live["ingested"] = max(
+                                int(live.get("ingested", 0) or 0),
+                                int(number.group(1)),
+                            )
+                        else:
+                            live["ingested"] += 1
+                    changed = True
+                    continue
+
+                if not line.startswith(("[SB]", "[VISION]")):
+                    continue
+
+                # Любая строка «[SB] сцена N:» уточняет число сцен, если серия
+                # ещё не дала итог. В «обработанные» сцену добавляют только
+                # реальные события клипа/★, а не строки плана сцен.
+                match = _POOL_SCENE_ANY_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    scene_no = int(match.group(1))
+                    if not live.get("scene_total_locked"):
+                        live["scene_total"] = max(
+                            int(live.get("scene_total", 0) or 0), scene_no
+                        )
+                    changed = True
+
+                # Найден клип: ⬡ — из базы/скачано, ↓ — скачан.
+                match = _POOL_SCENE_CLIP_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    scene_no = int(match.group(1))
+                    live["found"] += 1
+                    live["scenes"].add(scene_no)
+                    if "↓" in line or "скачано" in line:
+                        live["downloaded"] += 1
+                    fname = ""
+                    file_match = _POOL_CLIP_FILE_RE.search(line)
+                    if file_match:
+                        fname = file_match.group(1).strip()
+                        live.setdefault("file_scene", {})[fname] = scene_no
+                        prior = self._pool_lookup(
+                            live.get("vision_scores") or {}, fname
+                        )
+                        if prior is not None:
+                            self._pool_apply_scene_score(
+                                live, scene_no, float(prior)
+                            )
+                    score_match = _POOL_PAREN_SCORE_RE.search(line)
+                    if score_match:
+                        score = float(score_match.group(1).replace(",", "."))
+                        self._pool_add_score(
+                            live, fname or f"scene:{scene_no}", score
+                        )
+                        self._pool_apply_scene_score(live, scene_no, score)
+                    changed = True
+                    continue
+
+                # Сцена закрыта: ★ лучший / ⚠ ниже порога.
+                match = _POOL_SCENE_DONE_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    scene_no = int(match.group(1))
+                    live["scenes"].add(scene_no)
+                    fname = ""
+                    file_match = _POOL_SCENE_BEST_FILE_RE.search(line)
+                    if file_match:
+                        fname = file_match.group(1).strip()
+                        live.setdefault("file_scene", {})[fname] = scene_no
+                    score_match = _POOL_ANY_SCORE_RE.search(line)
+                    if score_match:
+                        score = float(score_match.group(1).replace(",", "."))
+                        self._pool_add_score(
+                            live, fname or f"scene:{scene_no}", score
+                        )
+                        self._pool_apply_scene_score(live, scene_no, score)
+                    changed = True
+                    continue
+
+                # Оценка Vision: проверено +1, средний балл — по всем оценкам.
+                # «Подходящие ≥6» считаются по сценам (set ok_scenes), поэтому
+                # повторная оценка той же сцены не может уменьшить счётчик.
+                match = _POOL_VISION_RE.search(line)
+                if match:
+                    live["phase"] = "live"
+                    live["verified"] += 1
+                    fname = match.group(1).strip()
+                    try:
+                        score = float(match.group(2).replace(",", "."))
+                    except (TypeError, ValueError):
+                        score = -1.0
+                    if 0 <= score <= 10:
+                        self._pool_add_score(live, fname, score)
+                        scene_no = self._pool_lookup(
+                            live.get("file_scene") or {}, fname
+                        )
+                        if scene_no is not None:
+                            self._pool_apply_scene_score(
+                                live, int(scene_no), score
+                            )
+                    changed = True
+                    continue
+
+            if changed and live.get("phase") != "final":
+                self._refresh_pool_live()
+        except Exception as exc:
+            log.debug("[GUI] pool stats event skipped: %s", exc, exc_info=True)
+
+    def _log_pool_stats_widget_state(self) -> None:
+        """Диагностика: строка пула смонтирована и содержит последнюю сводку."""
+        try:
+            def _geo(widget):
+                return (
+                    f"mapped={widget.winfo_ismapped()} "
+                    f"y={widget.winfo_y()} rooty={widget.winfo_rooty()} "
+                    f"w={widget.winfo_width()} h={widget.winfo_height()}"
+                )
+            parts = [f"text={self.pool_stats_var.get()!r}", f"pool[{_geo(self.pool_stats_label)}]"]
+            parent = getattr(self.pool_stats_label, "master", None)
+            if parent is not None:
+                parts.append(f"parent_h={parent.winfo_height()}")
+            for name in ("progress_label", "stage_label", "time_label", "activity_label"):
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    parts.append(f"{name}[{_geo(widget)} text={widget.cget('text')!r}]")
+            log.info("[GUI] Статистика пула: %s", " | ".join(parts))
+        except Exception:
+            pass
+
     def _log(self, msg: str) -> None:
         """Потокобезопасная запись в лог. Ограничение ~3000 строк — нет утечки RAM."""
         timestamp = time.strftime("%H:%M:%S")
@@ -2672,6 +3369,8 @@ class App:
                 if line and hasattr(self, "activity_label"):
                     self._activity_text = line
                     self.activity_label.configure(text=f"▶ {line}")
+                # Сводка подбора клипов — отдельная строка, живёт до нового прогона.
+                self._handle_pool_stats_log(msg)
             except Exception:
                 pass
         try:
@@ -2961,6 +3660,7 @@ class App:
         self.start_btn.configure(state=tk.DISABLED)
         self.cancel_btn.configure(state=tk.NORMAL)
         self.cancel_event.clear()
+        self._reset_pool_stats()
         self._pipeline_t0 = time.time()
         self._start_progress_ticker()
         log.info("[GUI] self.running = True, кнопка Старт заблокирована, Отмена включена")
@@ -3142,6 +3842,7 @@ class App:
                     s_mid_path=_frozen_imo("s_mid_path"),
                     s_outro_path=_frozen_imo("s_outro_path"),
                     log_callback=self._log,
+                    **(ce_kwargs_for_pipeline_context(pipeline_settings) if _CE_GUI else {}),
                 )
                 ctx.cancel_event = self.cancel_event  # для ShortsCutter / отмены внутри стадий
                 log.info(f"[PIPELINE] PipelineContext создан для {os.path.basename(audio_file)}")
@@ -3474,8 +4175,16 @@ class App:
             bool_var = getattr(self, f"{prefix}_{key}", None)
             try:
                 was_disabled = self._imo_cb_is_disabled(cb)
+                _prev = getattr(self, "_imo_last_ok", None)
+                if not isinstance(_prev, dict):
+                    _prev = {}
+                    self._imo_last_ok = _prev
+                _was_ok = _prev.get((prefix, key))
                 if ok:
-                    if was_disabled and bool_var is not None:
+                    # [VM-FIX] авто-включение только при ПОЯВЛЕНИИ файла в сессии,
+                    # но не при первой синхронизации — иначе затирается
+                    # выключенная пользователем галочка из файла настроек.
+                    if _was_ok is False and was_disabled and bool_var is not None:
                         bool_var.set(True)
                     self._imo_cb_set_enabled(cb, True)
                 else:
@@ -3487,6 +4196,7 @@ class App:
                             "[GUI] IMO %s_%s path set but file missing: %r",
                             prefix, key, path,
                         )
+                _prev[(prefix, key)] = ok
             except tk.TclError:
                 pass
 
@@ -3535,8 +4245,31 @@ class App:
             return val.strip() if isinstance(val, str) else str(val or "")
         return ""
 
+    def _apply_gemini_keys_from_storage(self) -> list[str]:
+        """Настройки приложения приоритетнее env; недостающие берём из env и сохраняем."""
+        stored = load_gemini_keys_from_settings()
+        env_keys = read_gemini_keys_env()
+        if stored and (not env_keys or len(stored) >= len(env_keys)):
+            keys = stored
+        else:
+            keys = list(stored)
+            for key in env_keys:
+                if key not in keys:
+                    keys.append(key)
+        if not keys:
+            log.info("[GUI] Ключей Gemini: 0")
+            return []
+        self.settings.gemini_api_keys = list(keys)
+        self.settings.gemini_api_key = keys[0] if keys else ""
+        if keys != stored:
+            persist_gemini_keys_to_settings(keys)
+            log.info("[GUI] Ключи Gemini дополнены из env и сохранены в приложении")
+        log.info("[GUI] Ключей Gemini: %d", len(keys))
+        return list(keys)
+
     def _load_settings(self) -> None:
         """Загрузить настройки из JSON. Только .set() на tk-переменные."""
+        self._apply_gemini_keys_from_storage()
         if not os.path.exists(SETTINGS_FILE):
             return
         try:
@@ -3594,6 +4327,24 @@ class App:
             self._wake_network_paths()
             self._sync_imo_checkboxes()
             self._bind_imo_path_traces()
+            if _CE_GUI:
+                # JSON may have cinematic_* keys already applied via generic loop;
+                # force-sync settings object fields into CE tk vars.
+                for attr in (
+                    "cinematic_enabled", "cinematic_profile", "cinematic_motion",
+                    "cinematic_tempo", "cinematic_color", "cinematic_transitions",
+                    "cinematic_framing", "cinematic_reuse_subs", "cinematic_max_zoom",
+                    "cinematic_seed", "cinematic_kinetic", "cinematic_transition_sfx",
+                    "cinematic_smart_broll", "cinematic_keyword_cuts",
+                ):
+                    if attr in data:
+                        try:
+                            setattr(self.settings, attr, data[attr])
+                        except Exception:
+                            pass
+                settings_to_ce_vars(self)
+                if hasattr(self, "refresh_ce_tab"):
+                    self.refresh_ce_tab()
         except Exception as e:
             log.warning("[GUI] Ошибка загрузки настроек: %s", e)
 
@@ -3740,8 +4491,23 @@ class App:
                 )
             except Exception:
                 pass
+            # Ключи Gemini — всегда в приложении, не только в env.
+            keys = normalize_gemini_keys(
+                getattr(self.settings, "gemini_api_keys", []) or []
+            )
+            if not keys:
+                keys = normalize_gemini_keys(
+                    getattr(self.settings, "gemini_api_key", "")
+                )
+            data["gemini_api_keys"] = keys
+            data["gemini_api_key"] = keys[0] if keys else ""
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            log.info("[GUI] Настройки сохранены в %s", SETTINGS_FILE)
+            with contextlib.suppress(OSError):
+                os.chmod(SETTINGS_FILE, 0o600)
+            log.info(
+                "[GUI] Настройки сохранены в %s (ключей Gemini: %d)",
+                SETTINGS_FILE, len(keys),
+            )
         except Exception as e:
             log.warning("[GUI] Ошибка сохранения настроек: %s", e)

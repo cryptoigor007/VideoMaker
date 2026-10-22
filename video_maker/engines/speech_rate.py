@@ -18,6 +18,8 @@ import subprocess
 import time
 from typing import Any, Callable
 
+from ..paths import resolve_existing_file
+
 _WORD_RE = re.compile(r"(?u)[^\W_]+(?:[-'’][^\W_]+)*")
 _RUBBERBAND_CACHE: dict[str, bool] = {}
 
@@ -1051,8 +1053,12 @@ def prepare_narration(
     Pause compression defaults off and only uses complete word-level timestamps.
     """
     _log = log_fn or (lambda _message: None)
-    if not source_path or not os.path.isfile(source_path):
+    resolved_source = resolve_existing_file(source_path)
+    if not resolved_source:
         raise FileNotFoundError(f"Narration source does not exist: {source_path}")
+    if resolved_source != source_path:
+        _log(f"[SPEECH RATE] путь narration нормализован: {resolved_source}")
+    source_path = resolved_source
 
     duration = _probe_duration(source_path, ffprobe_bin=ffprobe_bin)
     text = transcription_text(transcription)

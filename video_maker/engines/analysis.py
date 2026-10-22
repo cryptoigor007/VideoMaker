@@ -9,8 +9,12 @@ import json
 import logging
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from ..paths import resolve_existing_path
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +71,66 @@ def _is_transient_gemini_error(exc: Exception) -> bool:
         return True
     text = str(exc).lower()
     return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+_GEMINI_HEARTBEAT_SEC = 20.0
+
+
+class _GeminiCallWatch:
+    """Heartbeat в лог, пока идёт синхронный вызов Gemini.
+
+    Логирование не должно влиять на вызов: поток daemon, отменяется событием,
+    join с таймаутом; elapsed считается по monotonic.
+    """
+
+    def __init__(
+        self,
+        log_fn,
+        label: str,
+        model: str,
+        key_no: int,
+        key_total: int,
+        interval: float = _GEMINI_HEARTBEAT_SEC,
+    ):
+        self._log = log_fn or log.info
+        self.label = label
+        self.model = model
+        self.key_no = key_no
+        self.key_total = key_total
+        self.interval = interval
+        self.elapsed = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._t0 = 0.0
+
+    def __enter__(self):
+        self._t0 = time.monotonic()
+        self._thread = threading.Thread(
+            target=self._tick, name="gemini-heartbeat", daemon=True
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self.elapsed = max(0.0, time.monotonic() - self._t0)
+        return False
+
+    def _tick(self) -> None:
+        waited = 0.0
+        while not self._stop.wait(self.interval):
+            if self._stop.is_set():
+                return
+            waited += self.interval
+            try:
+                self._log(
+                    f"[GEMINI] {self.label}: ждём ответ… прошло {waited:.0f}с "
+                    f"(model={self.model}, ключ {self.key_no}/{self.key_total})"
+                )
+            except Exception:  # noqa: BLE001 — heartbeat не должен ломать вызов
+                pass
 
 
 def list_available_gemini_models(
@@ -167,7 +231,7 @@ def list_available_gemini_models(
 STATE_PATH = Path.home() / "video_maker" / "cache" / "gemini_state.json"
 
 # Stage D: response cache key = hash(audio) + model + schema
-ANALYSIS_SCHEMA_VERSION = "v4-reject-empty-analysis"
+ANALYSIS_SCHEMA_VERSION = "v6-enumeration-actions-broll"
 ANALYSIS_CACHE_DIR = Path.home() / "video_maker" / "cache" / "gemini_analysis"
 
 
@@ -369,8 +433,10 @@ def _format_short_description(
 
 def _audio_fingerprint(audio_path: str) -> str:
     """Стабильный fingerprint аудио: path + size + mtime (быстро, без полного hash файла)."""
-    if not audio_path or not os.path.isfile(audio_path):
+    resolved_audio = resolve_existing_path(audio_path, kind="file")
+    if not resolved_audio:
         return "noaudio"
+    audio_path = resolved_audio
     try:
         st = os.stat(audio_path)
         raw = f"{os.path.abspath(audio_path)}|{st.st_size}|{st.st_mtime_ns}"
@@ -530,22 +596,28 @@ class GeminiKeyManager:
 
     def rotate_key(self, reason: str) -> bool:
         """Пометить текущий ключ и перейти к следующему живому. False = ключи кончились."""
+        failed_key = self.key_index + 1
         self.exhausted.add(self.key_index)
-        self.log(
-            f"[GEMINI] {reason} → ключ {self.key_index+1}/{self.n} пропускаем "
-            f"(exhausted={len(self.exhausted)}/{self.n})"
-        )
         for _ in range(self.n):
             self.key_index = (self.key_index + 1) % self.n
             if self.key_index not in self.exhausted:
-                self.log(f"[GEMINI] Переключение на ключ {self.key_index+1}/{self.n}")
+                self.log(
+                    f"[GEMINI] {reason} на ключе {failed_key}/{self.n} → "
+                    f"переключаюсь на {self.key_index+1}/{self.n} "
+                    f"(exhausted={len(self.exhausted)}/{self.n})"
+                )
                 return True
+        self.log(
+            f"[GEMINI] {reason} на ключе {failed_key}/{self.n} — "
+            f"живых ключей не осталось (exhausted={len(self.exhausted)}/{self.n})"
+        )
         return False
 
-    def next_model(self) -> bool:
+    def next_model(self, reason: str = "") -> bool:
         if self.model_index + 1 < len(self.model_chain):
             self.model_index += 1
-            self.log(f"[GEMINI] Модель → {self.current_model}")
+            suffix = f" (причина: {reason})" if reason else ""
+            self.log(f"[GEMINI] переход на модель {self.current_model}{suffix}")
             # при смене модели можно снова пробовать ключи (кроме invalid — но invalid редкий)
             return True
         return False
@@ -669,6 +741,27 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
 ═══════════════════════════════════════
 - strong_words: 5–15 слов с timing/start/end, caps, color, visual_weight
 - subtitles: смысловые куски 1.5–4с (fallback)
+
+═══════════════════════════════════════
+6) КЛИПЫ ДЛЯ МОНТАЖА (broll_queries)
+═══════════════════════════════════════
+- broll_queries: сцены по ПРЕДЛОЖЕНИЯМ озвучки (одно предложение = одна сцена; визуал должен буквально соответствовать словам этого предложения — «в детстве» → дети играют, «офис» → сотрудники, «собирались» → компания): короткая русская фраза из озвучки,
+  «visual» — что показать на экране, и 2–3 ТОЧНЫХ английских запроса для стока.
+  Каждый запрос — КОНКРЕТНЫЙ КАДР: субъект + действие + место/свет/план (например «sad man scrolling phone in dark bedroom, close-up»). НЕ абстракции («loneliness», «sadness») и НЕ общие слова («life»).
+  Примеры хороших: «lonely man window», «typing phone screen»,
+  «friends talking cafe»), НЕ общие слова; для людей избегай животных.
+  ДОПОЛНИТЕЛЬНО для точного поиска в базе (как у нас устроены описания):
+  - "emotions": 0–4 английских слова эмоций, которые НУЖНЫ в кадре (smiling, laughing, sad, crying, serious, tired) — пусто, если людей нет;
+  - "must_not": 1–4 английских слова, которых быть НЕ должно (например, smiling для грустной сцены, crowd для одиночества);
+  - "shot": тип плана (close-up | medium | wide | aerial) — если важен;
+  - "mood": одно английское слово настроения (melancholic, joyful, tense, calm).
+  ПРИМЕРЫ правильной связки слов и визуала (копируй этот паттерн):
+    «В детстве лучший друг появлялся за неделю» → visual: «Двое детей бегут по улице, смеются, играют»; queries: ["children running playing street", "two kids laughing outdoors"]
+    «годами сидят в одном офисе» → visual: «Офисные сотрудники в наушниках перед мониторами, не общаются»; queries: ["office workers headphones monitors", "disconnected office employees"]
+    «собирались, выпивали в компании» → visual: «Компания друзей за столом в баре, бокалы, смех»; queries: ["friends drinking bar table", "company toasting glasses party"]
+    «телефон полон контактов, позвонить некому» → visual: «Рука листает список контактов в телефоне в темноте»; queries: ["hand scrolling phone contacts dark", "person alone smartphone screen night"]
+  - "hard": 0–3 английских слова-«СТОП»: если это есть в клипе — клип НЕ подходит вообще (ГЛАВНЫЙ параметр; например, для похорон "smiling" — категорически нельзя; для одиночества — "crowd");
+  - "weights": приоритеты параметров 1–3, что главнее при выборе (например, {{"emotions": 3, "queries": 2, "mood": 1}}).
 {intro_section}
 Текст с таймингами:
 {timings}
@@ -716,6 +809,11 @@ type: QUESTION | CONTRADICTION | STATEMENT | CURIOSITY | IDENTITY | LOSS | REVEL
   ],
   "subtitles": [
     {{"start": 0.0, "end": 2.5, "text": "фраза субтитра", "style": "normal"}}
+  ],
+  "broll_queries": [
+    {{"text": "фраза из озвучки", "visual": "что показать", "queries": ["english phrase 1", "english phrase 2"],
+      "emotions": ["sad"], "must_not": ["smiling", "crowd"], "shot": "close-up", "mood": "melancholic",
+      "hard": ["smiling"], "weights": {{"emotions": 3, "queries": 2, "mood": 1}}}}
   ]
 }}"""
 
@@ -736,6 +834,372 @@ def get_builtin_analysis_prompt(
         series_name=series_name or "",
         packaging_opts=None,
     )
+
+
+# [VM-BENCH 2026-10-18] A/B/C/D-бенчмарк промптов сцен (37 сегментов, поиск по базе
+# + Pixabay, Vision-оценка): базовый промпт A — лучший по совокупности метрик
+# (слоты ≥6: A 20.5/31, B 18, C 21, D 20.5; ср. балл: A 7.26, C 7.26, D 6.83, B 6.74;
+# время: A 365с, D 382с, B 523с, C 646с). Блоки «анти-абстракции» и «перечисления»
+# по агрегатным метрикам бенчмарка выигрыша не дали (различия в пределах шума
+# ±2-3 слота), НО по задаче r57 их вернули: на реальной серии 10_out они дали
+# разбиение «Очередь, лифт, завтрак» на ОТДЕЛЬНЫЕ сцены с точными запросами
+# (см. broll_smart/10_out/smart_broll_manifest.json, сцены 9-11) и заменили
+# абстракции на действия («сила воли» → «person putting smartphone in desk drawer»).
+# Отчёты бенчмарка: /Volumes/SSD/темп/бенчмарк_поиска/reports/ (variant_A/B/C/D*.json).
+# [VM-DUEL 2026-10-18] Дуэль A vs G1-6 («якорные объекты», вариант_G1_6_якорные_объекты.txt):
+# 8 пар чередующихся прогонов на одной модели (gemini-3.1-flash-lite, text+Vision), только
+# поиск+Vision. G1-6 НЕ подтверждён вне шума: парные 4:4 (нужно ≥2/3), слоты ≥6 27.75 против
+# 28.00 (разбросы 26-29 и 27-30), ср.слот 8.98 против 8.99; G1-6 лишь быстрее (~-11% времени).
+# Победителя нет → в приложении остаётся A (ниже, не менялся). Отчёт: .../итог_дуэль.md
+# [VM-BENCH2 2026-10-18] G2-бенчмарк (агент №2): 7 новых вариантов Gemini против базового A,
+# только поиск (база с семантикой + Pixabay) + Vision, без рендера. 4 модельных раунда
+# (flash-latest, 3.6/3.7/3.8-flash, 3-flash-preview — квота Gemini исчерпывалась, отсюда раунды).
+# Победитель — G2_1 «объектно-слоевая декомпозиция»: лучше A по среднему лучшему баллу слота
+# в 4/4 сопоставлениях (+0.49 в среднем: 8.06/8.97/8.74/9.26 против 8.06/8.42/7.74/8.84) и по
+# доле сцен ≥6 в 3/4 (+4.5 сцены из 37), слоты ≥6: +2/+2/+3/−1 (в пределах шума: у A собственный
+# разброс 24–30 из 31). G2_5 «мульти-синонимы» тоже ≥ A по среднему и сценам ≥6 (2/2 раунда),
+# но медленнее; G2_2/G2_3/G2_4/G2_6 — в пределах шума; G2_7 «якорный референс» — ниже A
+# (26/31 и 25/31, ср. балл 8.52/7.87). Парные серии и цифры: итог_G2.md
+# Прежний промпт A: prompts_backup/app_current_A_before_bench2.txt. Отчёт: итог_G2.md
+# [VM-DUEL2 2026-10-19] Финальная дуэль-2 (агент-судья): строгая проверка лидеров G2 против A
+# (7 троек чередующихся прогонов A/G2-5/G2-1, одна модель gemini-3.1-flash-lite text+Vision,
+# 37 сцен, только поиск+Vision, без рендера). Никто не подтверждён: G2-5 парные победы 4/7
+# (нужно ≥5), G2-1 — 3/7; средние внутри разброса A (G2-1 27.1/8.78/5.59 против A
+# 26.7/8.58/5.34; разброс A до 30/9.61/6.38). G2-1, применённый ранее по [VM-BENCH2],
+# возвращён к A по правилу судьи. Отчёт: /Volumes/SSD/темп/бенчмарк_поиска/итог_дуэль2.md
+_BROLL_CHUNK_PROMPT = """Ты — режиссёр монтажа документального видео. Ниже фрагмент озвучки с таймкодами.
+Для КАЖДОГО предложения (каждой строки [start-end]) верни ОДИН объект сцены — что показать на экране.
+Визуал должен БУКВАЛЬНО соответствовать словам этого предложения («в детстве» → дети играют; «офис» → сотрудники; «выпивали» → бар, компания).
+
+Поля объекта:
+- "text": короткая русская фраза из озвучки (само предложение или его суть)
+- "visual": что показать — конкретный кадр по словам, по-русски
+- "queries": 2–3 ТОЧНЫХ английских запроса для стока (субъект + действие + место/свет/план), например ["sad man scrolling phone dark bedroom", "person alone smartphone night"]
+- "emotions": 0–4 английских слова эмоций, которые нужны в кадре (smiling, sad, tired) — пусто, если людей нет
+- "must_not": 1–4 английских слова, которых быть НЕ должно (smiling для грусти; crowd для одиночества)
+- "shot": close-up | medium | wide | aerial (если важен)
+- "mood": одно английское слово настроения (melancholic, joyful, tense, calm)
+- "hard": 0–3 английских слова-СТОП (если есть в клипе — клип НЕ подходит вообще)
+- "weights": приоритеты 1–3, например {{"emotions": 3, "queries": 2, "mood": 1}}
+
+Примеры правильной связки:
+«В детстве лучший друг появлялся за неделю» → visual: «Двое детей бегут по улице, смеются»; queries: ["children running playing street", "two kids laughing outdoors"]
+«годами сидят в одном офисе» → visual: «Офисные сотрудники в наушниках перед мониторами, не общаются»; queries: ["office workers headphones monitors", "disconnected office employees"]
+«собирались, выпивали в компании» → visual: «Компания друзей за столом в баре, бокалы, смех»; queries: ["friends drinking bar table", "company toasting glasses party"]
+
+Верни ТОЛЬКО валидный JSON-массив (без markdown и пояснений), на КАЖДОЕ предложение — свой объект, ничего не пропускай и не объединяй:
+[{{"text": "...", "visual": "...", "queries": ["...", "..."], "emotions": [], "must_not": [], "shot": "medium", "mood": "calm", "hard": [], "weights": {{"queries": 2}}}}]
+
+Озвучка:
+{timings}"""
+
+
+def _chunk_segments(segments: list[dict], chunk_seconds: float = 60.0,
+                    max_items: int = 14) -> list[list[dict]]:
+    """Режет сегменты на чанки ~60с (не больше max_items строк)."""
+    chunks: list[list[dict]] = []
+    cur: list[dict] = []
+    t0: float | None = None
+    for s in segments or []:
+        st = float(s.get("start", 0.0) or 0.0)
+        en = float(s.get("end", st) or st)
+        if t0 is None:
+            t0 = st
+        cur.append(s)
+        if (en - t0) >= chunk_seconds or len(cur) >= max_items:
+            chunks.append(cur)
+            cur = []
+            t0 = None
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _parse_scenes_json(raw: str) -> list[dict]:
+    """JSON-массив сцен из ответа (снимает markdown-ограждение)."""
+    import re as _re
+    s = (raw or "").strip()
+    if s.startswith("```"):
+        s = _re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = _re.sub(r"\s*```\s*$", "", s)
+    i, j = s.find("["), s.rfind("]")
+    if i < 0 or j <= i:
+        raise ValueError("нет JSON-массива")
+    arr = json.loads(s[i:j + 1])
+    out: list[dict] = []
+    for it in arr if isinstance(arr, list) else []:
+        if not isinstance(it, dict):
+            continue
+        txt = str(it.get("text") or "").strip()
+        vis = str(it.get("visual") or "").strip()
+        if not txt and not vis:
+            continue
+        qs = [str(x).strip() for x in (it.get("queries") or []) if str(x).strip()][:3]
+        emo = [str(x).strip() for x in (it.get("emotions") or []) if str(x).strip()][:6]
+        mn = [str(x).strip() for x in (it.get("must_not") or []) if str(x).strip()][:6]
+        hd = [str(x).strip() for x in (it.get("hard") or []) if str(x).strip()][:6]
+        w = it.get("weights") if isinstance(it.get("weights"), dict) else {}
+        out.append({
+            "text": txt, "visual": vis, "queries": qs,
+            "emotions": emo, "must_not": mn,
+            "shot": str(it.get("shot") or "").strip(),
+            "mood": str(it.get("mood") or "").strip(),
+            "hard": hd, "weights": w,
+        })
+    return out
+
+
+# --- сцены: параллельный проход чанками (стандарт, без флагов) ---
+# Чанки независимы, поэтому идут одновременно. 3 потока — компромисс:
+# в 2–3 раза быстрее последовательного прохода, но без залпа по квотам.
+_SCENES_MAX_WORKERS = 3
+_SCENES_CALL_TIMEOUT = 120.0  # сек на один вызов Gemini
+_SCENES_MAX_ATTEMPTS = 2      # ключ/модель → чанк пустой, проход не вешаем
+_VISION_CLI_WORKERS = 6       # tools/verify_scenes.py: --workers 6 по умолчанию
+_SCENE_LOG_LOCK = threading.RLock()
+
+
+def _threads_word(n: int) -> str:
+    """«1 поток / 2 потока / 5 потоков» для человекочитаемых логов."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} поток"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} потока"
+    return f"{n} потоков"
+
+
+def _attempts_word(n: int) -> str:
+    """«1 попытка / 2 попытки / 5 попыток»."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} попытка"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} попытки"
+    return f"{n} попыток"
+
+
+def _scene_log(log_fn, message: str) -> None:
+    """Потокобезопасный лог: строки из воркеров не рвутся и не валят проход."""
+    with _SCENE_LOG_LOCK:
+        try:
+            log_fn(message)
+        except Exception:  # noqa: BLE001 — лог не должен ломать анализ
+            pass
+
+
+def _gemini_text_with_timeout(*, key: str, model: str, prompt: str,
+                              timeout: float) -> str:
+    """generate_content с жёстким таймаутом.
+
+    Синхронный SDK-вызов идёт в daemon-потоке: зависший запрос не держит
+    чанк (и весь проход) дольше timeout.
+    """
+    box: dict[str, object] = {}
+
+    def _call() -> None:
+        try:
+            from google import genai
+            client = genai.Client(api_key=key)
+            response = client.models.generate_content(model=model, contents=prompt)
+            box["text"] = (response.text or "").strip()
+        except BaseException as exc:  # noqa: BLE001 — переносим в поток-владелец
+            box["error"] = exc
+
+    worker = threading.Thread(target=_call, name="gemini-scene-call", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise TimeoutError(f"таймаут {timeout:.0f}с")
+    error = box.get("error")
+    if error is not None:
+        raise error  # type: ignore[misc]
+    return str(box.get("text") or "")
+
+
+def analyze_broll_scenes(segments: list[dict], keys: list[str], model_name: str,
+                         log_fn=None, stats: dict | None = None) -> list[dict]:
+    """Сцены по предложениям: параллельные малые запросы чанками (~60с).
+
+    Главный анализ сжимает broll_queries (огромная задача в одном вызове:
+    субтитры + шортсы + упаковка + сцены), поэтому сцены делаем отдельным
+    проходом — фокус только на сценах; чанк небольшой и быстрый;
+    масштабируется на 20-минутные серии.
+
+    Чанки независимы и обрабатываются одновременно (3 потока по умолчанию).
+    Каждый поток стартует со своего ключа и при 429/таймауте переходит к
+    следующему; результаты собираются строго по индексу чанка.
+    """
+    _log = log_fn or log.info
+    if not segments or not keys:
+        return []
+
+    def emit(message: str) -> None:
+        _scene_log(_log, message)
+
+    t_all = time.monotonic()
+    chunks = _chunk_segments(segments)
+    total_chunks = len(chunks)
+    total_segments = len(segments)
+    done_chunks = 0
+    workers = max(1, min(_SCENES_MAX_WORKERS, total_chunks))
+    # Раскладываем стартовые ключи по потокам: поток i начинает с i*step по кругу.
+    key_step = max(1, len(keys) // workers)
+    model_chain = [model_name]
+    for _m in DEFAULT_MODEL_CHAIN:
+        if _m and _m not in model_chain:
+            model_chain.append(_m)
+
+    results: list[list[dict]] = [[] for _ in chunks]
+    chunk_times: list[float] = [0.0 for _ in chunks]
+    scenes: list[dict] = []
+    if stats is not None:
+        stats.update({
+            "chunks": total_chunks,
+            "chunks_done": 0,
+            "segments": total_segments,
+            "scenes": 0,
+            "workers": workers,
+        })
+
+    def _run_chunk(ci: int, chunk: list[dict]) -> tuple[int, list[dict], float]:
+        chunk_no = ci + 1
+        lines = "\n".join(
+            f"[{s.get('start', 0):.1f}-{s.get('end', 0):.1f}] {s.get('text', '')}"
+            for s in chunk
+        )
+        prompt = _BROLL_CHUNK_PROMPT.format(timings=lines)
+        start_key = (ci * key_step) % len(keys)
+        raw = ""
+        last_err = ""
+        used_key_no = start_key + 1
+        used_model = model_name
+        chunk_t0 = time.monotonic()
+        # 429 — быстрый отказ ключа: пробуем все ключи (как раньше).
+        # Таймаут/503/404 — сбой модели/сети: максимум 2 попытки, затем пусто.
+        max_calls = max(_SCENES_MAX_ATTEMPTS, len(keys))
+        attempts_made = 0
+        for attempt in range(1, max_calls + 1):
+            attempts_made = attempt
+            key_idx = (start_key + attempt - 1) % len(keys)
+            key = keys[key_idx]
+            used_key_no = key_idx + 1
+            model = model_name
+            if attempt > 1:
+                # 404/503/таймаут — виновата модель; 429 — ключ, модель не меняем.
+                low = last_err.lower()
+                if any(m in low for m in (
+                    "404", "not_found", "not found", "503", "unavailable",
+                    "timeout", "timed out", "таймаут",
+                )):
+                    model = model_chain[min(attempt - 1, len(model_chain) - 1)]
+            used_model = model
+            emit(
+                f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} отправлен | "
+                f"сегментов {len(chunk)} | символов {len(prompt)} | "
+                f"model={model} | ключ {used_key_no}/{len(keys)} | "
+                f"параллельно: {_threads_word(workers)}"
+            )
+            t_call = time.monotonic()
+            try:
+                with _GeminiCallWatch(
+                    emit, f"сцены: чанк {chunk_no}/{total_chunks}",
+                    model, used_key_no, len(keys),
+                ):
+                    raw = _gemini_text_with_timeout(
+                        key=key, model=model, prompt=prompt,
+                        timeout=_SCENES_CALL_TIMEOUT,
+                    )
+                call_elapsed = time.monotonic() - t_call
+                if raw:
+                    break
+                last_err = "пустой ответ"
+                emit(
+                    f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} — пустой ответ "
+                    f"за {call_elapsed:.1f}с (ключ {used_key_no}/{len(keys)})"
+                )
+            except Exception as e:  # noqa: BLE001
+                call_elapsed = time.monotonic() - t_call
+                last_err = str(e)[:200]
+                is_timeout = isinstance(e, TimeoutError) or "таймаут" in last_err.lower()
+                low = last_err.lower()
+                is_model_failure = is_timeout or any(m in low for m in (
+                    "404", "not_found", "not found", "503", "unavailable",
+                    "500", "internal", "timed out", "timeout", "connect", "reset",
+                ))
+                will_stop = (
+                    attempt >= max_calls
+                    or (is_model_failure and attempt >= _SCENES_MAX_ATTEMPTS)
+                )
+                suffix = " → чанк пуст" if will_stop else " → следующий ключ/модель"
+                emit(
+                    f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} ошибка "
+                    f"(ключ {used_key_no}/{len(keys)}, попытка {attempt}"
+                    f"{', таймаут' if is_timeout else ''}): {last_err}{suffix}"
+                )
+                if will_stop:
+                    break
+                if "429" in last_err or "resource_exhausted" in low:
+                    time.sleep(0.6)  # не долбим квоту вторым залпом
+        chunk_elapsed = time.monotonic() - chunk_t0
+        if not raw:
+            emit(
+                f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} — пусто "
+                f"за {chunk_elapsed:.1f}с ({_attempts_word(attempts_made)}, "
+                f"ключ {used_key_no}/{len(keys)}): {last_err}"
+            )
+            return ci, [], chunk_elapsed
+        try:
+            part = _parse_scenes_json(raw)
+        except Exception as e:  # noqa: BLE001
+            emit(
+                f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} — JSON не разобран "
+                f"за {chunk_elapsed:.1f}с: {str(e)[:120]}"
+            )
+            return ci, [], chunk_elapsed
+        emit(
+            f"[GEMINI] сцены: чанк {chunk_no}/{total_chunks} → {len(part)} сцен "
+            f"за {chunk_elapsed:.1f}с (параллельно, {_threads_word(workers)}) | "
+            f"ключ {used_key_no}/{len(keys)}, model={used_model}"
+        )
+        return ci, part, chunk_elapsed
+
+    try:
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="gemini-scenes"
+        ) as pool:
+            futures = {
+                pool.submit(_run_chunk, ci, chunk): ci
+                for ci, chunk in enumerate(chunks)
+            }
+            for future in as_completed(futures):
+                ci = futures[future]
+                try:
+                    _, part, chunk_elapsed = future.result()
+                except Exception as e:  # noqa: BLE001 — один чанк не валит проход
+                    emit(
+                        f"[GEMINI] сцены: чанк {ci + 1}/{total_chunks} — "
+                        f"сбой воркера: {str(e)[:160]}"
+                    )
+                    part, chunk_elapsed = [], 0.0
+                results[ci] = part
+                chunk_times[ci] = chunk_elapsed
+                done_chunks += 1
+                if stats is not None:
+                    stats["chunks_done"] = done_chunks
+    finally:
+        # Порядок сцен = порядок чанков, независимо от того, кто ответил первым.
+        scenes = [scene for part in results for scene in part]
+        elapsed = time.monotonic() - t_all
+        sequential_est = max(sum(chunk_times), elapsed)
+        if stats is not None:
+            stats["scenes"] = len(scenes)
+            stats["elapsed"] = elapsed
+            stats["sequential_estimate"] = sequential_est
+        emit(
+            f"[GEMINI] сцены: ИТОГ: {done_chunks}/{total_chunks} чанков "
+            f"за {elapsed:.0f}с (было бы ~{sequential_est:.0f}с последовательно) | "
+            f"сцен {len(scenes)}"
+        )
+    return scenes
 
 
 def analyze(
@@ -765,6 +1229,13 @@ def analyze(
         _log("[GEMINI] Нет сегментов для анализа")
         return _empty_analysis()
 
+    _log(
+        f"[PERF] параллелизм: сцены-чанки {_threads_word(_SCENES_MAX_WORKERS)} "
+        f"(по умолчанию) | пул сцен 1 (последовательно: общий used_urls/манифест) | "
+        f"Vision {_VISION_CLI_WORKERS} (CLI verify_scenes; в пайплайне батч, "
+        f"без изменений)"
+    )
+
     # Stage D — response cache
     pkg = _packaging_defaults(packaging_opts)
     cache_key = _analysis_cache_key(
@@ -777,7 +1248,9 @@ def analyze(
     )
     cached = _analysis_cache_get(cache_key, log_fn=_log)
     if cached is not None:
+        _log(f"[GEMINI] ИТОГ: cache HIT key={cache_key[:12]}… | вызовов Gemini не было")
         return cached
+    _log(f"[GEMINI] cache MISS key={cache_key[:12]}…")
 
     full_text = " ".join(s.get("text", "") for s in segments)
     # Полный промпт: GUI prompt_body или встроенный
@@ -839,8 +1312,15 @@ def analyze(
         try:
             from google import genai
             client = genai.Client(api_key=key)
-            _log(f"[GEMINI] Запрос model={model} key={km.key_index+1}/{km.n} try={attempt}")
-            response = client.models.generate_content(model=model, contents=prompt)
+            _log(
+                f"[GEMINI] главный анализ: отправлен | сегментов {len(segments)} | "
+                f"символов {len(prompt)} | model={model} | "
+                f"ключ {km.key_index+1}/{km.n} | попытка {attempt}"
+            )
+            with _GeminiCallWatch(
+                _log, "главный анализ", model, km.key_index + 1, km.n
+            ) as watch:
+                response = client.models.generate_content(model=model, contents=prompt)
             raw = response.text
             if not raw or not raw.strip():
                 raise RuntimeError("Gemini вернул пустой ответ")
@@ -852,24 +1332,55 @@ def analyze(
                     f"preview={preview!r}"
                 )
             km.mark_success()
-            _log(
-                f"[GEMINI] OK: shorts={len(analysis.get('clips_for_shorts', []))} "
-                f"hooks_w={len(analysis.get('hooks_wide') or [])} "
-                f"hooks_v={len(analysis.get('hooks_vertical') or [])} "
-                f"package_title={str(analysis.get('package_title') or '')[:50]!r}"
+            hooks_n = len(
+                analysis.get("hooks_vertical")
+                or analysis.get("hooks_wide")
+                or analysis.get("hooks")
+                or []
             )
+            _log(
+                f"[GEMINI] главный анализ: ОТВЕТ за {watch.elapsed:.1f}с | "
+                f"shorts={len(analysis.get('clips_for_shorts', []))} | hooks={hooks_n} | "
+                f"title={str(analysis.get('package_title') or '')[:60]!r}"
+            )
+            # [SCENES] отдельный проход: сцены по предложениям (чанки ~60с) —
+            # главный вызов сжимает broll_queries (8 сцен на 216с), поэтому
+            # сцены делаем малыми отдельными запросами (ок и для 20-мин серий).
+            scenes_stats: dict = {}
+            scenes_elapsed = 0.0
+            t_scenes = time.monotonic()
+            try:
+                scenes = analyze_broll_scenes(
+                    segments, keys, model, _log, stats=scenes_stats
+                )
+                if scenes:
+                    analysis["broll_queries"] = scenes
+                    _log(f"[GEMINI] сцены по предложениям: {len(scenes)} (отдельный проход)")
+            except Exception as _scenes_err:  # noqa: BLE001
+                _log(f"[GEMINI] проход сцен не удался: {str(_scenes_err)[:200]}")
+            finally:
+                scenes_elapsed = time.monotonic() - t_scenes
             _analysis_cache_put(cache_key, analysis, log_fn=_log)
+            _log(
+                f"[GEMINI] ИТОГ: главный анализ {watch.elapsed:.0f}с + сцены "
+                f"{scenes_stats.get('chunks', 0)} чанков {scenes_elapsed:.0f}с = "
+                f"{watch.elapsed + scenes_elapsed:.0f}с | "
+                f"сцен {len(analysis.get('broll_queries') or [])}"
+            )
             return analysis
 
         except Exception as e:
             err_str = str(e)
-            _log(f"[GEMINI] Ошибка API: {err_str[:400]}")
+            _log(
+                f"[GEMINI] ошибка (model={model}, ключ {km.key_index+1}/{km.n}, "
+                f"попытка {attempt}): {err_str[:400]}"
+            )
 
             # --- 429 / quota: сразу следующий ключ, без sleep ---
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                 consecutive_transient = 0
-                if not km.rotate_key("429 quota"):
-                    if km.next_model():
+                if not km.rotate_key("ошибка 429 (квота)"):
+                    if km.next_model("квота 429 на всех ключах"):
                         km.exhausted.clear()  # новая модель — новые квоты
                         continue
                     raise RuntimeError(
@@ -887,13 +1398,14 @@ def analyze(
                 if consecutive_transient <= max_transient_per_model:
                     wait = 2.0 * consecutive_transient  # 2с — НЕ 10/20/40/80/120
                     _log(
-                        f"[GEMINI] Перегрузка/сбой сети — короткий retry "
-                        f"{consecutive_transient}/{max_transient_per_model} через {wait:.0f}с"
+                        f"[GEMINI] retry {consecutive_transient}/{max_transient_per_model}: "
+                        f"перегрузка/сбой сети, ждём {wait:.0f}с "
+                        f"(model={model}, ключ {km.key_index+1}/{km.n})"
                     )
                     time.sleep(wait)
                     continue
                 consecutive_transient = 0
-                if km.next_model():
+                if km.next_model("503/сеть: retry не помог"):
                     km.exhausted.clear()
                     continue
                 raise RuntimeError(
@@ -904,7 +1416,7 @@ def analyze(
             # --- invalid key ---
             if "API_KEY_INVALID" in err_str or "API key not valid" in err_str:
                 consecutive_transient = 0
-                if not km.rotate_key("invalid key"):
+                if not km.rotate_key("невалидный ключ"):
                     raise RuntimeError(
                         "Недействительный Gemini API ключ (все ключи)."
                     ) from e
@@ -913,8 +1425,8 @@ def analyze(
             # --- model not found → следующая модель ---
             if "NOT_FOUND" in err_str and "model" in err_str.lower():
                 consecutive_transient = 0
-                _log(f"[GEMINI] Модель {model} недоступна")
-                if km.next_model():
+                _log(f"[GEMINI] Модель {model} недоступна (404)")
+                if km.next_model("модель недоступна (404)"):
                     continue
                 raise RuntimeError(
                     f"Модель Gemini недоступна: {model_name} и fallback-цепочка."
@@ -939,7 +1451,7 @@ def analyze(
                     continue
                 # после sanitize + retries — пробуем следующую модель
                 consecutive_transient = 0
-                if km.next_model():
+                if km.next_model("JSON не разобран после 2 retry"):
                     json_retries = 0
                     _log(f"[GEMINI] JSON всё ещё битый → модель {km.current_model}")
                     continue
@@ -948,6 +1460,10 @@ def analyze(
             _log(f"[GEMINI] Ошибка: {e}")
             raise
 
+    _log(
+        f"[GEMINI] ИТОГ: превышено число попыток ({max_attempts}) — "
+        f"анализ не получен (model={km.current_model}, ключ {km.key_index+1}/{km.n})"
+    )
     raise RuntimeError("Gemini: превышено число попыток (ключи/модели)")
 
 
@@ -1262,7 +1778,32 @@ def _normalize_analysis(data: dict, segments: list[dict], packaging_opts: dict |
         "strong_words": data.get("strong_words", []),
         "subtitles": subtitles,
         "clips_for_shorts": clips,
+        "broll_queries": _norm_broll(data.get("broll_queries")),
     }
+
+
+def _norm_broll(raw) -> list:
+    """Нормализация broll_queries: точные английские запросы под сцены."""
+    out = []
+    for it in raw or []:
+        if not isinstance(it, dict):
+            continue
+        qs = [str(x).strip() for x in (it.get("queries") or []) if str(x).strip()]
+        if not qs:
+            continue
+        out.append({
+            "text": str(it.get("text") or "").strip(),
+            "visual": str(it.get("visual") or "").strip(),
+            "queries": qs[:4],
+            "emotions": [str(x).strip() for x in (it.get("emotions") or []) if str(x).strip()][:6],
+            "must_not": [str(x).strip() for x in (it.get("must_not") or []) if str(x).strip()][:6],
+            "shot": str(it.get("shot") or "").strip(),
+            "mood": str(it.get("mood") or "").strip(),
+            "hard": [str(x).strip() for x in (it.get("hard") or []) if str(x).strip()][:6],
+            "weights": ({str(k): float(v) for k, v in it.get("weights").items()
+                         if isinstance(v, (int, float))} if isinstance(it.get("weights"), dict) else {}),
+        })
+    return out
 
 
 def _empty_analysis() -> dict:

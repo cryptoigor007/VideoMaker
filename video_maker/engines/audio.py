@@ -9,6 +9,7 @@ import re
 import subprocess
 from collections import OrderedDict
 
+from ..paths import resolve_existing_path
 from .media_process import media_timeout_for_duration, run_ffmpeg_atomic
 
 log = logging.getLogger(__name__)
@@ -46,13 +47,15 @@ def probe_duration(path: str) -> float:
     (вызывающий код обычно пропускает клипы с dur <= 0.05).
     """
     # session cache (path|mtime|size → duration)
-    key = _probe_key(path) if path else ""
+    resolved_path = resolve_existing_path(path, kind="file")
+    if not resolved_path:
+        log.warning("[АУДИО] probe_duration: путь не существует: %s", path)
+        return 0.0
+    path = resolved_path
+    key = _probe_key(path)
     if key and key in _PROBE_CACHE:
         _PROBE_CACHE.move_to_end(key)
         return _PROBE_CACHE[key]
-    if not path or not os.path.exists(path):
-        log.warning("[АУДИО] probe_duration: путь не существует: %s", path)
-        return 0.0
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
@@ -151,6 +154,7 @@ def voice_enhance_filter(audio_path: str, output_path: str, log_fn=None) -> str:
     """Улучшение голоса: highpass, lowpass, компрессия, лимитер."""
     _log = log_fn or log.info
     _log("[АУДИО] Улучшение голоса (voice_enhance)...")
+    audio_path = resolve_existing_path(audio_path, kind="file") or audio_path
 
     # Фильтр: highpass 80Hz, lowpass 14kHz, компрессор, де-эссер, лимитер
     af = (
@@ -213,7 +217,10 @@ def measure_loudnorm_params(
     точность two-pass без дополнительных проходов по 4K-видео.
     """
     _log = log_fn or log.info
-    if not media_path or not os.path.isfile(media_path):
+    if not media_path:
+        return None
+    media_path = resolve_existing_path(media_path, kind="file") or media_path
+    if not os.path.isfile(media_path):
         return None
     cmd = [
         "ffmpeg", "-y", "-i", media_path, "-vn",
@@ -311,8 +318,10 @@ def mix_bgm(
     _log("[АУДИО] Смешивание с BGM...")
 
     bgm_source = (bgm_folder or "").strip()
-    if not bgm_source or not (os.path.isdir(bgm_source) or os.path.isfile(bgm_source)):
+    resolved_bgm = resolve_existing_path(bgm_source, kind="any")
+    if not resolved_bgm:
         raise RuntimeError(f"BGM requested but file/folder is unavailable: {bgm_source!r}")
+    bgm_source = resolved_bgm
 
     asset_key = seed_key or os.path.abspath(video_path)
     bgm_file = pick_bgm_track(bgm_source, seed_key=asset_key)
