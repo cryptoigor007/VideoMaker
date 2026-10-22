@@ -5,8 +5,11 @@ When cinematic_enabled=False (default), behavior is identical to baseline.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+from collections import Counter
+from pathlib import Path
 
 from .stages import PipelineContext, Stage
 
@@ -15,6 +18,106 @@ log = logging.getLogger(__name__)
 # Единый источник per_scene для smart_broll: GUI читает это же значение,
 # чтобы «нужно = сцены × per_scene» совпадало с фактическим подбором.
 SMART_BROLL_PER_SCENE = 1
+
+
+def _manifest_scene_flags(manifest: dict | None) -> dict[int, dict]:
+    """1-based scene → P0-2 флаги из манифеста smart_broll."""
+    out: dict[int, dict] = {}
+    for sc in ((manifest or {}).get("scenes") or []):
+        try:
+            si = int(sc.get("idx", -1)) + 1
+        except (TypeError, ValueError):
+            continue
+        if si <= 0:
+            continue
+        out[si] = {
+            "fallback": str(sc.get("fallback") or "none"),
+            "treated": bool(sc.get("treated")),
+            "graphic_fallback": bool(sc.get("graphic_fallback")),
+            "selected_score": sc.get("selected_score"),
+        }
+    return out
+
+
+def _log_fallback_summary(flags: dict[int, dict], ctx: PipelineContext,
+                          prefix: str = "baseline") -> None:
+    if not flags:
+        return
+    counts = Counter(str(v.get("fallback") or "none") for v in flags.values())
+    treated = sum(1 for v in flags.values() if v.get("treated"))
+    graphic = sum(1 for v in flags.values() if v.get("graphic_fallback"))
+    ctx.log(f"[SB] {prefix}: fallback " + ", ".join(
+        f"{k}={v}" for k, v in sorted(counts.items())))
+    if treated:
+        ctx.log(f"[SB] {prefix}: treated (лёгкая обработка) — {treated} сцен")
+    if graphic:
+        ctx.log(f"[SB] {prefix}: graphic_fallback — {graphic} сцен без клипа; "
+                f"нейтральный фон рендером пока не реализован (только пометка)")
+
+
+def _run_fix_scenes_filtered(script: str, manifest_path: str, log_fn) -> None:
+    """fix_scenes только для сцен НЕ в graphic_fallback.
+
+    fix_scenes иначе добивает пустые graphic-сцены клипами 2-4/10 и обходит
+    политику P0-2. Оригинальный манифест обновляем только после успеха.
+    """
+    import subprocess
+    import sys
+
+    mp = Path(manifest_path)
+    try:
+        man = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception as e:
+        log_fn(f"[MASTER] fix_scenes: манифест не прочитан: {str(e)[:80]}")
+        return
+    scenes = man.get("scenes") or []
+    keep = [s for s in scenes if not s.get("graphic_fallback")]
+    if len(keep) == len(scenes):
+        subprocess.run([sys.executable, script, str(mp)], timeout=5400)
+        return
+    if not keep:
+        log_fn("[MASTER] fix_scenes пропущен: все сцены graphic_fallback")
+        return
+    tmp = mp.with_name("smart_broll_manifest.fix.json")
+    try:
+        tmp_man = dict(man)
+        tmp_man["scenes"] = keep
+        # [VM-FIX m5] атомарная запись temp-манифеста: не оставляем полуфайл,
+        # если процесс упадёт между write_text и запуском fix_scenes.
+        _tmp_write = tmp.with_name(f"{tmp.name}.{os.getpid()}.tmp")
+        try:
+            _tmp_write.write_text(json.dumps(tmp_man, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
+            os.replace(_tmp_write, tmp)
+        finally:
+            try:
+                if _tmp_write.exists():
+                    _tmp_write.unlink()
+            except Exception:
+                pass
+        subprocess.run([sys.executable, script, str(tmp)], timeout=5400)
+        fixed = json.loads(tmp.read_text(encoding="utf-8"))
+        by_idx = {
+            int(s.get("idx", -1)): s
+            for s in (fixed.get("scenes") or [])
+            if isinstance(s, dict)
+        }
+        for sc in scenes:
+            if sc.get("graphic_fallback"):
+                continue
+            upd = by_idx.get(int(sc.get("idx", -1)))
+            if isinstance(upd, dict):
+                sc.update(upd)
+        mp.write_text(json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+        log_fn(f"[MASTER] fix_scenes: graphic_fallback оставлены без клипа: "
+               f"{len(scenes) - len(keep)}")
+    except Exception as e:
+        log_fn(f"[MASTER] fix_scenes с фильтром пропущен: {str(e)[:100]}")
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _ce_for_ctx(ctx: PipelineContext, video_files: list[str], output_format: str = "16:9"):
@@ -118,6 +221,8 @@ class MasterBuilder(Stage):
         _used_smart = False
         # [ORD] scene_idx (1-based) → лучшие файлы из манифеста (порядок = приоритет)
         _scene_preferred: dict[int, list[str]] = {}
+        # [P0-2] scene_idx (1-based) → fallback/treated/graphic-флаги
+        _scene_flags: dict[int, dict] = {}
         if _sb_on and getattr(ctx, "audio_path", ""):
             try:
                 from ..semantic.smart_broll import run_smart_broll
@@ -127,6 +232,8 @@ class MasterBuilder(Stage):
                                        library_first=True, log=ctx.log)
                 _dir = str(_man.get("out_dir") or "")
                 if _dir:
+                    _scene_flags = _manifest_scene_flags(_man)
+                    _log_fallback_summary(_scene_flags, ctx, prefix="baseline")
                     try:
                         for _sc in (_man.get("scenes") or []):
                             _si = int(_sc.get("idx", -1)) + 1
@@ -138,16 +245,23 @@ class MasterBuilder(Stage):
                                     f"{len(_scene_preferred)} сцен")
                     except Exception as _sp_e:
                         ctx.log(f"[ORD] манифест-приоритет пропущен: {str(_sp_e)[:80]}")
-                    # [VM-SB] добор слабых сцен: докачка со стока до порога (как в тестах)
+                    # [VM-SB] добор слабых сцен: докачка со стока до порога (как в тестах).
+                    # [P0-2] graphic_fallback-сцены в fix_scenes не отдаём: иначе
+                    # пустые сцены добьются клипами 2-4/10 в обход политики.
                     try:
-                        import subprocess as _sp
-                        import sys as _sys
                         _fx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
                             os.path.abspath(__file__)))), "tools", "fix_scenes.py")
                         _mp = os.path.join(_dir, "smart_broll_manifest.json")
                         if os.path.exists(_fx) and os.path.exists(_mp):
                             ctx.log("[MASTER] добор слабых сцен (докачка до порога)…")
-                            _sp.run([_sys.executable, _fx, _mp], timeout=5400)
+                            _run_fix_scenes_filtered(_fx, _mp, ctx.log)
+                            try:
+                                _fixed_man = json.loads(Path(_mp).read_text(encoding="utf-8"))
+                                _scene_flags = _manifest_scene_flags(_fixed_man)
+                                _log_fallback_summary(_scene_flags, ctx,
+                                                      prefix="baseline после fix")
+                            except Exception as _rfe:
+                                ctx.log(f"[MASTER] флаги после fix не перечитаны: {str(_rfe)[:80]}")
                     except Exception as _fe:
                         ctx.log(f"[MASTER] добор пропущен: {str(_fe)[:80]}")
                     # [ORD] Сценный пул: папки 01_, 02_… строго по порядку.
@@ -200,6 +314,13 @@ class MasterBuilder(Stage):
         ctx.log(f"[MASTER] B-roll H: {len(video_files)} медиа")
 
         ce, plan = _ce_for_ctx(ctx, video_files, output_format="16:9")
+        if ce is not None:
+            # Planner получает флаги через тот же объект настроек (без нового
+            # параметра fit_video_to_duration); пустой словарь сбрасывает stale.
+            try:
+                setattr(ce, "scene_flags", dict(_scene_flags))
+            except Exception:
+                pass
         if _used_smart:
             # пул уже сценно-упорядочен (папки 01_, 02_…) — не перетасовывать матчером
             try:

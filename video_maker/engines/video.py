@@ -1,16 +1,22 @@
 # VideoMaker FIX | 2026.09.09-r43-tail | 2026-09-09
 # CHANGED: cut_segment force_reencode + accurate -ss after -i for short tail
+# P0-4 | 2026-10-22: memory-gate перед 4K-чанками, manifest resume, -threads 2
 # PREV: 2026.09.03-r25
 # REPLACE: video_maker/engines/video.py
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import subprocess
+import time
 import uuid
+from datetime import datetime, timezone
 
 from ..paths import resolve_existing_path
+from . import memory_guard
 from .ffmpeg_resilient import (
     atomic_replace,
     ensure_storage,
@@ -139,6 +145,90 @@ def _probe_av_durations(video_path: str) -> tuple[float, float]:
         except Exception:
             vdur = 0.0
     return vdur, adur
+
+
+# --- P0-4: манифест чанков (resume после падения/перезапуска) ---------------
+
+_CHUNK_MANIFEST_VERSION = 1
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _chunk_manifest_path(output_path: str) -> str:
+    return output_path + ".chunks_manifest.json"
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Атомарная запись JSON: tmp + fsync + os.replace (рядом с output)."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _read_json_file(path: str) -> dict | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _remove_quiet(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _sha256_payload(payload: dict) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _probe_video_duration(path: str) -> float:
+    try:
+        vdur, _adur = _probe_av_durations(path)
+        return float(vdur)
+    except Exception:
+        return 0.0
+
+
+def _chunk_record_ready(record: dict) -> bool:
+    """Готов ли чанк из манифеста: статус + файл + duration (±5%/1.5с)."""
+    if not isinstance(record, dict) or record.get("status") != "done":
+        return False
+    path = str(record.get("file") or "")
+    if not path or not os.path.isfile(path) or os.path.getsize(path) < 1024:
+        return False
+    if not verify_mp4(path):
+        return False
+    expected = 0.0
+    try:
+        expected = float(record.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        expected = 0.0
+    if expected > 0.5:
+        actual = _probe_video_duration(path)
+        if actual <= 0.0:
+            return False
+        if abs(actual - expected) > max(1.5, expected * 0.05):
+            return False
+    return True
 
 
 # Папка использованных B-roll (исключается из ротации)
@@ -657,6 +747,13 @@ def fit_video_to_duration(
                     _ce_plan.scenes, _ce,
                     target_duration=float(target_duration),
                 )
+                for _w in list(getattr(_tl, "warnings", []) or [])[:8]:
+                    _log(f"[CE] timeline: {_w}")
+                try:
+                    _ce_plan.warnings = list(_ce_plan.warnings) + list(
+                        getattr(_tl, "warnings", []) or [])
+                except Exception:
+                    pass
                 _stage = os.path.join(
                     os.path.dirname(output_path) or ".",
                     f"ce_sfx_{uuid.uuid4().hex[:8]}",
@@ -716,17 +813,26 @@ def fit_video_to_duration(
     # [VM-FIX] сериализованный граф медленнее: таймаут 14× реального времени
     _enc_timeout = max(3600.0, float(target_duration) * 14.0)
     _chunk_files: list[str] = []
+    _partial_chunks = False
+    _pause_keep = False
+    _render_ok = False
+    _manifest_path = _chunk_manifest_path(output_path)
 
     def _build_cmd(fc_local: str, paths_local: list[str], out_file: str,
-                   with_audio: bool) -> list[str]:
-        """Команда кодирования одного графа (чанка): пути → filter → файл."""
+                   with_audio: bool, threads: int | None = None,
+                   serialize_graph: bool = False) -> list[str]:
+        """Команда кодирования одного графа (чанка): пути → filter → файл.
+
+        threads/serialize_graph — P0-4: для чанков фиксируем -threads 2 и
+        последовательный filter_complex (пик памяти на 8 ГБ Mac).
+        """
         _ins: list[str] = []
         for _vf in paths_local:
             if os.path.splitext(_vf)[1].lower() in _img_ext3:
                 _ins.extend(["-loop", "1", "-framerate", "30", "-t", "30", "-i", _vf])
             else:
                 _ins.extend(["-i", _vf])
-        if len(paths_local) >= 8:
+        if serialize_graph or len(paths_local) >= 8:
             _c1: list[str] = []
             for _x in _ins:
                 if _x == "-i":
@@ -739,7 +845,7 @@ def fit_video_to_duration(
             # ffmpeg падал с «Invalid input file index: N» при -map N:a
             _ins += ["-i", audio_file]
         _c2 = [ffmpeg, "-y"]
-        if len(paths_local) >= 8:
+        if serialize_graph or len(paths_local) >= 8:
             # [VM-FIX] сериализация графа — меньше пик памяти (8ГБ Mac)
             _c2 += ["-filter_complex_threads", "1"]
         _c2 += [
@@ -747,7 +853,12 @@ def fit_video_to_duration(
             "-filter_complex", fc_local,
             "-map", "[v]",
             "-t", str(target_duration),
-            "-c:v", "h264_videotoolbox", "-b:v", bitrate, "-allow_sw", "1",
+            "-c:v", "h264_videotoolbox",
+        ]
+        if threads is not None:
+            _c2 += ["-threads", str(int(threads))]
+        _c2 += [
+            "-b:v", bitrate, "-allow_sw", "1",
             "-pix_fmt", "yuv420p",
             "-r", "30",
         ]
@@ -777,7 +888,12 @@ def fit_video_to_duration(
             if "-b:v" in cpu_cmd:
                 k = cpu_cmd.index("-b:v")
                 del cpu_cmd[k:k + 2]
-            cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18", "-threads", "4"]
+            # P0-4: чанк уже несёт -threads 2 — не повышаем до 4 при fallback.
+            if "-threads" in cpu_cmd:
+                cpu_cmd[cpu_cmd.index("-threads") + 1] = "2"
+                cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18"]
+            else:
+                cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18", "-threads", "4"]
         except ValueError:
             pass
         res = run_ffmpeg(cpu_cmd, log_fn=_log, media_duration=target_duration,
@@ -793,7 +909,12 @@ def fit_video_to_duration(
         кадры со всех входов (swap → SIGKILL на 8ГБ Mac). Режем план на чанки
         по ЖЁСТКИМ склейкам: память каждого чанка ограничена; финал — concat
         демультиплексором (stream copy) + озвучка. False → обычный путь.
+
+        P0-4: memory-gate перед каждым чанком + манифест для resume. При
+        MemoryPressureError/FFmpegBusyError не откатываемся в монолитный энкод
+        (это как раз путь к OOM) — пробрасываем ошибку наверх.
         """
+        nonlocal _partial_chunks, _pause_keep
         try:
             from video_maker.cinematic.timeline import apply_rhythm as _apply_rhythm2
             from video_maker.cinematic.render_graph import assemble_render_graph as _assemble
@@ -805,6 +926,13 @@ def fit_video_to_duration(
                                   target_duration=_ce_plan.target_duration or _ce_plan.total_duration)
             _scenes2 = list(_tl2.scenes)
             _trans2 = list(_tl2.transitions)
+            _tl_warnings = list(getattr(_tl2, "warnings", []) or [])
+            for _w in _tl_warnings[:8]:
+                _log(f"[CE] timeline: {_w}")
+            try:
+                _ce_plan.warnings = list(_ce_plan.warnings) + _tl_warnings
+            except Exception:
+                pass
             # [ORD] 8ГБ Mac: даже 13 4K-планов при занятой памяти дают SIGKILL.
             # Режем на чанки начиная с 8 планов (раньше — только 30+).
             if len(_scenes2) < 8:
@@ -823,9 +951,9 @@ def fit_video_to_duration(
                 _groups.append(_cur)
             if len(_groups) <= 1:
                 return False
-            _log(f"[ВИДЕО 4K] Чанковый рендер: {len(_groups)} чанков "
-                 f"(память 4K-графа ограничена)")
-            _enc_used: set[str] = set()
+
+            # --- P0-4: план чанков + манифест (resume) ---
+            _specs: list[dict] = []
             for _gi, _g in enumerate(_groups):
                 _g_scenes = [_scenes2[_j] for _j in _g]
                 _g_tr = [_trans2[_j] for _j in _g[:-1]]
@@ -835,17 +963,158 @@ def fit_video_to_duration(
                 if "[vout]" in _g_fc:
                     _g_fc = _g_fc.replace("[vout]", "[v]")
                 _g_paths = [str(getattr(_sc, "source_path", "") or "") for _sc in _g_scenes]
-                _g_out = output_path + f".chunk{_gi:02d}.mp4"
-                _chunk_files.append(_g_out)
-                _log(f"[ВИДЕО 4K] чанк {_gi + 1}/{len(_groups)}: {len(_g_paths)} планов, "
-                     f"{_g_graph.total_duration:.1f}с → {os.path.basename(_g_out)}")
-                ensure_storage(_g_paths, _g_out, log_fn=_log)
-                _enc = _run_encode(_build_cmd(_g_fc, _g_paths, _g_out, with_audio=False),
-                                   label=f" (чанк {_gi + 1})")
+                _specs.append({
+                    "index": _gi,
+                    "graph": _g_graph,
+                    "fc": _g_fc,
+                    "fc_sha": hashlib.sha256(_g_fc.encode("utf-8")).hexdigest(),
+                    "paths": _g_paths,
+                    "file": os.path.abspath(output_path + f".chunk{_gi:02d}.mp4"),
+                    "duration": float(min(_g_graph.total_duration, float(target_duration))),
+                    "scenes": _g_scenes,
+                })
+
+            _fp_payload = {
+                "version": _CHUNK_MANIFEST_VERSION,
+                "width": int(width),
+                "height": int(height),
+                "fps": 30,
+                "target_duration": round(float(target_duration), 3),
+                "bitrate": str(bitrate),
+                "chunks": [
+                    {
+                        "index": _sp["index"],
+                        "duration": round(float(_sp["duration"]), 3),
+                        "graph_sha": _sp["fc_sha"],
+                        "scenes": [
+                            {
+                                "path": os.path.abspath(str(getattr(_sc, "source_path", "") or "")),
+                                "in": round(float(getattr(_sc, "source_in", 0.0) or 0.0), 3),
+                                "out": round(float(getattr(_sc, "source_out", 0.0) or 0.0), 3),
+                            }
+                            for _sc in _sp["scenes"]
+                        ],
+                    }
+                    for _sp in _specs
+                ],
+            }
+            _fingerprint = _sha256_payload(_fp_payload)
+            _manifest: dict = {
+                "version": _CHUNK_MANIFEST_VERSION,
+                "created_at": _now_iso(),
+                "updated_at": _now_iso(),
+                "output": os.path.abspath(output_path),
+                "fingerprint": _fingerprint,
+                "width": int(width),
+                "height": int(height),
+                "fps": 30,
+                "target_duration": float(target_duration),
+                "chunks": [
+                    {
+                        "index": _sp["index"],
+                        "file": _sp["file"],
+                        "duration": float(_sp["duration"]),
+                        "encoder": "",
+                        "status": "pending",
+                        "updated_at": _now_iso(),
+                    }
+                    for _sp in _specs
+                ],
+            }
+
+            def _save_manifest(note: str = "") -> None:
+                _manifest["updated_at"] = _now_iso()
+                if note:
+                    _manifest["last_error"] = note
+                try:
+                    _atomic_write_json(_manifest_path, _manifest)
+                except Exception as _mf_e:
+                    _log(f"[ВИДЕО] манифест чанков не записан: {_mf_e}")
+
+            _old = _read_json_file(_manifest_path)
+            _reused = 0
+            if _old and _old.get("fingerprint") != _fingerprint:
+                _log("[ВИДЕО] манифест чанков от другого плана — начинаем заново")
+                _old = None
+            if _old:
+                _old_chunks = _old.get("chunks")
+                _old_by_idx = {
+                    int(_r.get("index")): _r
+                    for _r in (_old_chunks if isinstance(_old_chunks, list) else [])
+                    if isinstance(_r, dict) and str(_r.get("index", "")).isdigit()
+                }
+            else:
+                _old_by_idx = {}
+
+            _rec_by_idx = {int(_r["index"]): _r for _r in _manifest["chunks"]}
+            for _sp in _specs:
+                _rec = _rec_by_idx[_sp["index"]]
+                _old_rec = _old_by_idx.get(_sp["index"])
+                if not _old_rec:
+                    continue
+                if str(_old_rec.get("status") or "") != "done":
+                    continue
+                # Путь из манифеста должен совпадать с ожидаемым файлом чанка.
+                try:
+                    _same_path = os.path.abspath(str(_old_rec.get("file") or "")) == _sp["file"]
+                except Exception:
+                    _same_path = False
+                if _same_path and _chunk_record_ready(_old_rec):
+                    _rec["status"] = "done"
+                    _rec["encoder"] = str(_old_rec.get("encoder") or "vt")
+                    _rec["actual_duration"] = _old_rec.get("actual_duration", 0.0)
+                    _rec["updated_at"] = str(_old_rec.get("updated_at") or _now_iso())
+                    _reused += 1
+                else:
+                    _log(f"[ВИДЕО] чанк {_sp['index'] + 1}: файл из манифеста отсутствует/битый — перерендер")
+            _save_manifest()
+
+            _log(f"[ВИДЕО 4K] Чанковый рендер: {len(_groups)} чанков "
+                 f"(память 4K-графа ограничена; манифест: готово {_reused})")
+            _enc_used: set[str] = set()
+            for _sp in _specs:
+                _gi = int(_sp["index"])
+                _rec = _rec_by_idx[_gi]
+                _chunk_files.append(_sp["file"])
+                if _rec.get("status") == "done":
+                    _enc_used.add(str(_rec.get("encoder") or "vt"))
+                    _partial_chunks = True
+                    _log(f"[ВИДЕО] чанк {_gi + 1}: из манифеста (готов)")
+                    continue
+
+                _log(f"[ВИДЕО 4K] чанк {_gi + 1}/{len(_groups)}: "
+                     f"{len(_sp['paths'])} планов, {_sp['duration']:.1f}с → "
+                     f"{os.path.basename(_sp['file'])}")
+                ensure_storage(_sp["paths"], _sp["file"], log_fn=_log)
+                # P0-4: не кодируем параллельно с другим ffmpeg этой сессии.
+                memory_guard.wait_for_ffmpeg_idle(_log, label=f"чанк {_gi + 1}")
+                # P0-4: RAM/swap gate — пауза вместо swap/SIGKILL.
+                memory_guard.wait_for_memory(_log, label=f"перед чанком {_gi + 1}")
+
+                _t0 = time.monotonic()
+                _enc = _run_encode(
+                    _build_cmd(_sp["fc"], _sp["paths"], _sp["file"],
+                               with_audio=False, threads=2, serialize_graph=True),
+                    label=f" (чанк {_gi + 1})",
+                )
+                _elapsed = time.monotonic() - _t0
                 if not _enc:
+                    _rec.update(status="failed", updated_at=_now_iso(),
+                                error="encode failed (VT и CPU)")
+                    _save_manifest(note=f"чанк {_gi + 1}: encode failed")
                     return False
+                _rec.update(status="done", encoder=_enc, updated_at=_now_iso(),
+                            actual_duration=round(_probe_video_duration(_sp["file"]), 3))
                 _enc_used.add(_enc)
+                _partial_chunks = True
+                _save_manifest()
+                _log(f"[ВИДЕО] чанк {_gi + 1}: готов за {_elapsed:.1f}с ({_enc})")
+
             # склейка чанков (stream copy) + озвучка
+            memory_guard.wait_for_ffmpeg_idle(_log, label="перед сборкой")
+            if len(_enc_used) > 1:
+                # перекодирование при смешанных энкодерах — тяжёлый шаг
+                memory_guard.wait_for_memory(_log, label="перед сборкой")
             _lst = output_path + f".chunks_{uuid.uuid4().hex[:6]}.txt"
             with open(_lst, "w", encoding="utf-8") as _f:
                 for _cf in _chunk_files:
@@ -865,7 +1134,7 @@ def fit_video_to_duration(
                 # VT + CPU вперемешку: SPS разные — перекодируем при склейке
                 # (один вход, без графа — память в норме)
                 _log("[ВИДЕО 4K] чанки разными энкодерами — склейка с перекодированием")
-                _ccmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "4"]
+                _ccmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2"]
             _ccmd += ["-t", str(target_duration), tmp_out]
             res = run_ffmpeg(_ccmd, log_fn=_log, media_duration=target_duration)
             try:
@@ -875,8 +1144,25 @@ def fit_video_to_duration(
             if res.returncode != 0 or not verify_mp4(tmp_out, log_fn=_log):
                 err = ((res.stderr or res.stdout or "")[-600:]) or "concat failed"
                 _log(f"[ВИДЕО] Ошибка сборки чанков: {err}")
+                _manifest["last_error"] = f"concat: {err[-300:]}"
+                _save_manifest()
                 return False
+            _manifest["status"] = "concat_done"
+            _save_manifest()
             return True
+        except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
+            # P0-4: чанки и манифест сохраняем — следующий запуск продолжит
+            # с первого неготового чанка. Монолитный энкод не запускаем.
+            _pause_keep = True
+            try:
+                if "_manifest" in locals():
+                    _manifest["last_error"] = "memory gate: рендер приостановлен"
+                    _save_manifest()
+                _log("[ВИДЕО 4K] Чанковый рендер остановлен memory-gate; "
+                     "готовые чанки сохранены для resume")
+            except Exception:
+                pass
+            raise
         except Exception as _ch_e:
             _log(f"[ВИДЕО 4K] Чанковый рендер не удался ({_ch_e}) — обычный путь")
             return False
@@ -890,6 +1176,14 @@ def fit_video_to_duration(
         if _ce_4k and _ce_plan is not None and n >= 8:
             _done = _render_chunked()
         if not _done:
+            # P0-4/M6: монолитный 4K-энкод — memory-gate только предупреждает.
+            # MemoryPressureError здесь не валит рендер: чанкового resume нет,
+            # поэтому пробуем выполнить команду (chunked-путь — как есть).
+            try:
+                memory_guard.wait_for_ffmpeg_idle(_log, label="монолитный рендер")
+                memory_guard.wait_for_memory(_log, label="перед рендером")
+            except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError) as _mg_e:
+                _log(f"[ВИДЕО 4K] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
             if not _run_encode(cmd):
                 raise RuntimeError("Быстрая склейка failed (VT и CPU)" )
         # [ГЕЙТ] Жёсткая проверка: видео не короче озвучки (иначе стоп-кадр).
@@ -906,6 +1200,7 @@ def fit_video_to_duration(
         except Exception as _ge:
             _log(f"[ГЕЙТ] проверка длительностей пропущена: {_ge}")
         atomic_replace(tmp_out, output_path)
+        _render_ok = True
         if _ce_debug and os.path.isfile(output_path):
             try:
                 from video_maker.cinematic.quality_report import probe_media, write_report
@@ -925,12 +1220,12 @@ def fit_video_to_duration(
                 os.remove(tmp_out)
             except OSError:
                 pass
-        for _cf in _chunk_files:
-            if os.path.exists(_cf):
-                try:
-                    os.remove(_cf)
-                except OSError:
-                    pass
+        # P0-4: при падении/паузе готовые чанки и манифест НЕ удаляем —
+        # следующий запуск продолжит с первого неготового (resume).
+        if _render_ok or (not _partial_chunks and not _pause_keep):
+            for _cf in _chunk_files:
+                _remove_quiet(_cf)
+            _remove_quiet(_manifest_path)
 
     if move_used and broll_root:
         move_to_used(broll_root, selected, log_fn=_log)

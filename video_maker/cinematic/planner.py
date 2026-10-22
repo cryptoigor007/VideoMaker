@@ -24,6 +24,60 @@ def _hash_obj(obj: Any) -> str:
     return hashlib.sha256(str(obj).encode()).hexdigest()[:16]
 
 
+def _scene_flag_index(path: str, fallback: int,
+                      scene_preferred: dict | None = None) -> int:
+    """1-based номер сцены для флагов P0-2: папка/манифест важнее индекса плана."""
+    try:
+        from video_maker.semantic.matcher import scene_index_from_path
+        si = scene_index_from_path(path)
+        if si and int(si) > 0:
+            return int(si)
+    except Exception:
+        pass
+    # Не сценный путь (локальная копия/пул без NN_): ищем в приоритетах манифеста.
+    try:
+        target = Path(str(path)).resolve()
+        for si, files in (scene_preferred or {}).items():
+            for q in (files or []):
+                try:
+                    if Path(str(q)).resolve() == target:
+                        return int(si)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    try:
+        return int(fallback)
+    except Exception:
+        return 0
+
+
+def _apply_fallback_flags(scene: Scene, flags: dict) -> None:
+    """P0-2: пометить сцену плана treated/graphic_fallback для рендера.
+
+    Обработку здесь не включаем (её может не быть в рендере): только
+    reason/warnings, чтобы флаг доехал до манифеста/отчёта и был виден в логе.
+    """
+    if not isinstance(flags, dict):
+        return
+    fb = str(flags.get("fallback") or "none")
+    if flags.get("treated"):
+        scene.warnings.append("treated")
+        scene.reason = (scene.reason + f"; treated=1; fallback={fb}")[:300]
+    elif fb not in ("", "none"):
+        scene.reason = (scene.reason + f"; fallback={fb}")[:300]
+    if flags.get("graphic_fallback"):
+        scene.warnings.append("graphic_fallback")
+        # Нейтрального фона в рендере пока нет — честно помечаем, что слот
+        # мог быть закрыт клипом другой сцены (master логирует это отдельно).
+        scene.warnings.append("graphic_fallback_no_neutral_bg")
+        scene.reason = (scene.reason + "; graphic_fallback=1")[:300]
+        try:
+            scene.confidence = min(float(scene.confidence), 0.3)
+        except Exception:
+            scene.confidence = 0.3
+
+
 
 def _tokenize(text: str) -> set[str]:
     import re
@@ -701,6 +755,8 @@ class PlanBuilder:
         n = max(1, len(paths))
         weights = weights or [1.0 / n] * n
         segs = list(transcript_segments or [])
+        # [P0-2] Флаги сцен из smart_broll (master кладёт их в settings).
+        _scene_flags = getattr(self.settings, "scene_flags", None) or {}
 
         # [ORD] Жёсткая привязка scene→slots для сценного пула.
         _bound: tuple | None = None
@@ -960,26 +1016,35 @@ class PlanBuilder:
                 role = "intro"
             elif i == n - 1:
                 role = "outro"
-            scenes.append(
-                Scene(
-                    scene_id=_stable_id("broll", str(i), path),
-                    asset_id=f"clip_{i}",
-                    source_path=path,
-                    source_in=_si,
-                    source_out=_si + slice_dur,
-                    timeline_start=t_cursor,
-                    timeline_end=t_cursor + slice_dur,
-                    role=role,  # type: ignore
-                    transcript_ref=text or None,
-                    output_format=output_format,  # type: ignore
-                    crop=self._safe_crop({"path": path}, i),
-                    motion=self._default_motion(slice_dur, index=i, role=role),
-                    color_profile=self.settings.profile,
-                    reason=("scene-bound pool order" if _bound is not None
-                            else "selected B-roll order"),
-                    confidence=0.5,
-                )
+            _scene_obj = Scene(
+                scene_id=_stable_id("broll", str(i), path),
+                asset_id=f"clip_{i}",
+                source_path=path,
+                source_in=_si,
+                source_out=_si + slice_dur,
+                timeline_start=t_cursor,
+                timeline_end=t_cursor + slice_dur,
+                role=role,  # type: ignore
+                transcript_ref=text or None,
+                output_format=output_format,  # type: ignore
+                crop=self._safe_crop({"path": path}, i),
+                motion=self._default_motion(slice_dur, index=i, role=role),
+                color_profile=self.settings.profile,
+                reason=("scene-bound pool order" if _bound is not None
+                        else "selected B-roll order"),
+                confidence=0.5,
             )
+            if _scene_flags:
+                try:
+                    _si_flag = (int(_bound_scene[i]) + 1 if _bound is not None
+                                and i < len(_bound_scene) else i + 1)
+                except Exception:
+                    _si_flag = i + 1
+                _si_flag = _scene_flag_index(path, _si_flag, scene_preferred)
+                _fl = _scene_flags.get(_si_flag) or _scene_flags.get(str(_si_flag))
+                if _fl:
+                    _apply_fallback_flags(_scene_obj, _fl)
+            scenes.append(_scene_obj)
             t_cursor += slice_dur
         # [VM-FIX] Контент плана обязан покрывать озвучку с запасом на переходы
         # (xfade съедает время на стыках): иначе видео короче аудио и в финале

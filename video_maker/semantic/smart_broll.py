@@ -16,10 +16,21 @@ import json
 import os
 import re
 import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .baseline import SceneBaseline
 from .matcher import queries_for_text, scene_slots, tokenize
+from .scene_policy import (
+    ClipUsageTracker,
+    GraphicFallbackBudget,
+    SceneDecision,
+    candidate_id,
+    candidate_score,
+    log_decision,
+    select_scene,
+)
 from .stock import download_file, safe_slug, search_stock
 from .taxonomy import themes_for_tokens
 
@@ -112,13 +123,18 @@ def _pre_rank_candidates(cands: list[dict], sc: dict, *, use_history: bool = Tru
     return sorted(cands, key=lambda c: -float(c.get("_pre_score") or 0.0))
 
 
-def _pool_entry(c: dict, scene_text: str, hard: set, avoid: set, log) -> dict | None:
+def _pool_entry(c: dict, scene_text: str, hard: set, avoid: set, log,
+                scene_idx: int | None = None) -> dict | None:
     """Один кандидат → entry для Vision (превью tiny вместо 4K)."""
     e: dict = {"file": "", "verify_file": "", "scene": scene_text,
                "scene_key": scene_text, "query": c.get("query") or "",
                "tags": c.get("tags"), "description": c.get("description"),
                "duration": c.get("duration"), "hard": sorted(hard),
                "avoid": sorted(avoid), "_c": c}
+    if scene_idx is not None:
+        # [VM-FIX B3] индекс сцены в пуле: ключ _SCENE_STATE не должен
+        # схлопывать две сцены с одинаковым текстом в один бюджет VLM.
+        e["scene_idx"] = int(scene_idx)
     if c.get("kind") == "lib":
         pv = _lib_preview(str(c.get("file") or ""), log)
         if not pv:
@@ -155,8 +171,25 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
     from .library import search_library_multi
     from .stock import search_stock_multi
 
+    t_all = time.monotonic()
+    stats: dict = {
+        "candidates": 0, "checked": 0, "cached": 0, "skipped": 0,
+        "early_exit": False, "best": -1, "calls": 0,
+        "search_ms": 0.0, "search_lib_ms": 0.0, "search_stock_ms": 0.0,
+        "vlm_ms": 0.0, "total_ms": 0.0,
+    }
+    sc["_pool_stats"] = stats
+
+    def _stamp_stats() -> None:
+        stats["search_ms"] = round(
+            float(stats.get("search_lib_ms") or 0.0)
+            + float(stats.get("search_stock_ms") or 0.0), 2)
+        stats["total_ms"] = round((time.monotonic() - t_all) * 1000.0, 2)
+        sc["_pool_stats"] = stats
+
     queries = [str(q) for q in (sc.get("queries") or []) if str(q).strip()][:3]
     if not queries:
+        _stamp_stats()
         return []
     emo = [str(x) for x in (sc.get("emotions") or []) if str(x).strip()][:6]
     mood = str(sc.get("mood") or "").strip()
@@ -175,6 +208,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
 
     cands: list[dict] = []
     # 1) база — веер запросов, RRF, штрафы hard/avoid после поиска, дедуп близнецов
+    _t_lib = time.monotonic()
     try:
         lib_hits = search_library_multi(queries, orientation=orientation, per_query=20,
                                         limit=max(12, per_scene * 4), exclude=set(),
@@ -183,6 +217,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
     except Exception as _e:
         log(f"[SB] веер базы не удался: {str(_e)[:80]}")
         lib_hits = []
+    stats["search_lib_ms"] = round((time.monotonic() - _t_lib) * 1000.0, 2)
     for rec in lib_hits:
         f = str(rec.get("file") or "")
         if not f:
@@ -195,6 +230,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                       "db_score": rec.get("score")})
     # 2) сток — веер запросов × источников, tiny-превью для оценки
     if not library_only and use_stock:
+        _t_stock = time.monotonic()
         try:
             st_hits = search_stock_multi(queries, orientation=orientation, per_query=20,
                                          limit=max(10, per_scene * 3),
@@ -202,6 +238,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
         except Exception as _e:
             log(f"[SB] веер стока не удался: {str(_e)[:80]}")
             st_hits = []
+        stats["search_stock_ms"] = round((time.monotonic() - _t_stock) * 1000.0, 2)
         for c in st_hits:
             cands.append({"kind": "stock", "provider": c.get("provider"), "id": c.get("id"),
                           "url": c.get("url"), "tiny": c.get("tiny"),
@@ -210,6 +247,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                           "query": str(c.get("found_by") or queries[0]), "rrf": c.get("rrf"),
                           "is4k": c.get("is4k")})
     if not cands:
+        _stamp_stats()
         return []
 
     # 2b) [VM-CASCADE] чередуем базу и сток в пуле: VLM-бюджет не должен уходить
@@ -232,13 +270,16 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
             log(f"[SB] pre-rank пропущен: {str(_pre)[:80]}")
 
     # 3) превью и VLM-оценка: бюджет 8 кандидатов, ранний выход, добор до 12
+    _t_vlm = time.monotonic()
     if verify and not sc.get("_no_verify"):
-        stats = {"candidates": 0, "checked": 0, "cached": 0, "skipped": 0,
-                 "early_exit": False, "best": -1, "calls": 0}
         try:
             from .verify import verify_batch_gemini
             _k, _ks = _load_gemini_keys()
             scene_text = str(sc.get("visual") or "").strip() or str(sc.get("text") or "")
+            try:
+                _scene_idx: int | None = int(sc.get("idx"))
+            except (TypeError, ValueError):
+                _scene_idx = None
             budget = max(1, min(int(cand_budget or 8), int(vlm_budget or 12)))
             topup = max(budget, int(vlm_budget or 12))
             chunk_n = max(2, min(6, int(cand_chunk or 4)))
@@ -250,7 +291,8 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                 while len(entries) < target and taken < len(cands):
                     c = cands[taken]
                     taken += 1
-                    e = _pool_entry(c, scene_text, hard, avoid, log)
+                    e = _pool_entry(c, scene_text, hard, avoid, log,
+                                    scene_idx=_scene_idx)
                     if e is not None:
                         entries.append(e)
 
@@ -284,11 +326,10 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                 todo = [e for e in entries if not e.get("verified")]
                 if todo:
                     chunk = todo[:chunk_n]
-                    stats["calls"] += 1
                     verify_batch_gemini(chunk, key=_k, keys=[x for x in (_ks or []) if x],
                                         model="gemini-3.1-flash-lite",
                                         batch_size=max(2, len(chunk)), min_score=6,
-                                        delete_bad=False, log=log)
+                                        delete_bad=False, log=log, stats=stats)
                     for e in chunk:
                         c = e.get("_c") or {}
                         c["score"] = e.get("score")
@@ -349,13 +390,14 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                     f"сток {sum(1 for c in cands[:max(1, taken)] if c['kind'] == 'stock')})")
         except Exception as _ve:
             log(f"[SB] VLM-оценка пула пропущена: {str(_ve)[:100]}")
-        sc["_pool_stats"] = stats
+    stats["vlm_ms"] = round((time.monotonic() - _t_vlm) * 1000.0, 2)
     # 4) мягкое ранжирование: сначала по баллу VLM, затем по происхождению/стоимости
     def _key(c: dict):
         sc_v = c.get("score")
         sc_v = sc_v if isinstance(sc_v, int) else -1
         return (-sc_v, 0 if c["kind"] == "lib" else 1)
     cands.sort(key=_key)
+    _stamp_stats()
     return cands
 
 
@@ -396,7 +438,6 @@ def ensure_analysis_queries(audio_path: str | None, *, log=None, force: bool = F
     if not audio_path:
         return []
     try:
-        import os as _os
         from video_maker.engines.transcription import (
             DEFAULT_LANGUAGE, MLX_REPO, _transcription_cache_dir, _transcription_cache_key,
         )
@@ -666,6 +707,86 @@ def _scenes_signature(scenes: list[dict]) -> str:
                         .encode("utf-8")).hexdigest()[:16]
 
 
+_VERIFY_PROTECTED_FALLBACKS = frozenset({
+    "neutral", "proxy_forced", "literal_crop", "literal_proxy",
+    "associative", "repeat_forced",
+})
+
+
+def _link_or_copy(src: str, dest: Path) -> bool:
+    """Симлинк на существующий клип; при запрете symlink — копия.
+
+    [VM-FIX B3] Повтор клипа обязан дать реальный файл в папке сцены, иначе
+    рендер видит пустую сцену, а манифест — фантомный score.
+    """
+    src_p = Path(str(src or ""))
+    try:
+        if not src_p.exists():
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.is_symlink() or dest.exists():
+            dest.unlink()
+        try:
+            target = src_p if src_p.is_absolute() else src_p.resolve()
+            dest.symlink_to(target)
+            return True
+        except Exception:
+            try:
+                shutil.copy2(src_p, dest)
+                return True
+            except Exception:
+                try:
+                    if dest.exists() or dest.is_symlink():
+                        dest.unlink()
+                except Exception:
+                    pass
+                return False
+    except Exception:
+        return False
+
+
+def _existing_file_for_url(downloaded: list[dict], url: str) -> str:
+    """Путь уже скачанного файла с этим URL (для честного повтора)."""
+    for d in downloaded or []:
+        if str(d.get("url") or "") != str(url or ""):
+            continue
+        f = str(d.get("file") or "")
+        if f and Path(f).exists():
+            return f
+    return ""
+
+
+def _bad_stock_files(entries: list[dict], max_score: int = 5) -> set[str]:
+    """[VM-FIX B4] Постфильтр удаляет ТОЛЬКО слабый сток.
+
+    Библиотечные, treated и осознанно выбранные neutral/proxy_forced/literal_*
+    клипы P0-2 не трогаем: их низкий балл — часть политики, а не брак.
+    """
+    bad: set[str] = set()
+    for d in entries or []:
+        if d.get("from_library") or d.get("treated") or d.get("graphic_fallback"):
+            continue
+        if str(d.get("fallback") or "") in _VERIFY_PROTECTED_FALLBACKS:
+            continue
+        sc = d.get("score")
+        f = str(d.get("file") or "")
+        if f and isinstance(sc, int) and 0 <= sc < int(max_score):
+            bad.add(f)
+    return bad
+
+
+def _no_file_decision(decision: SceneDecision | None) -> SceneDecision | None:
+    """Честная запись сцены без файла: no_file, selected_score=None."""
+    if decision is None:
+        return None
+    from dataclasses import replace
+    return replace(
+        decision, primary=None, primary_score=None, fallback="no_file",
+        graphic=False, treated=False,
+        reason=(str(decision.reason or "") + "; файл не получен")[:300],
+    )
+
+
 def _source_signature(path: str | None) -> tuple[str, str]:
     """(source, audio_hash): быстрый отпечаток файла (путь+размер+mtime)."""
     src = str(path or "")
@@ -689,16 +810,25 @@ def _settings_signature(settings: dict) -> str:
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
+    """Атомарная запись JSON: уникальный tmp рядом + fsync + os.replace."""
+    import uuid
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        os.replace(tmp, path)
+    finally:
         try:
-            os.fsync(f.fileno())
+            if tmp.exists():
+                tmp.unlink()
         except Exception:
             pass
-    os.replace(tmp, path)
 
 
 def _parse_scene_log(log_path: str | Path) -> dict[tuple[int, str], tuple[int, bool]]:
@@ -839,11 +969,25 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                     verify: bool = True, library_first: bool = True, library_only: bool = False,
                     dry_run: bool = False, log=print) -> dict:
     """Полный цикл: транскрипт → сцены → скачивание. Возвращает сводку."""
+    # [VM-FIX B1] Каждый прогон серии — свой бюджет VLM на сцену.
+    try:
+        from .verify import reset_scene_state as _reset_verify_state
+        _reset_verify_state()
+    except Exception:
+        pass
+    _t_run = time.monotonic()
+    _stage = {"analysis_ms": 0.0, "planning_ms": 0.0, "search_ms": 0.0,
+              "vlm_ms": 0.0, "download_ms": 0.0, "finalize_ms": 0.0}
+    _vlm_extra_calls = 0  # реальные вызовы verify_pool вне пула сцены
     segments = load_segments(audio_path=audio_path, srt_path=srt_path, segments_json=segments_json)
     series_name = _series_name(audio_path, srt_path, series)
+    _t_stage = time.monotonic()
     analysis_queries = ensure_analysis_queries(audio_path, log=log) if use_analysis else []
+    _stage["analysis_ms"] = (time.monotonic() - _t_stage) * 1000.0
+    _t_stage = time.monotonic()
     scenes = plan_scenes(segments, slot_seconds=slot_seconds, max_scenes=max_scenes,
                          query_variant=query_variant, analysis_queries=analysis_queries)
+    _stage["planning_ms"] = (time.monotonic() - _t_stage) * 1000.0
     out_dir = Path(out_root) / series_name
     source_path = audio_path or srt_path or segments_json
     _source, _audio_hash = _source_signature(source_path)
@@ -951,7 +1095,12 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             if _k >= len(scenes):
                 continue
             _files = [str(f) for f in (_rec.get("files") or []) if f]
-            manifest["scenes"].append({**scenes[_k], "files": _files})
+            _entry = {**scenes[_k], "files": _files}
+            for _rk in ("fallback", "treated", "graphic_fallback",
+                        "selected_score", "fallback_reason"):
+                if _rk in _rec:
+                    _entry[_rk] = _rec[_rk]
+            manifest["scenes"].append(_entry)
             _downs = _rec.get("downloaded") or []
             manifest["downloaded"].extend(_downs)
             for _d in _downs:
@@ -980,26 +1129,143 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             pass
     used_urls |= _rejected_urls
 
-    def _finish(sc: dict, files: list[str]) -> None:
+    # [P0-1/P0-2] Baseline-лог и трекеры повторов/graphic-лимита.
+    _baseline = SceneBaseline(out_dir, log=log)
+    _clip_usage = ClipUsageTracker()
+    _graphic_budget = GraphicFallbackBudget()
+    if _resume:
+        for _k in sorted(_completed, key=int):
+            if _k >= len(scenes):
+                continue
+            _rec = (_prog.get("scenes") or {}).get(str(_k)) or {}
+            _scn = scenes[_k]
+            _at = float(_scn.get("start", 0.0) or 0.0)
+            for _f in (_rec.get("files") or []):
+                if _f:
+                    _clip_usage.record({"file": str(_f)}, _at)
+            if _rec.get("graphic_fallback"):
+                _graphic_budget.record(float(_scn.get("end", 0.0) or 0.0) - _at)
+            else:
+                _graphic_budget.reset()
+            _baseline.record_resume(
+                scene_index=_k, scene=_scn, progress_rec=_rec,
+                downloaded=_rec.get("downloaded") or [],
+            )
+
+    def _finish(sc: dict, files: list[str],
+                decision: SceneDecision | None = None) -> None:
         """Зафиксировать сцену: манифест + атомарный _progress.json."""
         idx = int(sc.get("idx", 0))
-        manifest["scenes"].append({**sc, "files": list(files)})
+        _entry = {**sc, "files": list(files)}
+        _eff_fb = None
+        if decision is not None:
+            _eff_fb = decision.fallback
+            if not files and not decision.graphic:
+                _eff_fb = "no_file"
+            _entry.update({
+                "fallback": _eff_fb,
+                "treated": bool(decision.treated),
+                "graphic_fallback": bool(decision.graphic),
+                "selected_score": decision.primary_score,
+                "fallback_reason": decision.reason,
+            })
+        manifest["scenes"].append(_entry)
         downs = [d for d in manifest["downloaded"]
                  if int(d.get("scene", -1)) == idx]
+        if decision is not None:
+            for _d in downs:
+                _d.setdefault("fallback", _eff_fb)
+                _d["treated"] = bool(decision.treated)
+                _d["graphic_fallback"] = bool(decision.graphic)
         scores = [d.get("score") for d in downs
                   if isinstance(d.get("score"), int) and d["score"] >= 0]
+        _legacy_score = max(scores) if scores else None
+        _sel_score = decision.primary_score if (decision is not None and files) else None
+        if decision is None:
+            _entry["fallback"] = "legacy" if files else "legacy_none"
+            _entry["treated"] = False
+            _entry["graphic_fallback"] = False
+            _entry["selected_score"] = _legacy_score
+        else:
+            # [VM-FIX B3] Пустая сцена не имеет выбранного клипа: не пишем
+            # фантомный primary_score, даже если политика его предложила.
+            _entry["selected_score"] = _sel_score
         st = sc.get("_pool_stats") or {}
-        _prog["scenes"][str(idx)] = {
+        _rec = {
             "status": "done" if files else "skipped",
             "file": files[0] if files else "",
             "files": list(files),
-            "score": max(scores) if scores else None,
+            "score": _legacy_score,
             "checked": int(st.get("checked", 0)),
             "skipped_checks": int(st.get("skipped", 0)),
             "downloaded": downs,
+            "search_ms": round(float(st.get("search_ms") or 0.0), 2),
+            "vlm_calls": int(st.get("calls") or 0),
+            "cache_hits": int(st.get("cached") or 0),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
+        if decision is not None:
+            _rec.update({
+                "fallback": _eff_fb,
+                "treated": bool(decision.treated),
+                "graphic_fallback": bool(decision.graphic),
+                "selected_score": _sel_score,
+                "fallback_reason": decision.reason,
+            })
+        else:
+            _rec.update({
+                "fallback": _entry["fallback"],
+                "treated": False,
+                "graphic_fallback": False,
+                "selected_score": _legacy_score,
+            })
+        _prog["scenes"][str(idx)] = _rec
         _write_progress()
+
+    def _finish_scene(sc: dict, files: list[str],
+                      decision: SceneDecision | None,
+                      cands: list[dict] | None) -> None:
+        """Зафиксировать сцену + строку baseline (P0-1)."""
+        _finish(sc, files, decision)
+        st = sc.get("_pool_stats") or {}
+        _stage["search_ms"] += float(st.get("search_ms") or 0.0)
+        _stage["vlm_ms"] += float(st.get("vlm_ms") or 0.0)
+        selected = files[0] if files else ""
+        selected_score = None
+        if selected:
+            for _c in (cands or []):
+                if (str(_c.get("_dest") or "") == selected
+                        or str(_c.get("file") or "") == selected):
+                    selected_score = candidate_score(_c)
+                    break
+            if selected_score is None and decision is not None:
+                selected_score = decision.primary_score
+        if decision is not None:
+            _fb = decision.fallback
+            if not files and not decision.graphic:
+                # [VM-FIX B3/B4] файла нет — честный no_file, без фантома.
+                _fb = "no_file"
+        else:
+            _fb = "legacy" if files else "legacy_none"
+        _dur = max(0.0, float(sc.get("end", 0.0) or 0.0)
+                   - float(sc.get("start", 0.0) or 0.0))
+        _baseline.record(
+            scene_index=int(sc.get("idx", 0)),
+            scene_text=str(sc.get("text") or sc.get("visual") or ""),
+            queries=[str(q) for q in (sc.get("queries") or [])],
+            candidate_ids=[candidate_id(c) for c in (cands or [])],
+            candidate_scores=[candidate_score(c) for c in (cands or [])],
+            selected_clip=selected,
+            selected_score=selected_score,
+            fallback_used=_fb,
+            search_ms=float(st.get("search_ms") or 0.0),
+            vlm_calls=int(st.get("calls") or 0),
+            cache_hits=int(st.get("cached") or 0),
+            scene_duration_s=_dur,
+            fallback_reason=decision.reason if decision is not None else "",
+            treated=bool(decision.treated) if decision is not None else False,
+            graphic_fallback=bool(decision.graphic) if decision is not None else False,
+        )
 
     for sc in scenes:
         _idx = int(sc.get("idx", 0))
@@ -1020,25 +1286,48 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
         except Exception as _pe:
             log(f"[SB] веер-пул сцены не удался — старый путь: {str(_pe)[:90]}")
             _cands = []
+        _t_dl = time.monotonic()
         if _cands:
-            for _c in _cands:
+            # [P0-2] 2-4/10 не ставим полным кадром: neutral/graphic/treated.
+            _decision: SceneDecision | None = None
+            try:
+                _decision = select_scene(
+                    _cands, sc, per_scene=per_scene, orientation=orientation,
+                    usage=_clip_usage, graphic_budget=_graphic_budget, log=log)
+            except Exception as _se:
+                log(f"[SB] fallback-политика не удалась — пул как есть: {str(_se)[:100]}")
+                _decision = SceneDecision(
+                    candidates=list(_cands[:max(1, int(per_scene))]),
+                    primary=_cands[0], fallback="policy_error", treated=False,
+                    graphic=False, best_score=candidate_score(_cands[0]),
+                    primary_score=candidate_score(_cands[0]),
+                    reason="policy error", flags={})
+            log_decision(log, sc, _decision)
+            if _decision.graphic:
+                _stage["download_ms"] += (time.monotonic() - _t_dl) * 1000.0
+                _finish_scene(sc, [], _decision, _cands)
+                continue
+            for _c in _decision.candidates:
                 if len(sc_files) >= per_scene:
                     break
                 _slug = safe_slug(str(_c.get("query") or "broll"))
                 folder = out_dir / f"{sc['idx'] + 1:02d}_{_slug}"
                 if _c["kind"] == "lib":
                     src = str(_c.get("file") or "")
-                    if not src or src in _lib_used:
+                    if not src:
                         continue
+                    _repeat = src in _lib_used
                     try:
                         folder.mkdir(parents=True, exist_ok=True)
                         dest = folder / Path(src).name
                         if dest.exists() or dest.is_symlink():
                             dest = folder / f"{len(sc_files) + 1:02d}_{Path(src).name}"
-                        dest.symlink_to(src)
+                        if not _link_or_copy(src, dest):
+                            continue
                     except Exception:
                         continue
                     _lib_used.add(src)
+                    _c["_dest"] = str(dest)
                     sc_files.append(str(dest))
                     manifest["downloaded"].append({
                         "scene": sc["idx"], "query": _c.get("query") or "", "file": str(dest),
@@ -1049,23 +1338,33 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                         "tags": _c.get("tags"), "url": _c.get("source_url"),
                         "description": _c.get("description"), "score": _c.get("score"),
                         "what": _c.get("what"), "verified": True, "verifier": "gemini-vlm3",
+                        "fallback": _decision.fallback,
+                        "treated": bool(_decision.treated),
+                        "graphic_fallback": False,
                     })
                     log(f"[SB] ⬡ сцена {sc['idx'] + 1}: {Path(src).name} — из базы "
-                        f"({_c.get('score')}/10): {str(_c.get('description'))[:50]}")
+                        f"({_c.get('score')}/10){' [повтор]' if _repeat else ''}: "
+                        f"{str(_c.get('description'))[:50]}")
                 else:
                     url = str(_c.get("url") or "")
-                    if not url or url in used_urls:
+                    if not url:
                         continue
+                    _repeat = url in used_urls
                     try:
                         folder.mkdir(parents=True, exist_ok=True)
                         fname = (f"{_slug}_{len(sc_files) + 1:02d}_"
                                  f"{_c.get('provider') or 'stock'}.mp4")
                         dest = folder / fname
-                        if not download_file(url, dest):
+                        _prev_file = _existing_file_for_url(manifest["downloaded"], url)
+                        if _prev_file:
+                            if not _link_or_copy(_prev_file, dest):
+                                continue
+                        elif not download_file(url, dest):
                             continue
                     except Exception:
                         continue
                     used_urls.add(url)
+                    _c["_dest"] = str(dest)
                     sc_files.append(str(dest))
                     manifest["downloaded"].append({
                         "scene": sc["idx"], "query": _c.get("query") or "", "file": str(dest),
@@ -1074,10 +1373,19 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                         "width": _c.get("width"), "height": _c.get("height"),
                         "tags": _c.get("tags"), "url": url, "score": _c.get("score"),
                         "what": _c.get("what"), "verified": True, "verifier": "gemini-vlm3",
+                        "fallback": _decision.fallback,
+                        "treated": bool(_decision.treated),
+                        "graphic_fallback": False,
                     })
                     log(f"[SB] ↓ сцена {sc['idx'] + 1}: {fname} ({_c.get('score')}/10, "
-                        f"{(float(_c.get('duration') or 0)):.0f}с)")
-            _finish(sc, sc_files)
+                        f"{(float(_c.get('duration') or 0)):.0f}с){' [повтор]' if _repeat else ''}")
+            _stage["download_ms"] += (time.monotonic() - _t_dl) * 1000.0
+            if not sc_files and not _decision.graphic:
+                # [VM-FIX B3] Ни один файл не получен — фиксируем no_file,
+                # а не фантомный выбор политики с score=9.
+                _decision = _no_file_decision(_decision) or _decision
+                log(f"[SB] сцена {sc['idx'] + 1}: файл не получен — fallback=no_file")
+            _finish_scene(sc, sc_files, _decision, _cands)
             continue
         n_queries = max(1, len(sc["queries"]))
         per_query = max(1, -(-per_scene // n_queries))  # ceil: больше разных клипов
@@ -1144,8 +1452,10 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                         _base = str(sc.get("visual") or "").strip() or str(sc.get("text") or query)
                         for _e in _entries:
                             _e["query"] = (_base + " | " + query)[:300]
+                        _vstats_legacy: dict = {"calls": 0}
                         verify_pool(_entries, key=_k, keys=[x for x in (_ks or []) if x], min_score=0, delete_bad=False,
-                                    log=log, batch_size=3)
+                                    log=log, batch_size=3, stats=_vstats_legacy)
+                        _vlm_extra_calls += int(_vstats_legacy.get("calls") or 0)
                         _entries.sort(key=lambda d: -(d.get("score") if isinstance(d.get("score"), int) else -1))
                         for _rank, _e in enumerate(_entries):
                             _e["scene_rank"] = _rank + 1
@@ -1205,7 +1515,17 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                         f"{c['width']}x{c['height']}{' 4K' if c.get('is4k') else ''})")
             if len(sc_files) >= per_scene:
                 break
-        _finish(sc, sc_files)
+        _legacy_cands = [d for d in manifest["downloaded"]
+                         if int(d.get("scene", -1)) == _idx]
+        _legacy_best = max(
+            (candidate_score(d) for d in _legacy_cands
+             if candidate_score(d) is not None), default=None)
+        log(f"[SB] сцена {sc['idx'] + 1}: fallback=legacy "
+            f"(лучший {_legacy_best if isinstance(_legacy_best, int) else '-'}/10)")
+        _stage["download_ms"] += (time.monotonic() - _t_dl) * 1000.0
+        _finish_scene(sc, sc_files, None, _legacy_cands)
+
+    _t_loop_end = time.monotonic()
 
     # [VM-VISION] проверка контента: запросы хорошие — а что РЕАЛЬНО в клипах?
     # Клипы из базы уже проверены при приёмке (score в базе) — не тратим запросы.
@@ -1215,15 +1535,41 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             from .verify import verify_pool
             _key, _keys = _load_gemini_keys()
             if _key:
-                verify_pool(_to_verify, key=_key, keys=[x for x in (_keys or []) if x], min_score=5, delete_bad=True, log=log)
-                _bad = {
-                    str(d.get("file"))
-                    for d in manifest["downloaded"]
-                    if isinstance(d.get("score"), int) and 0 <= d.get("score", 0) < 5
-                }
+                _vstats: dict = {"calls": 0}
+                # delete_bad=False: удаляем сами и только слабый сток, не
+                # задевая neutral/proxy_forced/treated (P0-2).
+                verify_pool(_to_verify, key=_key, keys=[x for x in (_keys or []) if x],
+                            min_score=5, delete_bad=False, log=log, stats=_vstats)
+                _vlm_extra_calls += int(_vstats.get("calls") or 0)
+                _bad = _bad_stock_files(_to_verify, max_score=5)
                 if _bad:
                     for _sc in manifest["scenes"]:
-                        _sc["files"] = [f for f in (_sc.get("files") or []) if f not in _bad]
+                        _old_files = [str(f) for f in (_sc.get("files") or []) if f]
+                        _new_files = [f for f in _old_files if f not in _bad]
+                        if _new_files != _old_files:
+                            _sc["files"] = _new_files
+                            if not _new_files and not _sc.get("graphic_fallback"):
+                                _sc["fallback"] = "no_file"
+                                _sc["selected_score"] = None
+                            elif _new_files:
+                                _left_scores = [
+                                    d.get("score") for d in manifest["downloaded"]
+                                    if str(d.get("file") or "") in _new_files
+                                    and isinstance(d.get("score"), int)
+                                    and d["score"] >= 0
+                                ]
+                                _sc["selected_score"] = (
+                                    max(_left_scores) if _left_scores else None)
+                    for _d in list(manifest["downloaded"]):
+                        if str(_d.get("file") or "") not in _bad:
+                            continue
+                        try:
+                            Path(str(_d["file"])).unlink()
+                        except Exception:
+                            pass
+                        manifest["downloaded"].remove(_d)
+                    log(f"[SB] vision: удалён слабый сток ({len(_bad)}), "
+                        f"neutral/proxy/treated сохранены")
         except Exception as _v_e:
             log(f"[SB] vision-проверка пропущена: {_v_e}")
 
@@ -1274,11 +1620,38 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             _rec["status"] = "done" if _files else "skipped"
             _rec["downloaded"] = [d for d in manifest["downloaded"]
                                   if int(d.get("scene", -1)) == int(_k)]
+            for _rk in ("fallback", "treated", "graphic_fallback",
+                        "selected_score", "fallback_reason"):
+                if _rk in _s:
+                    _rec[_rk] = _s[_rk]
         _write_progress()
     except Exception:
         pass
     man_path = out_dir / "smart_broll_manifest.json"
     _atomic_write_json(man_path, manifest)
+    # [P0-1] Сводка baseline: пишется после манифеста/прогресса, не ломает их.
+    try:
+        _stage["finalize_ms"] = (time.monotonic() - _t_loop_end) * 1000.0
+        _stage["total_ms"] = (time.monotonic() - _t_run) * 1000.0
+        _vlm_total = sum(int(v.get("vlm_calls") or 0)
+                         for v in (_prog.get("scenes") or {}).values())
+        _vlm_total += int(_vlm_extra_calls)
+        _cache_total = sum(int(v.get("cache_hits") or 0)
+                           for v in (_prog.get("scenes") or {}).values())
+        _sum = _baseline.finalize(
+            series=series_name, total_scenes=len(scenes), stage_times=_stage,
+            vlm_calls=_vlm_total, cache_hits=_cache_total,
+            vlm_calls_total=_vlm_total,
+            extra={"resumed_scenes": len(_completed) if _resume else 0},
+        )
+        log(f"[SB] baseline: scenes.jsonl ({_sum.get('scenes_logged', 0)} сцен) | "
+            f"run_summary.json | средний {_sum.get('avg_score', 0):.1f}/10 | "
+            f"≥6 {_sum.get('scenes_ge6', 0)} | "
+            f"VLM/сцену {_sum.get('vlm_per_scene', 0):.2f}")
+        log(f"[SB] baseline: {_baseline.jsonl_path}")
+        log(f"[SB] baseline: {_baseline.summary_path}")
+    except Exception as _be:
+        log(f"[SB] baseline-сводка пропущена: {str(_be)[:120]}")
     _lib_n = sum(1 for d in manifest["downloaded"] if d.get("from_library"))
     log(f"[SB] готово: всего {len(manifest['downloaded'])} клипов "
         f"(из базы: {_lib_n}, скачано: {len(manifest['downloaded']) - _lib_n}) | папка: {out_dir}")
