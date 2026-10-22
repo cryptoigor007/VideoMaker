@@ -29,6 +29,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from ..config.settings import Settings
 from ..pipeline.stages import PipelineContext
+from . import review_feedback as review
 
 # Cinematic Enhancement GUI hooks (optional module)
 try:
@@ -160,6 +161,12 @@ def persist_gemini_keys_to_settings(keys: list[str], path: str | None = None) ->
 # Живые события подбора клипов (smart_broll / Vision).
 # Fallback, если SMART_BROLL_PER_SCENE из master.py недоступен.
 POOL_PER_SCENE_DEFAULT = 1
+# Фильтр панели «Проверка подбора»: подпись в combobox → режим чистой функции.
+REVIEW_FILTER_MODES = {
+    "Все сцены": "all",
+    "Только fallback": "fallback",
+    "Балл < 6": "low_score",
+}
 _POOL_SERIES_RE = re.compile(
     r"\[SB\]\s+серия\b.*?\|\s*сцен:\s*(\d+)"
     r"(?:.*?\|\s*per_scene:\s*(\d+))?",
@@ -958,6 +965,50 @@ class App:
             font=("SF Mono", 10),
         )
 
+        # Панель «Проверка подбора»: строки компактные, но читаемые на тёмном фоне.
+        style.configure(
+            "Review.TFrame",
+            background=COLORS["card"],
+        )
+        style.configure(
+            "Review.TLabel",
+            background=COLORS["card"],
+            foreground=COLORS["text"],
+            font=("SF Mono", 9),
+        )
+        style.configure(
+            "ReviewDim.TLabel",
+            background=COLORS["card"],
+            foreground=COLORS["text_muted"],
+            font=("SF Pro Text", 9),
+        )
+        style.configure(
+            "ReviewOK.TLabel",
+            background=COLORS["card"],
+            foreground="#34D399",
+            font=("SF Pro Text", 9),
+        )
+        style.configure(
+            "ReviewWarn.TLabel",
+            background=COLORS["card"],
+            foreground="#F59E0B",
+            font=("SF Mono", 9, "bold"),
+        )
+        style.configure(
+            "Review.TMenubutton",
+            background=COLORS["card_hover"],
+            foreground=COLORS["text"],
+            borderwidth=0,
+            relief="flat",
+            padding=(8, 4),
+            font=("SF Pro Text", 9),
+        )
+        style.map(
+            "Review.TMenubutton",
+            background=[("active", COLORS["primary"]), ("pressed", COLORS["primary_dim"])],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
+
         style.configure(
             "TEntry",
             fieldbackground=COLORS["input_bg"],
@@ -1376,6 +1427,7 @@ class App:
         self.tab_monitor = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_monitor, text="  Журнал и пульт  ")
         self._build_monitoring_tab(self.tab_monitor)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed, add="+")
 
         # Cinematic Enhancement tab
         if _CE_GUI:
@@ -1829,7 +1881,455 @@ class App:
             layout, side=tk.BOTTOM, pady=(12, 0), label_attr="api_label",
             cb_attr="api_lan_cb", btn_attr="api_open_btn",
         )
-        self._build_log_block(layout, attr="log_text", height=16)
+        # Проверка подбора — над журналом; журнал забирает оставшуюся высоту.
+        self._build_review_panel(layout)
+        self._build_log_block(layout, attr="log_text", height=12)
+
+    # ─── Панель «Проверка подбора» (обучение базы) ─────────────────────────
+    def _build_review_panel(self, parent) -> None:
+        """Список сцен последнего прогона + причины «не подходит» + экспорт.
+
+        Панель только читает scenes.jsonl и дописывает review_feedback.jsonl;
+        рендер/перезапуск пайплайна она не запускает.
+        """
+        frame = ttk.LabelFrame(
+            parent, text="Проверка подбора (обучение базы)",
+            style="Card.TLabelframe", padding=8,
+        )
+        frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 8))
+        self.review_frame = frame
+
+        self._review_scenes_path = None
+        self._review_scenes: list[dict] = []
+        self._review_shown_rows: list[dict] = []
+        self._review_series = ""
+        self._review_feedback_path = review.feedback_path_for(None)
+        self._review_feedback_index: dict[str, dict] = {}
+
+        head = ttk.Frame(frame, style="Review.TFrame")
+        head.pack(fill=tk.X)
+        head.columnconfigure(0, weight=1)
+        self.review_path_var = tk.StringVar(value="scenes.jsonl: поиск…")
+        self.review_path_label = ttk.Label(
+            head, textvariable=self.review_path_var, style="ReviewDim.TLabel",
+            anchor="w", justify="left", wraplength=640,
+        )
+        self.review_path_label.grid(row=0, column=0, sticky="ew")
+
+        actions = ttk.Frame(head, style="Review.TFrame")
+        actions.grid(row=0, column=1, sticky="e", padx=(10, 0))
+        self.review_refresh_btn = ttk.Button(
+            actions, text="Обновить", command=self._refresh_review_panel,
+        )
+        self.review_refresh_btn.pack(side=tk.LEFT)
+        self.review_pick_btn = ttk.Button(
+            actions, text="Выбрать…", command=self._choose_review_scenes,
+        )
+        self.review_pick_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.review_auto_btn = ttk.Button(
+            actions, text="Авто", command=self._use_auto_review_scenes,
+        )
+        self.review_auto_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.review_export_btn = ttk.Button(
+            actions, text="Экспорт", command=self._export_review_feedback,
+        )
+        self.review_export_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+        summary = ttk.Frame(frame, style="Review.TFrame")
+        summary.pack(fill=tk.X, pady=(6, 2))
+        self.review_summary_var = tk.StringVar(value="Сцен: —")
+        ttk.Label(
+            summary, textvariable=self.review_summary_var, style="Review.TLabel",
+        ).pack(side=tk.LEFT)
+        ttk.Label(summary, text="Фильтр:", style="ReviewDim.TLabel").pack(
+            side=tk.LEFT, padx=(14, 4),
+        )
+        self.review_filter_var = tk.StringVar(value="Все сцены")
+        self.review_filter_combo = ttk.Combobox(
+            summary, textvariable=self.review_filter_var,
+            values=list(REVIEW_FILTER_MODES), state="readonly", width=17,
+        )
+        self.review_filter_combo.pack(side=tk.LEFT)
+        self.review_filter_combo.bind(
+            "<<ComboboxSelected>>", self._on_review_filter_change,
+        )
+
+        header = ttk.Frame(frame, style="Review.TFrame")
+        header.pack(fill=tk.X, pady=(4, 0))
+        header.columnconfigure(1, weight=3)
+        header.columnconfigure(2, weight=2)
+        for col, text, width in (
+            (0, "#", 4), (1, "Сцена", 0), (2, "Клип", 0),
+            (3, "Балл", 5), (4, "Fallback", 14), (5, "", 0), (6, "Отзыв", 16),
+        ):
+            ttk.Label(
+                header, text=text, style="ReviewDim.TLabel",
+                width=width, anchor="w",
+            ).grid(row=0, column=col, sticky="ew", padx=(0, 6))
+
+        list_host = ttk.Frame(frame, style="Review.TFrame")
+        list_host.pack(fill=tk.X, pady=(2, 2))
+        canvas = tk.Canvas(
+            list_host, height=168, background=COLORS["card"],
+            highlightthickness=0, borderwidth=0, yscrollincrement=1,
+            takefocus=False,
+        )
+        scrollbar = ttk.Scrollbar(list_host, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.review_canvas = canvas
+        self.review_rows_frame = ttk.Frame(canvas, style="Review.TFrame")
+        self.review_rows_frame.columnconfigure(1, weight=3)
+        self.review_rows_frame.columnconfigure(2, weight=2)
+        window_id = canvas.create_window((0, 0), window=self.review_rows_frame, anchor="nw")
+        self.review_rows_frame.bind(
+            "<Configure>",
+            lambda _event, c=canvas: c.configure(scrollregion=c.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event, c=canvas, wid=window_id: c.itemconfigure(wid, width=event.width),
+        )
+        self._scroll_canvases.append(canvas)
+        self._scroll_areas.append((list_host, canvas))
+
+        self.review_feedback_var = tk.StringVar(value="Отзывы: —")
+        self.review_feedback_label = ttk.Label(
+            frame, textvariable=self.review_feedback_var, style="ReviewDim.TLabel",
+            anchor="w", justify="left", wraplength=640,
+        )
+        self.review_feedback_label.pack(fill=tk.X, pady=(2, 0))
+        frame.bind("<Configure>", self._on_review_frame_configure, add="+")
+
+        # Первый список появится при открытии вкладки/нажатии «Обновить»:
+        # не трогаем сетевые output-папки на старте окна.
+        self._render_review_scenes()
+
+    def _on_review_frame_configure(self, event) -> None:
+        width = max(260, int(event.width) - 360)
+        with contextlib.suppress(tk.TclError):
+            self.review_path_label.configure(wraplength=width)
+            self.review_feedback_label.configure(
+                wraplength=max(260, int(event.width) - 28),
+            )
+
+    def _on_notebook_tab_changed(self, _event=None) -> None:
+        """Обновить проверку подбора при открытии вкладки «Журнал и пульт»."""
+        try:
+            if self.notebook.select() != str(self.tab_monitor):
+                return
+        except (AttributeError, tk.TclError):
+            return
+        with contextlib.suppress(tk.TclError, RuntimeError):
+            self.root.after_idle(self._refresh_review_panel)
+
+    def _review_search_dirs(self) -> list[str]:
+        """Папки для поиска scenes.jsonl: output из настроек + ~/video_maker."""
+        dirs: list[str] = []
+        try:
+            out = (self.output_var.get() or "").strip()
+        except (AttributeError, tk.TclError):
+            out = ""
+        if not out:
+            out = str(getattr(self.settings, "output_folder", "") or "").strip()
+        if out:
+            dirs.append(out)
+        return dirs
+
+    def _refresh_review_panel(self) -> None:
+        """Перечитать scenes.jsonl (только чтение, без рендера)."""
+        if not hasattr(self, "review_rows_frame"):
+            return
+        saved = ""
+        try:
+            cfg = review.load_review_config()
+            candidate = str(cfg.get("scenes_path") or "").strip()
+            if candidate and os.path.exists(candidate):
+                saved = candidate
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[REVIEW] конфиг панели не прочитан: %s", exc)
+            saved = ""
+        try:
+            path = review.find_latest_scenes(
+                self._review_search_dirs(), explicit=saved or None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[REVIEW] поиск scenes.jsonl: %s", exc)
+            path = None
+        self._review_scenes_path = path
+        try:
+            self._review_scenes = review.load_scene_rows(path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[REVIEW] scenes.jsonl не прочитан: %s", exc)
+            self._review_scenes = []
+        self._review_series = review.series_for(path) if path else ""
+        self._review_feedback_path = review.feedback_path_for(path)
+        try:
+            self._review_feedback_index = review.feedback_index(
+                self._review_feedback_path,
+                series=self._review_series or None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[REVIEW] review_feedback.jsonl не прочитан: %s", exc)
+            self._review_feedback_index = {}
+
+        if path:
+            self.review_path_var.set(f"scenes.jsonl: {path}")
+        else:
+            self.review_path_var.set(
+                "scenes.jsonl не найден — сделайте прогон или выберите файл вручную",
+            )
+        archive = review.REVIEW_DIR / review.FEEDBACK_FILENAME
+        feedback_text = f"Отзывы: {self._review_feedback_path}"
+        if path and os.path.abspath(str(self._review_feedback_path)) != os.path.abspath(str(archive)):
+            feedback_text += f" · архив: {archive}"
+        if self._review_feedback_index:
+            feedback_text += f" · записей по серии: {len(self._review_feedback_index)}"
+        self.review_feedback_var.set(feedback_text)
+        self._render_review_scenes(reset_scroll=True)
+
+    def _on_review_filter_change(self, _event=None) -> None:
+        self._render_review_scenes(reset_scroll=True)
+
+    def _render_review_scenes(self, *, reset_scroll: bool = False) -> None:
+        """Перерисовать строки из уже загруженных сцен (без чтения файла)."""
+        frame = getattr(self, "review_rows_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        mode = REVIEW_FILTER_MODES.get(self.review_filter_var.get(), "all")
+        rows = review.filter_scene_rows(getattr(self, "_review_scenes", []), mode)
+        self._review_shown_rows = rows
+        if not rows:
+            hint = (
+                "Сцен пока нет. После прогона нажмите «Обновить»."
+                if not self._review_scenes
+                else "Под выбранный фильтр сцены не попали."
+            )
+            ttk.Label(
+                frame, text=hint, style="ReviewDim.TLabel", anchor="w",
+            ).grid(row=0, column=0, columnspan=7, sticky="w", pady=10, padx=4)
+            self._update_review_summary(rows)
+            self._sync_review_scroll(reset=reset_scroll)
+            return
+        for line, row in enumerate(rows):
+            self._build_review_row(line, row)
+        self._update_review_summary(rows)
+        self._sync_review_scroll(reset=reset_scroll)
+
+    def _sync_review_scroll(self, *, reset: bool = False) -> None:
+        canvas = getattr(self, "review_canvas", None)
+        if canvas is None:
+            return
+        with contextlib.suppress(tk.TclError):
+            self.review_rows_frame.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            if reset:
+                canvas.yview_moveto(0)
+
+    def _update_review_summary(self, rows: list[dict]) -> None:
+        if not hasattr(self, "review_summary_var"):
+            return
+        all_rows = getattr(self, "_review_scenes", [])
+        scores = [
+            int(r["score"]) for r in all_rows
+            if isinstance(r.get("score"), int) and not isinstance(r.get("score"), bool)
+        ]
+        avg = f"{sum(scores) / len(scores):.1f}" if scores else "—"
+        series = getattr(self, "_review_series", "") or "—"
+        self.review_summary_var.set(
+            f"Сцен: {len(all_rows)} · показано: {len(rows)} · "
+            f"серия: {series} · ср. балл: {avg} · "
+            f"отзывов: {len(getattr(self, '_review_feedback_index', {}))}"
+        )
+
+    def _build_review_row(self, line: int, row: dict) -> None:
+        """Одна сцена: № / текст / клип / балл / fallback / «не подходит»."""
+        frame = self.review_rows_frame
+        pad = (0, 6)
+        ttk.Label(
+            frame, text=f"#{int(row.get('scene_no') or 0):02d}",
+            style="Review.TLabel", width=4, anchor="w",
+        ).grid(row=line, column=0, sticky="w", padx=pad, pady=1)
+        ttk.Label(
+            frame, text=review.shorten(row.get("scene_text"), 64),
+            style="Review.TLabel", anchor="w",
+        ).grid(row=line, column=1, sticky="ew", padx=pad, pady=1)
+        ttk.Label(
+            frame, text=review.shorten(row.get("selected_clip_name"), 26) or "—",
+            style="ReviewDim.TLabel", anchor="w",
+        ).grid(row=line, column=2, sticky="ew", padx=pad, pady=1)
+        score = row.get("score")
+        score_style = (
+            "ReviewWarn.TLabel"
+            if not isinstance(score, int) or score < review.LOW_SCORE_THRESHOLD
+            else "Review.TLabel"
+        )
+        ttk.Label(
+            frame, text=f"{score}/10" if isinstance(score, int) else "—",
+            style=score_style, width=5, anchor="w",
+        ).grid(row=line, column=3, sticky="w", padx=pad, pady=1)
+        fallback = str(row.get("fallback") or "none")
+        ttk.Label(
+            frame, text="—" if fallback == "none" else review.shorten(fallback, 18),
+            style="ReviewDim.TLabel" if fallback == "none" else "ReviewWarn.TLabel",
+            width=14, anchor="w",
+        ).grid(row=line, column=4, sticky="w", padx=pad, pady=1)
+
+        menu_btn = ttk.Menubutton(
+            frame, text="не подходит ▾", style="Review.TMenubutton",
+        )
+        menu = tk.Menu(
+            menu_btn, tearoff=False,
+            bg=COLORS["card"], fg=COLORS["text"],
+            activebackground=COLORS["primary"], activeforeground="#FFFFFF",
+            font=("SF Pro Text", 10),
+        )
+        for reason in review.REASONS:
+            menu.add_command(
+                label=f"{review.REASON_LABELS[reason]}  ·  {reason}",
+                command=lambda r=reason, item=row: self._record_review_feedback(
+                    item, r,
+                ),
+            )
+        menu_btn["menu"] = menu
+        menu_btn.grid(row=line, column=5, sticky="w", padx=pad, pady=1)
+
+        existing = getattr(self, "_review_feedback_index", {}).get(row.get("scene_id"))
+        status = ttk.Label(
+            frame,
+            text=(
+                f"✓ {review.REASON_LABELS.get(existing.get('reason'), existing.get('reason'))}"
+                if existing else "—"
+            ),
+            style="ReviewOK.TLabel" if existing else "ReviewDim.TLabel",
+            width=16, anchor="w",
+        )
+        status.grid(row=line, column=6, sticky="w", padx=pad, pady=1)
+
+    def _record_review_feedback(self, row: dict, reason: str) -> None:
+        """Записать причину в review_feedback.jsonl рядом со scenes.jsonl."""
+        path = getattr(self, "_review_scenes_path", None)
+        if not path:
+            messagebox.showwarning(
+                "Проверка подбора",
+                "scenes.jsonl не найден: сначала выполните прогон или выберите "
+                "файл кнопкой «Выбрать…».",
+            )
+            return
+        try:
+            record = review.append_feedback(
+                path, row.get("raw") or row,
+                reason=reason, series=getattr(self, "_review_series", ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("[REVIEW] не удалось записать отзыв")
+            messagebox.showerror(
+                "Проверка подбора",
+                f"Не удалось записать отзыв:\n{type(exc).__name__}: {exc}",
+            )
+            return
+        self._review_feedback_index[str(record.get("scene_id") or "")] = record
+        # Обновляем отметку в конкретной строке без полной перерисовки списка.
+        try:
+            row_line = self._review_shown_rows.index(row)
+        except ValueError:
+            row_line = -1
+        if row_line >= 0:
+            children = self.review_rows_frame.grid_slaves(row=row_line, column=6)
+            if children:
+                children[0].configure(
+                    text=f"✓ {review.REASON_LABELS.get(reason, reason)}",
+                    style="ReviewOK.TLabel",
+                )
+        self._update_review_summary(getattr(self, "_review_shown_rows", []))
+        self._log(
+            f"[REVIEW] сцена {record.get('scene_id')}: {reason} → "
+            f"{self._review_feedback_path}",
+        )
+
+    def _choose_review_scenes(self) -> None:
+        """Выбрать scenes.jsonl вручную и запомнить выбор в review/config.json."""
+        current = getattr(self, "_review_scenes_path", None)
+        initial = (
+            str(current.parent) if current
+            else str(review.REVIEW_DIR.parent)
+        )
+        chosen = filedialog.askopenfilename(
+            parent=self.root,
+            title="Выбрать scenes.jsonl",
+            initialdir=initial,
+            filetypes=[("scenes.jsonl", "scenes.jsonl"), ("JSONL", "*.jsonl"),
+                       ("Все файлы", "*.*")],
+        )
+        if not chosen:
+            return
+        try:
+            review.save_review_config({"scenes_path": chosen})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[REVIEW] не удалось сохранить выбор scenes.jsonl: %s", exc)
+        self._refresh_review_panel()
+
+    def _use_auto_review_scenes(self) -> None:
+        """Сбросить ручной выбор — снова брать самый свежий scenes.jsonl."""
+        try:
+            review.save_review_config({})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[REVIEW] не удалось сбросить выбор scenes.jsonl: %s", exc)
+        self._refresh_review_panel()
+
+    def _export_review_feedback(self) -> None:
+        """Собрать все отзывы в один JSONL (без рендера и перезапусков)."""
+        try:
+            records = review.collect_all_feedback(
+                search_dirs=self._review_search_dirs(),
+                current_scenes=getattr(self, "_review_scenes_path", None),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("[REVIEW] не удалось собрать отзывы")
+            messagebox.showerror(
+                "Экспорт отзывов",
+                f"Не удалось собрать отзывы:\n{type(exc).__name__}: {exc}",
+            )
+            return
+        if not records:
+            messagebox.showinfo(
+                "Экспорт отзывов",
+                "Пока нет ни одной отметки «не подходит». "
+                "Отметьте сцены — экспорт соберёт их в один JSONL.",
+            )
+            return
+        current = getattr(self, "_review_scenes_path", None)
+        initial_dir = (
+            str(current.parent) if current else str(review.REVIEW_DIR)
+        )
+        initial_file = time.strftime("review_feedback_export_%Y%m%d_%H%M%S.jsonl")
+        dest = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Экспорт обратной связи",
+            initialdir=initial_dir,
+            initialfile=initial_file,
+            defaultextension=".jsonl",
+            filetypes=[("JSONL", "*.jsonl"), ("Все файлы", "*.*")],
+        )
+        if not dest:
+            return
+        try:
+            out = review.export_feedback(dest, records)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("[REVIEW] экспорт не удался")
+            messagebox.showerror(
+                "Экспорт отзывов",
+                f"Не удалось сохранить экспорт:\n{type(exc).__name__}: {exc}",
+            )
+            return
+        self._log(f"[REVIEW] экспорт: {len(records)} записей → {out}")
+        messagebox.showinfo(
+            "Экспорт отзывов",
+            f"Сохранено записей: {len(records)}\n{out}",
+        )
 
     def _place_main_sash(self) -> None:
         """Первичная позиция шторки главной вкладки (~60/40)."""
@@ -3981,6 +4481,10 @@ class App:
             self.cancel_event.clear()
             self.root.after(0, lambda: self.start_btn.configure(state=tk.NORMAL))
             self.root.after(0, lambda: self.cancel_btn.configure(state=tk.DISABLED))
+            # Панель проверки подбора подхватывает scenes.jsonl завершённого
+            # прогона. Только чтение — никаких рендеров из UI.
+            with contextlib.suppress(Exception):
+                self.root.after(0, self._refresh_review_panel)
 
     def _cancel_pipeline(self) -> None:
         """Отменить выполнение пайплайна + убить ffmpeg процессы."""

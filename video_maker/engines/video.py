@@ -1,6 +1,8 @@
 # VideoMaker FIX | 2026.09.09-r43-tail | 2026-09-09
 # CHANGED: cut_segment force_reencode + accurate -ss after -i for short tail
+# A3 | 2026-10-22: render_proxy 1080p master + native 4K conform (memory-gate/chunks/resume)
 # P0-4 | 2026-10-22: memory-gate перед 4K-чанками, manifest resume, -threads 2
+# B4/P2 | 2026-10-23: conform_4k материализует vm-graphic:// до сборки графа
 # PREV: 2026.09.03-r25
 # REPLACE: video_maker/engines/video.py
 """Движок видео — ffmpeg-операции: склейка, vstack, обрезка, интро/аутро (4K + Apple Silicon VideoToolbox)."""
@@ -27,6 +29,56 @@ from .ffmpeg_resilient import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _inject_fallback_treatments(filter_complex: str, scenes, log_fn=None) -> str:
+    """B4: blur+грейд для treated-сцен прямо в готовом filter_complex.
+
+    render_graph не меняем: вставляем фильтры в сегмент нужного входа по
+    его выходному label [vi]. Обычные сцены остаются байт-в-байт прежними.
+    """
+    try:
+        from video_maker.cinematic.fallback_render import inject_scene_treatments
+        out = inject_scene_treatments(filter_complex, list(scenes or []))
+        if out != filter_complex:
+            try:
+                (log_fn or log.info)("[РЕНДЕР] treated: blur+грейд в графе")
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        try:
+            (log_fn or log.info)(f"[РЕНДЕР] treated-обработка пропущена: {str(e)[:120]}")
+        except Exception:
+            pass
+        return filter_complex
+
+
+def _materialize_graphic_plan(plan, output_path: str, width: int, height: int,
+                              log_fn=None, fps: int = 30) -> int:
+    """B4: маркеры graphic_fallback → реальные карточки/нейтральный фон."""
+    try:
+        from video_maker.cinematic.fallback_render import materialize_graphic_scenes
+        cache_dir = os.path.join(os.path.dirname(output_path) or ".", "graphic_cards")
+        n = materialize_graphic_scenes(
+            plan, cache_dir=cache_dir, width=int(width), height=int(height),
+            fps=int(fps), log_fn=log_fn,
+        )
+        if n:
+            try:
+                (log_fn or log.info)(
+                    f"[РЕНДЕР] graphic-сцен подготовлено: {n} "
+                    f"(кэш: {cache_dir})")
+            except Exception:
+                pass
+        return int(n)
+    except Exception as e:
+        try:
+            (log_fn or log.info)(
+                f"[РЕНДЕР] graphic-сцены: подготовка фона пропущена: {str(e)[:140]}")
+        except Exception:
+            pass
+        return 0
 
 
 
@@ -231,6 +283,688 @@ def _chunk_record_ready(record: dict) -> bool:
     return True
 
 
+# --- A3: proxy-мастер 1080p → native 4K conform ------------------------------
+
+# Финальные 4K-геометрии → размер proxy-мастера для быстрого превью.
+_PROXY_GEOMETRY = {
+    (3840, 2160): (1920, 1080),
+    (2160, 3840): (1080, 1920),
+}
+_PROXY_SUFFIX = ".proxy_1080p.mp4"
+_PROXY_BITRATE = "12M"
+_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"})
+
+
+def _env_flag(name: str) -> bool | None:
+    """True/False из env; None — переменная не задана."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "да"}
+
+
+def _render_proxy_enabled(explicit: bool | None = None) -> bool:
+    """A3: включён ли режим proxy-мастера.
+
+    Приоритет: аргумент рендера → env VM_RENDER_PROXY → GUI-настройка
+    (~/.video_maker_settings.json: render_proxy) → выключено (совместимость).
+    """
+    if explicit is not None:
+        return bool(explicit)
+    flag = _env_flag("VM_RENDER_PROXY")
+    if flag is None:
+        flag = _env_flag("RENDER_PROXY")
+    if flag is not None:
+        return flag
+    try:
+        settings_path = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "render_proxy" in data:
+            value = data.get("render_proxy")
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on", "да"}
+            return bool(value)
+    except Exception:
+        pass
+    return False
+
+
+def _proxy_size(width: int, height: int) -> tuple[int, int] | None:
+    """Размер proxy-мастера для финальной геометрии (None — proxy не нужен)."""
+    try:
+        return _PROXY_GEOMETRY.get((int(width), int(height)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_encode_cmd(
+    ffmpeg: str,
+    filter_complex: str,
+    paths: list[str],
+    out_file: str,
+    *,
+    target_duration: float,
+    bitrate: str,
+    audio_file: str = "",
+    has_audio: bool = False,
+    with_audio: bool = False,
+    threads: int | None = None,
+    serialize_graph: bool = False,
+    hwaccel: bool = True,
+) -> list[str]:
+    """Команда кодирования одного графа (чанка/мастера): пути → filter → файл."""
+    ins: list[str] = []
+    for vf in paths:
+        if os.path.splitext(vf)[1].lower() in _IMAGE_SUFFIXES:
+            ins.extend(["-loop", "1", "-framerate", "30", "-t", "30", "-i", vf])
+        else:
+            ins.extend(["-i", vf])
+    if serialize_graph or len(paths) >= 8:
+        # P0-4: сериализуем декодер — меньше пик памяти на 8 ГБ Mac.
+        capped: list[str] = []
+        for x in ins:
+            if x == "-i":
+                capped += ["-threads", "1", "-i"]
+            else:
+                capped.append(x)
+        ins = capped
+    if with_audio and has_audio:
+        ins += ["-i", audio_file]
+    cmd: list[str] = [ffmpeg, "-y"]
+    if serialize_graph or len(paths) >= 8:
+        cmd += ["-filter_complex_threads", "1"]
+    cmd += [
+        *ins,
+        "-filter_complex", filter_complex,
+        "-map", "[v]",
+        "-t", str(target_duration),
+        "-c:v", "h264_videotoolbox",
+    ]
+    if threads is not None:
+        cmd += ["-threads", str(int(threads))]
+    cmd += [
+        "-b:v", bitrate, "-allow_sw", "1",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+    ]
+    if with_audio and has_audio:
+        cmd += [
+            "-map", f"{len(paths)}:a",
+            "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000",
+        ]
+    else:
+        cmd += ["-an"]
+    cmd.append(out_file)
+    return inject_hwaccel(cmd) if hwaccel else cmd
+
+
+def _run_encode_cmd(
+    cmd: list[str],
+    *,
+    target_duration: float,
+    log_fn=None,
+    label: str = "",
+) -> str:
+    """VT-энкод с повтором на CPU (libx264). Возвращает 'vt'/'cpu' или ''."""
+    _log = log_fn or log.info
+    timeout = max(3600.0, float(target_duration) * 14.0)
+    res = run_ffmpeg(cmd, log_fn=_log, media_duration=target_duration, timeout=timeout)
+    if res.returncode == 0 and verify_mp4(cmd[-1], log_fn=_log):
+        return "vt"
+    err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
+    _log(f"[ВИДЕО] VT-энкод не удался{label}, повтор на CPU (libx264): {err[-160:]}")
+    cpu_cmd = list(cmd)
+    try:
+        i_v = cpu_cmd.index("h264_videotoolbox")
+        cpu_cmd[i_v] = "libx264"
+        if "-allow_sw" in cpu_cmd:
+            k = cpu_cmd.index("-allow_sw")
+            del cpu_cmd[k:k + 2]
+        if "-b:v" in cpu_cmd:
+            k = cpu_cmd.index("-b:v")
+            del cpu_cmd[k:k + 2]
+        if "-threads" in cpu_cmd:
+            cpu_cmd[cpu_cmd.index("-threads") + 1] = "2"
+            cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18"]
+        else:
+            cpu_cmd[i_v + 1:i_v + 1] = ["-preset", "veryfast", "-crf", "18", "-threads", "4"]
+    except ValueError:
+        pass
+    res = run_ffmpeg(cpu_cmd, log_fn=_log, media_duration=target_duration, timeout=timeout)
+    if res.returncode == 0 and verify_mp4(cmd[-1], log_fn=_log):
+        return "cpu"
+    err = ((res.stderr or res.stdout or "")[-600:]) or "verify failed"
+    _log(f"[ВИДЕО] Ошибка: {err}")
+    return ""
+
+
+def _build_geometry_filter_complex(
+    selected: list[str],
+    *,
+    plan,
+    settings,
+    width: int,
+    height: int,
+    target_duration: float,
+    fps: int = 30,
+) -> str:
+    """Граф плана в ЛЮБОЙ геометрии (для proxy 1080p, минуя 4K-гейт CE)."""
+    from video_maker.cinematic.config import DEFAULT_CINEMATIC_SETTINGS
+    from video_maker.cinematic.render_graph import build_render_graph
+    from video_maker.cinematic.vm_bridge import legacy_filter_complex
+
+    settings = settings or DEFAULT_CINEMATIC_SETTINGS
+    n = len(selected)
+    if plan is None or not getattr(plan, "scenes", None) or n == 0:
+        return legacy_filter_complex(max(1, n), int(width), int(height))
+    scenes = list(plan.scenes)
+    if len(scenes) != n:
+        # То же выравнивание, что делает build_ce_filter_complex.
+        log.warning("CE plan scenes=%d selected=%d — pad/trim to match", len(scenes), n)
+        while len(scenes) < n:
+            last = scenes[-1] if scenes else None
+            if last is None:
+                break
+            scenes.append(last)
+        scenes = scenes[:n]
+        try:
+            plan.scenes = scenes
+        except Exception:
+            pass
+    try:
+        graph = build_render_graph(
+            plan, settings, out_w=int(width), out_h=int(height), fps=fps
+        )
+        fc = graph.concat_or_xfade
+        if "[vout]" in fc:
+            fc = fc.replace("[vout]", "[v]")
+        # B4: treated-сцены — blur/грейд в любом 4K→1080p/9:16 графе.
+        fc = _inject_fallback_treatments(fc, scenes, log_fn=log.info)
+        return fc
+    except Exception as e:
+        log.warning("CE graph at %sx%s failed (%s) — legacy fallback", width, height, e)
+        return legacy_filter_complex(max(1, n), int(width), int(height))
+
+
+def _render_chunked_plan(
+    *,
+    plan,
+    settings,
+    target_duration: float,
+    width: int,
+    height: int,
+    bitrate: str,
+    audio_file: str,
+    has_audio: bool,
+    output_path: str,
+    tmp_path: str,
+    log_fn=None,
+    tag: str = "ВИДЕО 4K",
+    hwaccel: bool = True,
+    chunk_files: list[str] | None = None,
+) -> dict:
+    """Чанковый рендер готового плана с memory-gate и manifest-resume.
+
+    Возвращает {"started", "ok", "partial"}. MemoryPressureError/FFmpegBusyError
+    пробрасываются: caller сохраняет готовые чанки и не уходит в монолитный
+    энкод (это как раз путь к OOM). Используется и proxy-мастером (1080p),
+    и 4K conform — правила памяти одинаковые.
+    """
+    _log = log_fn or log.info
+    sink = chunk_files if chunk_files is not None else []
+    partial = False
+    started = False
+    try:
+        from video_maker.cinematic.config import DEFAULT_CINEMATIC_SETTINGS
+        from video_maker.cinematic.timeline import apply_rhythm as _apply_rhythm2
+        from video_maker.cinematic.render_graph import assemble_render_graph as _assemble
+    except Exception as _im_e:
+        _log(f"[{tag}] чанки: импорт не удался ({_im_e})")
+        return {"started": False, "ok": False, "partial": False}
+    settings = settings or DEFAULT_CINEMATIC_SETTINGS
+
+    try:
+        if plan is None or not getattr(plan, "scenes", None):
+            return {"started": False, "ok": False, "partial": False}
+        _tl2 = _apply_rhythm2(
+            plan.scenes, settings,
+            target_duration=plan.target_duration or plan.total_duration,
+        )
+        scenes2 = list(_tl2.scenes)
+        trans2 = list(_tl2.transitions)
+        tl_warnings = list(getattr(_tl2, "warnings", []) or [])
+        for w in tl_warnings[:8]:
+            _log(f"[CE] timeline: {w}")
+        try:
+            plan.warnings = list(plan.warnings) + tl_warnings
+        except Exception:
+            pass
+
+        # [ORD] 8ГБ Mac: даже 13 4K-планов при занятой памяти дают SIGKILL.
+        # Режем на чанки начиная с 8 планов (раньше — только 30+).
+        if len(scenes2) < 8:
+            return {"started": False, "ok": False, "partial": False}
+        chunk_size = min(8, max(4, -(-len(scenes2) // 5)))
+        groups: list[list[int]] = []
+        cur: list[int] = []
+        for i in range(len(scenes2)):
+            cur.append(i)
+            if len(cur) >= chunk_size and i + 1 < len(scenes2):
+                tr = trans2[i] if i < len(trans2) else None
+                if tr is not None and (tr.spec.kind == "hard" or tr.spec.duration <= 0.01):
+                    groups.append(cur)
+                    cur = []
+        if cur:
+            groups.append(cur)
+        if len(groups) <= 1:
+            return {"started": False, "ok": False, "partial": False}
+        started = True
+
+        # --- план чанков + манифест (resume) ---
+        specs: list[dict] = []
+        for gi, g in enumerate(groups):
+            g_scenes = [scenes2[j] for j in g]
+            g_tr = [trans2[j] for j in g[:-1]]
+            g_graph = _assemble(
+                g_scenes, g_tr, settings,
+                out_w=width, out_h=height, fps=30,
+            )
+            g_fc = g_graph.concat_or_xfade
+            if "[vout]" in g_fc:
+                g_fc = g_fc.replace("[vout]", "[v]")
+            # B4: обработка treated-сцен сохраняется и в чанках.
+            g_fc = _inject_fallback_treatments(g_fc, g_scenes, log_fn=_log)
+            g_paths = [str(getattr(sc, "source_path", "") or "") for sc in g_scenes]
+            specs.append({
+                "index": gi,
+                "graph": g_graph,
+                "fc": g_fc,
+                "fc_sha": hashlib.sha256(g_fc.encode("utf-8")).hexdigest(),
+                "paths": g_paths,
+                "file": os.path.abspath(output_path + f".chunk{gi:02d}.mp4"),
+                "duration": float(min(g_graph.total_duration, float(target_duration))),
+                "scenes": g_scenes,
+            })
+
+        fp_payload = {
+            "version": _CHUNK_MANIFEST_VERSION,
+            "width": int(width),
+            "height": int(height),
+            "fps": 30,
+            "target_duration": round(float(target_duration), 3),
+            "bitrate": str(bitrate),
+            "chunks": [
+                {
+                    "index": sp["index"],
+                    "duration": round(float(sp["duration"]), 3),
+                    "graph_sha": sp["fc_sha"],
+                    "scenes": [
+                        {
+                            "path": os.path.abspath(str(getattr(sc, "source_path", "") or "")),
+                            "in": round(float(getattr(sc, "source_in", 0.0) or 0.0), 3),
+                            "out": round(float(getattr(sc, "source_out", 0.0) or 0.0), 3),
+                        }
+                        for sc in sp["scenes"]
+                    ],
+                }
+                for sp in specs
+            ],
+        }
+        fingerprint = _sha256_payload(fp_payload)
+        manifest_path = _chunk_manifest_path(output_path)
+        manifest: dict = {
+            "version": _CHUNK_MANIFEST_VERSION,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "output": os.path.abspath(output_path),
+            "fingerprint": fingerprint,
+            "width": int(width),
+            "height": int(height),
+            "fps": 30,
+            "target_duration": float(target_duration),
+            "chunks": [
+                {
+                    "index": sp["index"],
+                    "file": sp["file"],
+                    "duration": float(sp["duration"]),
+                    "encoder": "",
+                    "status": "pending",
+                    "updated_at": _now_iso(),
+                }
+                for sp in specs
+            ],
+        }
+
+        def _save_manifest(note: str = "") -> None:
+            manifest["updated_at"] = _now_iso()
+            if note:
+                manifest["last_error"] = note
+            try:
+                _atomic_write_json(manifest_path, manifest)
+            except Exception as _mf_e:
+                _log(f"[ВИДЕО] манифест чанков не записан: {_mf_e}")
+
+        old = _read_json_file(manifest_path)
+        reused = 0
+        if old and old.get("fingerprint") != fingerprint:
+            _log("[ВИДЕО] манифест чанков от другого плана — начинаем заново")
+            old = None
+        if old:
+            old_chunks = old.get("chunks")
+            old_by_idx = {
+                int(r.get("index")): r
+                for r in (old_chunks if isinstance(old_chunks, list) else [])
+                if isinstance(r, dict) and str(r.get("index", "")).isdigit()
+            }
+        else:
+            old_by_idx = {}
+
+        rec_by_idx = {int(r["index"]): r for r in manifest["chunks"]}
+        for sp in specs:
+            rec = rec_by_idx[sp["index"]]
+            old_rec = old_by_idx.get(sp["index"])
+            if not old_rec:
+                continue
+            if str(old_rec.get("status") or "") != "done":
+                continue
+            try:
+                same_path = os.path.abspath(str(old_rec.get("file") or "")) == sp["file"]
+            except Exception:
+                same_path = False
+            if same_path and _chunk_record_ready(old_rec):
+                rec["status"] = "done"
+                rec["encoder"] = str(old_rec.get("encoder") or "vt")
+                rec["actual_duration"] = old_rec.get("actual_duration", 0.0)
+                rec["updated_at"] = str(old_rec.get("updated_at") or _now_iso())
+                reused += 1
+            else:
+                _log(f"[ВИДЕО] чанк {sp['index'] + 1}: файл из манифеста отсутствует/битый — перерендер")
+        _save_manifest()
+
+        _log(f"[{tag}] Чанковый рендер: {len(groups)} чанков "
+             f"(память {width}x{height}-графа ограничена; манифест: готово {reused})")
+        enc_used: set[str] = set()
+        for sp in specs:
+            gi = int(sp["index"])
+            rec = rec_by_idx[gi]
+            sink.append(sp["file"])
+            if rec.get("status") == "done":
+                enc_used.add(str(rec.get("encoder") or "vt"))
+                partial = True
+                _log(f"[ВИДЕО] чанк {gi + 1}: из манифеста (готов)")
+                continue
+
+            _log(f"[{tag}] чанк {gi + 1}/{len(groups)}: "
+                 f"{len(sp['paths'])} планов, {sp['duration']:.1f}с → "
+                 f"{os.path.basename(sp['file'])}")
+            ensure_storage(sp["paths"], sp["file"], log_fn=_log)
+            # P0-4: не кодируем параллельно с другим ffmpeg этой сессии.
+            memory_guard.wait_for_ffmpeg_idle(_log, label=f"чанк {gi + 1} ({tag})")
+            # P0-4: RAM/swap gate — пауза вместо swap/SIGKILL.
+            memory_guard.wait_for_memory(_log, label=f"перед чанком {gi + 1} ({tag})")
+
+            t0 = time.monotonic()
+            enc = _run_encode_cmd(
+                _build_encode_cmd(
+                    _ffmpeg_bin(), sp["fc"], sp["paths"], sp["file"],
+                    target_duration=target_duration, bitrate=bitrate,
+                    with_audio=False, threads=2, serialize_graph=True,
+                    hwaccel=hwaccel,
+                ),
+                target_duration=target_duration,
+                log_fn=_log,
+                label=f" (чанк {gi + 1})",
+            )
+            elapsed = time.monotonic() - t0
+            if not enc:
+                rec.update(status="failed", updated_at=_now_iso(),
+                           error="encode failed (VT и CPU)")
+                _save_manifest(note=f"чанк {gi + 1}: encode failed")
+                return {"started": True, "ok": False, "partial": partial}
+            rec.update(status="done", encoder=enc, updated_at=_now_iso(),
+                       actual_duration=round(_probe_video_duration(sp["file"]), 3))
+            enc_used.add(enc)
+            partial = True
+            _save_manifest()
+            _log(f"[ВИДЕО] чанк {gi + 1}: готов за {elapsed:.1f}с ({enc})")
+
+        # склейка чанков (stream copy) + озвучка
+        memory_guard.wait_for_ffmpeg_idle(_log, label="перед сборкой")
+        if len(enc_used) > 1:
+            memory_guard.wait_for_memory(_log, label="перед сборкой")
+        lst = output_path + f".chunks_{uuid.uuid4().hex[:6]}.txt"
+        with open(lst, "w", encoding="utf-8") as f:
+            for cf in sink:
+                f.write(f"file '{os.path.abspath(cf)}'\n")
+        ccmd = [_ffmpeg_bin(), "-y", "-f", "concat", "-safe", "0", "-i", lst]
+        if has_audio:
+            ccmd += ["-i", audio_file]
+        ccmd += ["-map", "0:v"]
+        if has_audio:
+            ccmd += ["-map", "1:a", "-c:a", "aac", "-b:a", "192k",
+                     "-ac", "2", "-ar", "48000"]
+        else:
+            ccmd += ["-an"]
+        if len(enc_used) <= 1:
+            ccmd += ["-c:v", "copy"]
+        else:
+            _log(f"[{tag}] чанки разными энкодерами — склейка с перекодированием")
+            ccmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2"]
+        ccmd += ["-t", str(target_duration), tmp_path]
+        res = run_ffmpeg(ccmd, log_fn=_log, media_duration=target_duration)
+        try:
+            os.remove(lst)
+        except OSError:
+            pass
+        if res.returncode != 0 or not verify_mp4(tmp_path, log_fn=_log):
+            err = ((res.stderr or res.stdout or "")[-600:]) or "concat failed"
+            _log(f"[ВИДЕО] Ошибка сборки чанков: {err}")
+            manifest["last_error"] = f"concat: {err[-300:]}"
+            _save_manifest()
+            return {"started": True, "ok": False, "partial": partial}
+        manifest["status"] = "concat_done"
+        _save_manifest()
+        return {"started": True, "ok": True, "partial": partial}
+    except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
+        # P0-4: чанки и манифест сохраняем — следующий запуск продолжит
+        # с первого неготового чанка. Монолитный энкод не запускаем.
+        try:
+            if "manifest" in locals():
+                manifest["last_error"] = "memory gate: рендер приостановлен"
+                _save_manifest()
+            _log(f"[{tag}] Чанковый рендер остановлен memory-gate; "
+                 "готовые чанки сохранены для resume")
+        except Exception:
+            pass
+        raise
+    except Exception as _ch_e:
+        _log(f"[{tag}] Чанковый рендер не удался ({_ch_e}) — обычный путь")
+        return {"started": started, "ok": False, "partial": partial}
+
+
+def conform_4k(
+    *,
+    plan=None,
+    inputs: list[str] | None = None,
+    output_path: str,
+    target_duration: float,
+    audio_file: str = "",
+    cinematic_settings=None,
+    width: int = 3840,
+    height: int = 2160,
+    bitrate: str = "28M",
+    fps: int = 30,
+    log_fn=None,
+    min_chunk_scenes: int = 8,
+) -> str:
+    """A3: native 4K conform из того же плана/исходников, что и proxy-мастер.
+
+    Никакого апскейла 1080→4K: кадры берутся заново из 4K-исходников по
+    source_in/source_out плана. Память — те же правила, что у мастера:
+    memory-gate перед чанком, чанки по жёстким склейкам, manifest-resume.
+    """
+    _log = log_fn or log.info
+    target_duration = float(target_duration)
+    if target_duration <= 0:
+        raise ValueError("conform_4k: target_duration должен быть > 0")
+    if not output_path:
+        raise ValueError("conform_4k: не задан output_path")
+    width, height = int(width), int(height)
+
+    from video_maker.cinematic.config import DEFAULT_CINEMATIC_SETTINGS
+
+    ce = cinematic_settings or DEFAULT_CINEMATIC_SETTINGS
+    scenes: list = []
+    transitions: list = []
+    paths: list[str] = []
+    chunkable = False
+    filter_complex = ""
+
+    if plan is not None and getattr(plan, "scenes", None):
+        # [B4] Прямой вызов conform_4k с планом не должен падать на маркерах
+        # vm-graphic://: материализуем их в реальные карточки/фон ДО сборки
+        # графа. Вызов идемпотентен (кэш по scene_id/длительности/размеру),
+        # поэтому повторный conform того же плана переиспользует файлы.
+        _materialize_graphic_plan(
+            plan, output_path=output_path, width=width, height=height,
+            log_fn=_log, fps=fps,
+        )
+        try:
+            from video_maker.cinematic.timeline import apply_rhythm
+            from video_maker.cinematic.render_graph import assemble_render_graph
+
+            _plan_target = (
+                getattr(plan, "target_duration", 0.0)
+                or getattr(plan, "total_duration", 0.0)
+                or target_duration
+            )
+            tl = apply_rhythm(list(plan.scenes), ce, target_duration=float(_plan_target))
+            scenes = list(tl.scenes)
+            transitions = list(tl.transitions)
+            paths = [str(getattr(sc, "source_path", "") or "") for sc in scenes]
+            if not paths or not all(paths):
+                raise ValueError("в плане нет source_path")
+            graph = assemble_render_graph(
+                scenes, transitions, ce, out_w=width, out_h=height, fps=fps
+            )
+            filter_complex = graph.concat_or_xfade
+            if "[vout]" in filter_complex:
+                filter_complex = filter_complex.replace("[vout]", "[v]")
+            # B4: treated-сцены в 4K conform (тот же план, что у proxy).
+            filter_complex = _inject_fallback_treatments(
+                filter_complex, scenes, log_fn=_log)
+            chunkable = True
+            _log(f"[КОНФОРМ 4K] native {width}x{height}: план {len(scenes)} сцен, "
+                 f"{len(transitions)} переходов")
+            if inputs is not None and len(inputs) != len(paths):
+                _log(f"[КОНФОРМ 4K] inputs={len(inputs)} ≠ план {len(paths)} — используем план")
+        except Exception as e:
+            if inputs:
+                _log(f"[КОНФОРМ 4K] план не применён ({e}) — legacy из inputs")
+                paths = [str(p) for p in inputs]
+                plan = None
+                chunkable = False
+            else:
+                raise
+
+    if not paths:
+        paths = [str(p) for p in (inputs or [])]
+        if not paths:
+            raise ValueError("conform_4k: нужен план или inputs")
+        from video_maker.cinematic.vm_bridge import legacy_filter_complex
+
+        filter_complex = legacy_filter_complex(len(paths), width, height)
+        _log(f"[КОНФОРМ 4K] legacy {width}x{height}: {len(paths)} входов")
+
+    has_audio = bool(audio_file and os.path.exists(audio_file))
+    ffmpeg = _ffmpeg_bin()
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    tmp_out = output_path + f".vm_tmp_{uuid.uuid4().hex[:8]}.mp4"
+    manifest_path = _chunk_manifest_path(output_path)
+    chunk_files: list[str] = []
+    ce_many = bool(getattr(ce, "enabled", False)) and len(paths) > 6
+    ok = False
+    partial = False
+    started = False
+    t_start = time.monotonic()
+
+    try:
+        ensure_storage(
+            paths + ([audio_file] if has_audio else []), tmp_out, log_fn=_log
+        )
+        if chunkable and len(scenes) >= int(min_chunk_scenes):
+            try:
+                res = _render_chunked_plan(
+                    plan=plan,
+                    settings=ce,
+                    target_duration=target_duration,
+                    width=width,
+                    height=height,
+                    bitrate=bitrate,
+                    audio_file=audio_file,
+                    has_audio=has_audio,
+                    output_path=output_path,
+                    tmp_path=tmp_out,
+                    log_fn=_log,
+                    tag="КОНФОРМ 4K",
+                    hwaccel=not ce_many,
+                    chunk_files=chunk_files,
+                )
+                started = bool(res.get("started"))
+                partial = bool(res.get("partial"))
+                ok = bool(res.get("ok"))
+            except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
+                partial = True
+                raise
+
+        if not ok:
+            # Монолитный 4K conform: memory-gate предупреждает, но не валит
+            # (resume-манифеста на этом пути нет).
+            try:
+                memory_guard.wait_for_ffmpeg_idle(_log, label="4K conform")
+                memory_guard.wait_for_memory(_log, label="перед 4K conform")
+            except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError) as _mg_e:
+                _log(f"[КОНФОРМ 4K] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
+            cmd = _build_encode_cmd(
+                ffmpeg, filter_complex, paths, tmp_out,
+                target_duration=target_duration, bitrate=bitrate,
+                audio_file=audio_file, has_audio=has_audio, with_audio=True,
+                hwaccel=not ce_many,
+            )
+            _log(f"[КОНФОРМ 4K] Одна команда: {len(paths)} входов → "
+                 f"{os.path.basename(output_path)}")
+            if not _run_encode_cmd(
+                cmd, target_duration=target_duration, log_fn=_log
+            ):
+                raise RuntimeError("4K conform encode failed (VT и CPU)")
+
+        # [ГЕЙТ] тот же контракт, что у мастера: видео не короче озвучки.
+        vdur, adur = _probe_av_durations(tmp_out)
+        if has_audio and adur > 0.5 and vdur < 0.95 * adur:
+            _log(f"[ГЕЙТ] ОШИБКА conform: видео {vdur:.1f}с < 0.95×аудио {adur:.1f}с")
+            raise RuntimeError(
+                f"[ГЕЙТ] conform: видео {vdur:.1f}с короче озвучки {adur:.1f}с")
+        atomic_replace(tmp_out, output_path)
+        ok = True
+        _log(f"[КОНФОРМ 4K] готов за {time.monotonic() - t_start:.1f}с "
+             f"({'chunks' if started else 'single'}), видео {vdur:.1f}с / "
+             f"аудио {adur:.1f}с → {output_path}")
+        return output_path
+    finally:
+        if os.path.exists(tmp_out):
+            try:
+                os.remove(tmp_out)
+            except OSError:
+                pass
+        # При memory-pause готовые чанки/манифест НЕ удаляем — resume.
+        if ok or (not partial and not started):
+            for cf in chunk_files:
+                _remove_quiet(cf)
+            _remove_quiet(manifest_path)
+
+
+
 # Папка использованных B-roll (исключается из ротации)
 USED_DIR_NAME = "used"
 _SKIP_SUBDIR_NAMES = frozenset({
@@ -394,6 +1128,9 @@ def move_to_used(root_folder: str, paths: list[str], log_fn=None) -> int:
         parts_lower = {x.lower() for x in abs_p.split(os.sep)}
         if USED_DIR_NAME in parts_lower or "использованная" in parts_lower:
             continue
+        # B4: сгенерированные карточки/фон — кэш рендера, не B-roll пула.
+        if "graphic_cards" in parts_lower:
+            continue
         base = os.path.basename(abs_p)
         # P1-7: сохраняем относительный путь (тематические подпапки не вырождаются)
         rel = os.path.relpath(abs_p, root_abs)
@@ -442,10 +1179,32 @@ def fit_video_to_duration(
     scene_bound: bool = False,
     # Лучшие файлы сцены из манифеста (порядок = приоритет).
     scene_preferred: dict | None = None,
+    # A3: None → env VM_RENDER_PROXY / GUI render_proxy; True/False — принудительно.
+    render_proxy: bool | None = None,
 ) -> str:
-    """Scale+concat+trim under target duration. Default 3840x2160 @ 28M."""
+    """Scale+concat+trim under target duration. Default 3840x2160 @ 28M.
+
+    A3: render_proxy=True → быстрый 1080p proxy-мастер, затем native 4K
+    conform из того же плана/исходников (proxy-кадры в 4K не масштабируются).
+    """
     _log = log_fn or log.info
     width, height = int(width), int(height)
+    _final_output_path = output_path
+    _final_bitrate = str(bitrate)
+    _proxy_on = _render_proxy_enabled(render_proxy)
+    _proxy_wh = _proxy_size(width, height) if _proxy_on else None
+    if _proxy_on and _proxy_wh is None:
+        _log(f"[РЕНДЕР] render_proxy=on, но геометрия {width}x{height} не 4K — proxy отключён")
+        _proxy_on = False
+    _render_w, _render_h = _proxy_wh if _proxy_wh else (width, height)
+    _encode_bitrate = _PROXY_BITRATE if _proxy_on else _final_bitrate
+    _master_output_path = _final_output_path
+    if _proxy_on:
+        _stem, _sfx_ext = os.path.splitext(_final_output_path)
+        _master_output_path = _stem + _PROXY_SUFFIX
+        _log(f"[РЕНДЕР] proxy-режим: мастер {_render_w}x{_render_h} @ {_encode_bitrate}, "
+             f"финал {width}x{height} @ {_final_bitrate} (conform из 4K-исходников)")
+    _render_tag = "ВИДЕО proxy 1080p" if _proxy_on else "ВИДЕО 4K"
     _log(f"[ВИДЕО] Склейка под {target_duration:.1f}с ({width}x{height} @ {bitrate})")
 
     if not video_files:
@@ -601,6 +1360,8 @@ def fit_video_to_duration(
     # Cinematic Enhancement: rebuild plan on FINAL selected list (P1-01)
     _ce_debug = os.environ.get("CE_DEBUG_PLAN", "").strip().lower() in ("1", "true", "yes")
     _ce_plan = None
+    _ce = None
+    _ce_4k = False
     try:
         from video_maker.cinematic.vm_bridge import (
             build_ce_filter_complex,
@@ -649,7 +1410,17 @@ def fit_video_to_duration(
                     max(0.0, float(sc.source_out) - float(sc.source_in))
                     for sc in _plan.scenes
                 )
-                _need = float(target_duration) * 1.01
+                # [B4] hard_only не теряет время на xfade: запас 1% нужен только
+                # переходам. Иначе scene-bound план (окна ровно = озвучке)
+                # всегда «не покрывал» target и CE падал в legacy без обработки.
+                try:
+                    _trans_mode = str(getattr(_ce, "allowed_transitions", "hard_only")
+                                      or "hard_only")
+                except Exception:
+                    _trans_mode = "hard_only"
+                _need = float(target_duration) * (
+                    1.01 if _trans_mode != "hard_only" else 0.999
+                )
                 if _cover < _need and selected:
                     _log(f"[ГЕЙТ] покрытие плана {_cover:.1f}с < {_need:.1f}с — повторяю клипы и пересобираю план")
                     _extra = list(selected)
@@ -695,6 +1466,14 @@ def fit_video_to_duration(
                 raise
             except Exception as _g_e:
                 _log(f"[ГЕЙТ] проверка покрытия плана пропущена: {_g_e}")
+            # [B4] graphic_fallback: маркеры плана → реальные карточки/фон.
+            # Делаем ДО синхронизации входов: ffmpeg получает готовые файлы,
+            # а не пути-маркеры; длительности/порядок сцен не меняются.
+            if _plan is not None and getattr(_plan, "scenes", None):
+                _materialize_graphic_plan(
+                    _plan, output_path=_master_output_path,
+                    width=width, height=height, log_fn=_log, fps=30,
+                )
             # [VM-FIX] Рендерим ИМЕННО план: входы = пути сцен плана, в его порядке.
             # Иначе фильтр (по плану) и входы (по списку выбора) расходятся по
             # индексам — энкодер получает не те кадры и падает.
@@ -733,6 +1512,10 @@ def fit_video_to_duration(
             settings=_ce,
             plan=_plan,
         )
+        # [B4] treated: blur+грейд (обычные сцены не затрагиваются).
+        if _plan is not None and getattr(_plan, "scenes", None):
+            filter_complex = _inject_fallback_treatments(
+                filter_complex, _plan.scenes, log_fn=_log)
         # Optional transition SFX under narration (whoosh on soft dissolves)
         if (
             has_audio
@@ -795,6 +1578,29 @@ def fit_video_to_duration(
         filters.append(f"{concat_in}concat=n={n}:v=1:a=0[v]")
         filter_complex = ";".join(filters)
 
+    # A3: proxy-мастер — ТОТ ЖЕ план/нарезка, но граф в 1080p.
+    # CE-гейт рассчитан только на 4K, поэтому строим render graph напрямую
+    # (build_geometry_filter_complex), а не через build_ce_filter_complex.
+    if _proxy_on:
+        try:
+            filter_complex = _build_geometry_filter_complex(
+                selected,
+                plan=_ce_plan,
+                settings=_ce,
+                width=_render_w,
+                height=_render_h,
+                target_duration=target_duration,
+            )
+            _log(f"[РЕНДЕР] proxy-граф: {width}x{height} → {_render_w}x{_render_h} "
+                 "(тот же план/нарезка)")
+        except Exception as _px_e:
+            _proxy_on = False
+            _render_w, _render_h = width, height
+            _encode_bitrate = _final_bitrate
+            _master_output_path = _final_output_path
+            _render_tag = "ВИДЕО 4K"
+            _log(f"[РЕНДЕР] proxy отключён ({_px_e}) — рендер сразу 4K")
+
     # [VM-FIX] 80+ входов × авто-потоки декодера = исчерпание потоков macOS
     # («Error reinitializing filters / Resource temporarily unavailable», -35) —
     # капим потоки декодера на вход (локальный пул тоже падал).
@@ -806,9 +1612,9 @@ def fit_video_to_duration(
             else:
                 _capped.append(_x)
         inputs = _capped
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(_master_output_path) or ".", exist_ok=True)
     # P0-6: пишем в tmp → verify → атомарная подмена (битый мастер не уедет в ветки)
-    tmp_out = output_path + f".vm_tmp_{uuid.uuid4().hex[:8]}.mp4"
+    tmp_out = _master_output_path + f".vm_tmp_{uuid.uuid4().hex[:8]}.mp4"
     check_inputs = list(selected) + ([audio_file] if has_audio else [])
     # [VM-FIX] сериализованный граф медленнее: таймаут 14× реального времени
     _enc_timeout = max(3600.0, float(target_duration) * 14.0)
@@ -816,7 +1622,7 @@ def fit_video_to_duration(
     _partial_chunks = False
     _pause_keep = False
     _render_ok = False
-    _manifest_path = _chunk_manifest_path(output_path)
+    _manifest_path = _chunk_manifest_path(_master_output_path)
 
     def _build_cmd(fc_local: str, paths_local: list[str], out_file: str,
                    with_audio: bool, threads: int | None = None,
@@ -858,7 +1664,7 @@ def fit_video_to_duration(
         if threads is not None:
             _c2 += ["-threads", str(int(threads))]
         _c2 += [
-            "-b:v", bitrate, "-allow_sw", "1",
+            "-b:v", _encode_bitrate, "-allow_sw", "1",
             "-pix_fmt", "yuv420p",
             "-r", "30",
         ]
@@ -905,274 +1711,47 @@ def fit_video_to_duration(
         return ""
 
     def _render_chunked() -> bool:
-        """[VM-FIX] Чанковый рендер мастера: большой 4K-граф (70+ планов) копит
-        кадры со всех входов (swap → SIGKILL на 8ГБ Mac). Режем план на чанки
-        по ЖЁСТКИМ склейкам: память каждого чанка ограничена; финал — concat
-        демультиплексором (stream copy) + озвучка. False → обычный путь.
+        """A3/P0-4: чанковый рендер текущего мастера (proxy 1080p или 4K).
 
-        P0-4: memory-gate перед каждым чанком + манифест для resume. При
-        MemoryPressureError/FFmpegBusyError не откатываемся в монолитный энкод
-        (это как раз путь к OOM) — пробрасываем ошибку наверх.
+        Общая реализация — _render_chunked_plan: memory-gate перед каждым
+        чанком, manifest-resume, чанки по жёстким склейкам. False → обычный
+        монолитный путь (только для не-памятых ошибок).
         """
         nonlocal _partial_chunks, _pause_keep
         try:
-            from video_maker.cinematic.timeline import apply_rhythm as _apply_rhythm2
-            from video_maker.cinematic.render_graph import assemble_render_graph as _assemble
-        except Exception as _im_e:
-            _log(f"[ВИДЕО 4K] чанки: импорт не удался ({_im_e})")
-            return False
-        try:
-            _tl2 = _apply_rhythm2(_ce_plan.scenes, _ce,
-                                  target_duration=_ce_plan.target_duration or _ce_plan.total_duration)
-            _scenes2 = list(_tl2.scenes)
-            _trans2 = list(_tl2.transitions)
-            _tl_warnings = list(getattr(_tl2, "warnings", []) or [])
-            for _w in _tl_warnings[:8]:
-                _log(f"[CE] timeline: {_w}")
-            try:
-                _ce_plan.warnings = list(_ce_plan.warnings) + _tl_warnings
-            except Exception:
-                pass
-            # [ORD] 8ГБ Mac: даже 13 4K-планов при занятой памяти дают SIGKILL.
-            # Режем на чанки начиная с 8 планов (раньше — только 30+).
-            if len(_scenes2) < 8:
-                return False
-            _chunk_size = min(8, max(4, -(-len(_scenes2) // 5)))
-            _groups: list[list[int]] = []
-            _cur: list[int] = []
-            for _i in range(len(_scenes2)):
-                _cur.append(_i)
-                if len(_cur) >= _chunk_size and _i + 1 < len(_scenes2):
-                    _tr = _trans2[_i] if _i < len(_trans2) else None
-                    if _tr is not None and (_tr.spec.kind == "hard" or _tr.spec.duration <= 0.01):
-                        _groups.append(_cur)
-                        _cur = []
-            if _cur:
-                _groups.append(_cur)
-            if len(_groups) <= 1:
-                return False
-
-            # --- P0-4: план чанков + манифест (resume) ---
-            _specs: list[dict] = []
-            for _gi, _g in enumerate(_groups):
-                _g_scenes = [_scenes2[_j] for _j in _g]
-                _g_tr = [_trans2[_j] for _j in _g[:-1]]
-                _g_graph = _assemble(_g_scenes, _g_tr, _ce,
-                                     out_w=width, out_h=height, fps=30)
-                _g_fc = _g_graph.concat_or_xfade
-                if "[vout]" in _g_fc:
-                    _g_fc = _g_fc.replace("[vout]", "[v]")
-                _g_paths = [str(getattr(_sc, "source_path", "") or "") for _sc in _g_scenes]
-                _specs.append({
-                    "index": _gi,
-                    "graph": _g_graph,
-                    "fc": _g_fc,
-                    "fc_sha": hashlib.sha256(_g_fc.encode("utf-8")).hexdigest(),
-                    "paths": _g_paths,
-                    "file": os.path.abspath(output_path + f".chunk{_gi:02d}.mp4"),
-                    "duration": float(min(_g_graph.total_duration, float(target_duration))),
-                    "scenes": _g_scenes,
-                })
-
-            _fp_payload = {
-                "version": _CHUNK_MANIFEST_VERSION,
-                "width": int(width),
-                "height": int(height),
-                "fps": 30,
-                "target_duration": round(float(target_duration), 3),
-                "bitrate": str(bitrate),
-                "chunks": [
-                    {
-                        "index": _sp["index"],
-                        "duration": round(float(_sp["duration"]), 3),
-                        "graph_sha": _sp["fc_sha"],
-                        "scenes": [
-                            {
-                                "path": os.path.abspath(str(getattr(_sc, "source_path", "") or "")),
-                                "in": round(float(getattr(_sc, "source_in", 0.0) or 0.0), 3),
-                                "out": round(float(getattr(_sc, "source_out", 0.0) or 0.0), 3),
-                            }
-                            for _sc in _sp["scenes"]
-                        ],
-                    }
-                    for _sp in _specs
-                ],
-            }
-            _fingerprint = _sha256_payload(_fp_payload)
-            _manifest: dict = {
-                "version": _CHUNK_MANIFEST_VERSION,
-                "created_at": _now_iso(),
-                "updated_at": _now_iso(),
-                "output": os.path.abspath(output_path),
-                "fingerprint": _fingerprint,
-                "width": int(width),
-                "height": int(height),
-                "fps": 30,
-                "target_duration": float(target_duration),
-                "chunks": [
-                    {
-                        "index": _sp["index"],
-                        "file": _sp["file"],
-                        "duration": float(_sp["duration"]),
-                        "encoder": "",
-                        "status": "pending",
-                        "updated_at": _now_iso(),
-                    }
-                    for _sp in _specs
-                ],
-            }
-
-            def _save_manifest(note: str = "") -> None:
-                _manifest["updated_at"] = _now_iso()
-                if note:
-                    _manifest["last_error"] = note
-                try:
-                    _atomic_write_json(_manifest_path, _manifest)
-                except Exception as _mf_e:
-                    _log(f"[ВИДЕО] манифест чанков не записан: {_mf_e}")
-
-            _old = _read_json_file(_manifest_path)
-            _reused = 0
-            if _old and _old.get("fingerprint") != _fingerprint:
-                _log("[ВИДЕО] манифест чанков от другого плана — начинаем заново")
-                _old = None
-            if _old:
-                _old_chunks = _old.get("chunks")
-                _old_by_idx = {
-                    int(_r.get("index")): _r
-                    for _r in (_old_chunks if isinstance(_old_chunks, list) else [])
-                    if isinstance(_r, dict) and str(_r.get("index", "")).isdigit()
-                }
-            else:
-                _old_by_idx = {}
-
-            _rec_by_idx = {int(_r["index"]): _r for _r in _manifest["chunks"]}
-            for _sp in _specs:
-                _rec = _rec_by_idx[_sp["index"]]
-                _old_rec = _old_by_idx.get(_sp["index"])
-                if not _old_rec:
-                    continue
-                if str(_old_rec.get("status") or "") != "done":
-                    continue
-                # Путь из манифеста должен совпадать с ожидаемым файлом чанка.
-                try:
-                    _same_path = os.path.abspath(str(_old_rec.get("file") or "")) == _sp["file"]
-                except Exception:
-                    _same_path = False
-                if _same_path and _chunk_record_ready(_old_rec):
-                    _rec["status"] = "done"
-                    _rec["encoder"] = str(_old_rec.get("encoder") or "vt")
-                    _rec["actual_duration"] = _old_rec.get("actual_duration", 0.0)
-                    _rec["updated_at"] = str(_old_rec.get("updated_at") or _now_iso())
-                    _reused += 1
-                else:
-                    _log(f"[ВИДЕО] чанк {_sp['index'] + 1}: файл из манифеста отсутствует/битый — перерендер")
-            _save_manifest()
-
-            _log(f"[ВИДЕО 4K] Чанковый рендер: {len(_groups)} чанков "
-                 f"(память 4K-графа ограничена; манифест: готово {_reused})")
-            _enc_used: set[str] = set()
-            for _sp in _specs:
-                _gi = int(_sp["index"])
-                _rec = _rec_by_idx[_gi]
-                _chunk_files.append(_sp["file"])
-                if _rec.get("status") == "done":
-                    _enc_used.add(str(_rec.get("encoder") or "vt"))
-                    _partial_chunks = True
-                    _log(f"[ВИДЕО] чанк {_gi + 1}: из манифеста (готов)")
-                    continue
-
-                _log(f"[ВИДЕО 4K] чанк {_gi + 1}/{len(_groups)}: "
-                     f"{len(_sp['paths'])} планов, {_sp['duration']:.1f}с → "
-                     f"{os.path.basename(_sp['file'])}")
-                ensure_storage(_sp["paths"], _sp["file"], log_fn=_log)
-                # P0-4: не кодируем параллельно с другим ffmpeg этой сессии.
-                memory_guard.wait_for_ffmpeg_idle(_log, label=f"чанк {_gi + 1}")
-                # P0-4: RAM/swap gate — пауза вместо swap/SIGKILL.
-                memory_guard.wait_for_memory(_log, label=f"перед чанком {_gi + 1}")
-
-                _t0 = time.monotonic()
-                _enc = _run_encode(
-                    _build_cmd(_sp["fc"], _sp["paths"], _sp["file"],
-                               with_audio=False, threads=2, serialize_graph=True),
-                    label=f" (чанк {_gi + 1})",
-                )
-                _elapsed = time.monotonic() - _t0
-                if not _enc:
-                    _rec.update(status="failed", updated_at=_now_iso(),
-                                error="encode failed (VT и CPU)")
-                    _save_manifest(note=f"чанк {_gi + 1}: encode failed")
-                    return False
-                _rec.update(status="done", encoder=_enc, updated_at=_now_iso(),
-                            actual_duration=round(_probe_video_duration(_sp["file"]), 3))
-                _enc_used.add(_enc)
-                _partial_chunks = True
-                _save_manifest()
-                _log(f"[ВИДЕО] чанк {_gi + 1}: готов за {_elapsed:.1f}с ({_enc})")
-
-            # склейка чанков (stream copy) + озвучка
-            memory_guard.wait_for_ffmpeg_idle(_log, label="перед сборкой")
-            if len(_enc_used) > 1:
-                # перекодирование при смешанных энкодерах — тяжёлый шаг
-                memory_guard.wait_for_memory(_log, label="перед сборкой")
-            _lst = output_path + f".chunks_{uuid.uuid4().hex[:6]}.txt"
-            with open(_lst, "w", encoding="utf-8") as _f:
-                for _cf in _chunk_files:
-                    _f.write(f"file '{os.path.abspath(_cf)}'\n")
-            _ccmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", _lst]
-            if has_audio:
-                _ccmd += ["-i", audio_file]
-            _ccmd += ["-map", "0:v"]
-            if has_audio:
-                _ccmd += ["-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000"]
-            else:
-                _ccmd += ["-an"]
-            if len(_enc_used) <= 1:
-                # все чанки одним энкодером — честная склейка без перекодирования
-                _ccmd += ["-c:v", "copy"]
-            else:
-                # VT + CPU вперемешку: SPS разные — перекодируем при склейке
-                # (один вход, без графа — память в норме)
-                _log("[ВИДЕО 4K] чанки разными энкодерами — склейка с перекодированием")
-                _ccmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2"]
-            _ccmd += ["-t", str(target_duration), tmp_out]
-            res = run_ffmpeg(_ccmd, log_fn=_log, media_duration=target_duration)
-            try:
-                os.remove(_lst)
-            except OSError:
-                pass
-            if res.returncode != 0 or not verify_mp4(tmp_out, log_fn=_log):
-                err = ((res.stderr or res.stdout or "")[-600:]) or "concat failed"
-                _log(f"[ВИДЕО] Ошибка сборки чанков: {err}")
-                _manifest["last_error"] = f"concat: {err[-300:]}"
-                _save_manifest()
-                return False
-            _manifest["status"] = "concat_done"
-            _save_manifest()
-            return True
+            _res = _render_chunked_plan(
+                plan=_ce_plan,
+                settings=_ce,
+                target_duration=target_duration,
+                width=_render_w,
+                height=_render_h,
+                bitrate=_encode_bitrate,
+                audio_file=audio_file,
+                has_audio=has_audio,
+                output_path=_master_output_path,
+                tmp_path=tmp_out,
+                log_fn=_log,
+                tag=_render_tag,
+                hwaccel=not _ce_many,
+                chunk_files=_chunk_files,
+            )
         except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
-            # P0-4: чанки и манифест сохраняем — следующий запуск продолжит
-            # с первого неготового чанка. Монолитный энкод не запускаем.
             _pause_keep = True
-            try:
-                if "_manifest" in locals():
-                    _manifest["last_error"] = "memory gate: рендер приостановлен"
-                    _save_manifest()
-                _log("[ВИДЕО 4K] Чанковый рендер остановлен memory-gate; "
-                     "готовые чанки сохранены для resume")
-            except Exception:
-                pass
+            _partial_chunks = True
+            _log(f"[{_render_tag}] Чанковый рендер остановлен memory-gate; "
+                 "готовые чанки сохранены для resume")
             raise
-        except Exception as _ch_e:
-            _log(f"[ВИДЕО 4K] Чанковый рендер не удался ({_ch_e}) — обычный путь")
-            return False
+        _partial_chunks = _partial_chunks or bool(_res.get("partial"))
+        return bool(_res.get("ok"))
 
     cmd = _build_cmd(filter_complex, selected, tmp_out, with_audio=True)
-    _log(f"[ВИДЕО 4K] Одна команда: {n} клипов → {os.path.basename(output_path)}")
+    _log(f"[{_render_tag}] Одна команда: {n} клипов → {os.path.basename(_master_output_path)}")
+    _t_master_start = time.monotonic()
     try:
         ensure_storage(check_inputs, tmp_out, log_fn=_log)
         _done = False
-        # [VM-FIX] большие 4K-графы → чанковый рендер (память)
+        # [VM-FIX] большие 4K-графы → чанковый рендер (память).
+        # A3: в proxy-режиме этот же путь рендерит 1080p-мастер.
         if _ce_4k and _ce_plan is not None and n >= 8:
             _done = _render_chunked()
         if not _done:
@@ -1183,7 +1762,7 @@ def fit_video_to_duration(
                 memory_guard.wait_for_ffmpeg_idle(_log, label="монолитный рендер")
                 memory_guard.wait_for_memory(_log, label="перед рендером")
             except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError) as _mg_e:
-                _log(f"[ВИДЕО 4K] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
+                _log(f"[{_render_tag}] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
             if not _run_encode(cmd):
                 raise RuntimeError("Быстрая склейка failed (VT и CPU)" )
         # [ГЕЙТ] Жёсткая проверка: видео не короче озвучки (иначе стоп-кадр).
@@ -1199,8 +1778,29 @@ def fit_video_to_duration(
             raise
         except Exception as _ge:
             _log(f"[ГЕЙТ] проверка длительностей пропущена: {_ge}")
-        atomic_replace(tmp_out, output_path)
+        atomic_replace(tmp_out, _master_output_path)
         _render_ok = True
+        if _proxy_on:
+            # A3: proxy-мастер НЕ является финалом. Финальный 4K — отдельный
+            # native conform из того же плана/исходников (без апскейла proxy).
+            _log(f"[РЕНДЕР] proxy-мастер 1080p готов → запуск 4K conform "
+                 f"(proxy за {time.monotonic() - _t_master_start:.1f}с)")
+            _t_conform = time.monotonic()
+            conform_4k(
+                plan=_ce_plan,
+                inputs=selected,
+                output_path=_final_output_path,
+                target_duration=target_duration,
+                audio_file=audio_file if has_audio else "",
+                cinematic_settings=_ce,
+                width=width,
+                height=height,
+                bitrate=_final_bitrate,
+                log_fn=_log,
+            )
+            output_path = _final_output_path
+            _log(f"[РЕНДЕР] 4K conform готов за {time.monotonic() - _t_conform:.1f}с "
+                 f"→ {output_path}")
         if _ce_debug and os.path.isfile(output_path):
             try:
                 from video_maker.cinematic.quality_report import probe_media, write_report

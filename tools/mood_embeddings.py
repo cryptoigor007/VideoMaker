@@ -316,6 +316,8 @@ def ensure_mood_vectors(model: str, cache_path: Path, ttl_days: float,
 
 
 def load_clips(db: Path) -> list[dict]:
+    if not db.exists():
+        raise FileNotFoundError(f"БД не найдена: {db}")
     conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
@@ -386,6 +388,10 @@ def assign_moods(rows: list[dict], emb: dict, mood_vecs: dict[str, list[float]],
             used_rows.append(r)
     if not clip_vecs:
         return [], {"error": "нет векторов клипов", "slugs": len(slugs)}
+    dims = {len(v) for v in clip_vecs} | {len(v) for v in mood_vecs.values() if v}
+    if len(dims) != 1:
+        return [], {"error": f"размерности векторов не совпадают: {sorted(dims)}",
+                    "slugs": len(slugs)}
     cm = normalize_rows(np.asarray(clip_vecs, dtype=np.float32))
     sim = cm @ mm.T
     out: list[dict] = []
@@ -447,7 +453,7 @@ def assign_moods(rows: list[dict], emb: dict, mood_vecs: dict[str, list[float]],
 
 def apply_to_db(db: Path, assignments: list[dict], mood_vecs: dict[str, list[float]],
                 model: str, run_id: str, report_path: Path, threshold: float,
-                log=print) -> dict:
+                mode: str = "pilot", log=print) -> dict:
     if not db.exists():
         raise RuntimeError(f"apply-db не существует: {db}")
     if db.resolve() == PROD_DB.resolve():
@@ -522,7 +528,7 @@ def apply_to_db(db: Path, assignments: list[dict], mood_vecs: dict[str, list[flo
             """INSERT OR REPLACE INTO mood_runs
                (run_id, model, mood_count, clips_n, threshold, mode, report_json, status, created_at)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (run_id, model, len(MOODS), len(assignments), threshold, "pilot",
+            (run_id, model, len(MOODS), len(assignments), threshold, mode,
              str(report_path), "ok", now))
         conn.execute(
             """INSERT INTO audit_log
@@ -593,7 +599,11 @@ def main() -> int:
     except Exception as exc:
         log(f"[MOOD] эмбеддинги не читаются: {exc}")
         return 2
-    rows = load_clips(args.db)
+    try:
+        rows = load_clips(args.db)
+    except Exception as exc:
+        log(f"[MOOD] БД не читается: {exc}")
+        return 2
     with_emb = sum(1 for r in rows if str(r.get("file") or "") in emb)
     log(f"Клипов: {len(rows)} | с эмбеддингом: {with_emb} | в JSON: {len(emb)}")
 
@@ -646,7 +656,8 @@ def main() -> int:
             return 2
         try:
             applied = apply_to_db(args.apply_db, assignments, mood_vecs, model, run_id,
-                                  json_path, args.threshold, log=log)
+                                  json_path, args.threshold,
+                                  mode="pilot" if args.limit else "full", log=log)
             report["apply"] = applied
             log(f"[MOOD] записано в {applied['db']}: клипов {applied['clips']}, "
                 f"mood-строк {applied['applied_moods']}, unmatched {applied['unmatched']}")

@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS clips (
 
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active', 'offline', 'missing', 'quarantine',
-                                      'duplicate', 'archived', 'needs_review')),
+                                      'twin', 'retired', 'needs_review',
+                                      'duplicate', 'archived')),
+    twin_of_id      INTEGER REFERENCES clips(id) ON DELETE SET NULL,  -- для status='twin'
 
     -- провенанс
     provider        TEXT,
@@ -118,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_clips_sha256 ON clips(sha256);
 CREATE INDEX IF NOT EXISTS idx_clips_phash ON clips(phash);
 CREATE INDEX IF NOT EXISTS idx_clips_updated_at ON clips(updated_at);
 CREATE INDEX IF NOT EXISTS idx_clips_needs_review ON clips(needs_review) WHERE needs_review = 1;
+CREATE INDEX IF NOT EXISTS idx_clips_twin ON clips(twin_of_id) WHERE twin_of_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_clips_missing_source ON clips(provider)
     WHERE source_url IS NULL OR source_url = '';
 CREATE INDEX IF NOT EXISTS idx_clips_missing_author ON clips(provider)
@@ -335,9 +338,16 @@ CREATE INDEX IF NOT EXISTS idx_clip_usage_used_at ON clip_usage(used_at);
 CREATE TABLE IF NOT EXISTS demand_ledger (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id        TEXT,
+    week              TEXT,                         -- ISO-неделя, YYYY-Www
     series            TEXT,
     scene             INTEGER,
-    query             TEXT,
+    query             TEXT,                         -- исходный запрос/текст сцены
+    query_norm        TEXT,                         -- нормализованный запрос (ключ частоты)
+    query_embedding   BLOB,                         -- float32[] (little-endian), если посчитан
+    embedding_model   TEXT,
+    embedding_dim     INTEGER,
+    cluster_key       TEXT,                         -- недельный кластер дефицита
+    frequency         INTEGER NOT NULL DEFAULT 1,  -- сколько раз запрос встретился
     themes            TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(themes)),
     mood              TEXT,
     orientation       TEXT,
@@ -345,11 +355,16 @@ CREATE TABLE IF NOT EXISTS demand_ledger (
     selected_clip_id  INTEGER REFERENCES clips(id) ON DELETE SET NULL,
     selected_rank     INTEGER,
     score             REAL,
+    weak_reason       TEXT,
+    source            TEXT NOT NULL DEFAULT 'scenes.jsonl',
     meta              TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(meta)),
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_demand_created ON demand_ledger(created_at);
+CREATE INDEX IF NOT EXISTS idx_demand_week ON demand_ledger(week);
+CREATE INDEX IF NOT EXISTS idx_demand_query_norm ON demand_ledger(query_norm);
+CREATE INDEX IF NOT EXISTS idx_demand_cluster ON demand_ledger(week, cluster_key);
 CREATE INDEX IF NOT EXISTS idx_demand_series ON demand_ledger(series, scene);
 CREATE INDEX IF NOT EXISTS idx_demand_clip ON demand_ledger(selected_clip_id);
 CREATE INDEX IF NOT EXISTS idx_demand_mood ON demand_ledger(mood);
@@ -388,6 +403,8 @@ CREATE TABLE IF NOT EXISTS library_health_history (
     missing         INTEGER NOT NULL DEFAULT 0,
     needs_review    INTEGER NOT NULL DEFAULT 0,
     dup_clusters    INTEGER NOT NULL DEFAULT 0,
+    twins           INTEGER NOT NULL DEFAULT 0,
+    retired         INTEGER NOT NULL DEFAULT 0,
     provenance_gap  INTEGER NOT NULL DEFAULT 0,
     no_embedding    INTEGER NOT NULL DEFAULT 0,
     total_bytes     INTEGER NOT NULL DEFAULT 0,
@@ -424,3 +441,14 @@ CREATE VIEW IF NOT EXISTS v_duplicate_candidates AS
 SELECT c.id, c.asset_uuid, c.file, c.sha256, c.phash, c.status, c.notes
   FROM clips c
  WHERE c.status = 'duplicate' OR c.notes LIKE '%duplicate%';
+
+CREATE VIEW IF NOT EXISTS v_demand_weekly AS
+SELECT week,
+       query_norm,
+       COUNT(*) AS hits,
+       MAX(frequency) AS frequency,
+       AVG(score) AS avg_score,
+       MAX(candidates_n) AS candidates_n,
+       MAX(cluster_key) AS cluster_key
+  FROM demand_ledger
+ GROUP BY week, query_norm;

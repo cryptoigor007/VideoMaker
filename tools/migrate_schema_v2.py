@@ -44,7 +44,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 SCHEMA_PATH = Path(__file__).with_name("schema_v2.sql")
-DEFAULT_SOURCE = Path.home() / "video_maker" / "broll_library.db"
+PROD_DB = Path.home() / "video_maker" / "broll_library.db"
+DEFAULT_SOURCE = PROD_DB
 DEFAULT_TARGET = Path.home() / "video_maker" / "broll_library_v2.db"
 DEFAULT_MIGRATION_DIR = Path.home() / "video_maker" / "migration"
 DEFAULT_ROOT = Path("/Volumes/video/broll_library")
@@ -312,16 +313,19 @@ def normalize_phash(value) -> tuple[str | None, float]:
 
 
 def hash_candidates(files: list[str], sizes: dict[str, int], max_bytes: int,
-                    workers: int) -> tuple[dict[str, str], dict]:
+                    workers: int, mode: str = "candidates") -> tuple[dict[str, str], dict]:
     groups: dict[int, list[str]] = {}
     for f in files:
         s = sizes.get(f)
         if s and s > 0:
             groups.setdefault(int(s), []).append(f)
     todo: list[str] = []
-    for s, group in sorted(groups.items()):
-        if len(group) > 1:
-            todo.extend(group)
+    if mode == "all":
+        todo = [f for group in groups.values() for f in group]
+    else:
+        for s, group in sorted(groups.items()):
+            if len(group) > 1:
+                todo.extend(group)
     planned = sum(sizes.get(f, 0) for f in todo)
     skipped = 0
     if planned > max_bytes:
@@ -348,7 +352,8 @@ def hash_candidates(files: list[str], sizes: dict[str, int], max_bytes: int,
                 out[f] = digest
             if i % 25 == 0 or i == len(futs):
                 print(f"[MIGRATE] sha256 {i}/{len(futs)} ({time.time() - t0:.1f}s)")
-    return out, {"candidates": len(todo), "hashed": len(out), "skipped_bytes_cap": skipped,
+    return out, {"mode": mode, "candidates": len(todo), "hashed": len(out),
+                 "skipped_bytes_cap": skipped,
                  "bytes": sum(sizes.get(f, 0) for f in todo), "seconds": round(time.time() - t0, 1)}
 
 
@@ -385,6 +390,9 @@ def main() -> int:
         return 2
     if args.source.resolve() == args.target.resolve():
         print("[MIGRATE] source и target совпадают — запрещено")
+        return 2
+    if args.apply and args.target.resolve() == PROD_DB.resolve():
+        print("[MIGRATE] target указывает на production-БД — запись запрещена")
         return 2
 
     started = now_iso()
@@ -454,7 +462,8 @@ def main() -> int:
         print(f"sha256: режим {args.hash_mode}…")
         all_files = list(sizes)
         cand = all_files if args.hash_mode == "all" else list(sizes)
-        hashed, hstats = hash_candidates(cand, sizes, args.hash_max_bytes, max(1, args.workers // 8))
+        hashed, hstats = hash_candidates(cand, sizes, args.hash_max_bytes,
+                                         max(1, args.workers // 8), mode=args.hash_mode)
         sha_map.update(hashed)
         print(f"  sha256: {hstats}")
     sha_counts = Counter(sha_map.values())
@@ -746,7 +755,16 @@ def main() -> int:
         "clip_fingerprints": conn.execute("SELECT COUNT(*) FROM clip_fingerprints").fetchone()[0],
         "clip_embeddings": conn.execute("SELECT COUNT(*) FROM clip_embeddings").fetchone()[0],
         "clip_usage": conn.execute("SELECT COUNT(*) FROM clip_usage").fetchone()[0],
+        "demand_ledger": conn.execute("SELECT COUNT(*) FROM demand_ledger").fetchone()[0],
     }
+    status_counts = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM clips GROUP BY status ORDER BY 2 DESC").fetchall())
+    dup_clusters = conn.execute(
+        "SELECT COUNT(*) FROM (SELECT sha256 FROM clips WHERE sha256 IS NOT NULL "
+        "GROUP BY sha256 HAVING COUNT(*) > 1)").fetchone()[0]
+    dup_members = conn.execute(
+        "SELECT COALESCE(SUM(n), 0) FROM (SELECT COUNT(*) AS n FROM clips "
+        "WHERE sha256 IS NOT NULL GROUP BY sha256 HAVING COUNT(*) > 1)").fetchone()[0]
     legacy_seconds = sum(float(r.get("duration") or 0) for r in legacy)
     new_seconds = (conn.execute("SELECT COALESCE(SUM(duration_ms),0) FROM clips").fetchone()[0] or 0) / 1000.0
     legacy_files = {str(r["file"]) for r in legacy}
@@ -780,9 +798,11 @@ def main() -> int:
             provenance_gap, no_embedding, total_bytes, health_score, details)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (now_iso(), run_id, counts["clips"], counts["clips"] - offline, offline,
-         needs_review_n, 0, prov_gap, no_emb, total_bytes, health,
+         needs_review_n, dup_clusters, prov_gap, no_emb, total_bytes, health,
          json.dumps({"formula": "100 -30*offline -20*prov_gap -15*no_emb -5*no_desc",
-                     "source": str(args.source), "mode": mode}, ensure_ascii=False)),
+                     "source": str(args.source), "mode": mode,
+                     "status_counts": status_counts,
+                     "dup_members": dup_members}, ensure_ascii=False)),
     )
     conn.execute(
         """INSERT INTO audit_log
@@ -808,6 +828,16 @@ def main() -> int:
             "SELECT COUNT(*) FROM clips WHERE phash IS NOT NULL").fetchone()[0],
         "duration": conn.execute(
             "SELECT COUNT(*) FROM clips WHERE duration_ms IS NOT NULL AND duration_ms > 0").fetchone()[0],
+        "resolution": conn.execute(
+            "SELECT COUNT(*) FROM clips WHERE width > 0 AND height > 0").fetchone()[0],
+        "bitrate": conn.execute(
+            "SELECT COUNT(*) FROM clips WHERE bitrate IS NOT NULL AND bitrate > 0").fetchone()[0],
+        "blur": conn.execute(
+            "SELECT COUNT(*) FROM clips WHERE blur IS NOT NULL AND blur > 0").fetchone()[0],
+        "motion": conn.execute(
+            "SELECT COUNT(*) FROM clips WHERE motion IS NOT NULL").fetchone()[0],
+        "description": new_desc,
+        "tags": new_tags,
         "embedding": counts["clip_embeddings"],
         "certificate": counts["certificates"],
     }
@@ -829,6 +859,7 @@ def main() -> int:
         "legacy_clips": len(legacy),
         "legacy_usage": len(usage_rows),
         "counts": counts,
+        "status_counts": status_counts,
         "field_fill": field_fill,
         "needs_review": {
             "total": needs_review_n,
@@ -836,6 +867,8 @@ def main() -> int:
         },
         "enrichment": {"author_from_cert": enriched_author, "source_url_from_cert": enriched_url},
         "sources_created": src_created,
+        "duplicates": {"exact_sha256_clusters": dup_clusters,
+                       "exact_sha256_members": dup_members},
         "missing_files": missing_files,
         "usage_orphans": usage_orphans,
         "usage_linked_by_name": usage_linked_by_name,
@@ -872,10 +905,12 @@ def main() -> int:
     print("-" * 78)
     print(f"Клипов: {len(legacy)} -> {counts['clips']} | offline: {offline} | "
           f"файлы сохранены: {files_preserved}/{len(legacy_files)}")
+    print(f"Статусы: {status_counts}")
     print(f"Источники: {counts['sources']} | сертификаты: {counts['certificates']} | "
           f"темы: {counts['themes']} | mood-словарь: {counts['moods']}")
     print(f"Эмбеддинги (meta): {counts['clip_embeddings']} | без эмбеддинга: {no_emb} | "
           f"usage: {counts['clip_usage']} (orphan {usage_orphans})")
+    print(f"Точные дубли (sha256): {dup_clusters} кластеров / {dup_members} файлов")
     print("Заполненность: " + " | ".join(f"{k}={human_pct(v, counts['clips'])}"
                                         for k, v in field_fill.items()))
     print(f"needs_review: {human_pct(needs_review_n, counts['clips'])}")

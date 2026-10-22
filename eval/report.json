@@ -1,0 +1,1426 @@
+{
+  "created_at": "2026-10-22T20:43:49.772547+00:00",
+  "config": {
+    "gold": "/Users/dreamstore/VideoMaker-r57cp34/eval/gold.jsonl",
+    "retrieval": "fresh",
+    "limit": 10,
+    "holdout": 10,
+    "run_seconds": 622.22
+  },
+  "gold_meta": {
+    "created_at": "2026-10-22T20:06:47.412341+00:00",
+    "manifests": [
+      "/Volumes/SSD/темп/компиляция/вывод_01/broll_smart/часть_01/smart_broll_manifest.json",
+      "/Volumes/SSD/темп/компиляция/вывод_02/broll_smart/часть_02/smart_broll_manifest.json"
+    ],
+    "db_read": "/Users/dreamstore/VideoMaker-r57cp34/eval/.cache/broll_library.db",
+    "db_production": "/Users/dreamstore/video_maker/broll_library.db",
+    "available_scenes": 342,
+    "gold_scenes": 40,
+    "limit": 40,
+    "verify_top": 3,
+    "vlm_model": "gemini-3.1-flash-lite",
+    "vlm_calls": 12,
+    "vlm_stats": {
+      "calls": 12
+    },
+    "class_counts": {
+      "literal": 16,
+      "associative": 20,
+      "abstract": 4
+    },
+    "label_counts": {
+      "accept": 9,
+      "must_graphic": 4,
+      "fallback_ok": 27
+    },
+    "split_counts": {
+      "holdout": 10,
+      "train": 30
+    },
+    "needs_human_review": 31,
+    "selected_score_sources": {
+      "manifest_vlm": 40
+    },
+    "candidate_search_ms_total": 449459.48,
+    "notes": [
+      "Метки предварительные: selected VLM-оценка из манифеста, top-N кандидатов — свежий VLM.",
+      "recall_eligible=False, если приемлемый клип не лежит в библиотеке (сток) — офлайн recall не считается.",
+      "Split 30/10 стратифицирован по классам и меткам, фиксируется в gold.jsonl."
+    ],
+    "duration_s": 1119.6,
+    "out": "/Users/dreamstore/VideoMaker-r57cp34/eval/gold.jsonl"
+  },
+  "metrics": {
+    "overall": {
+      "n_scenes": 40,
+      "n_recall_scenes": 12,
+      "n_literal_scenes": 4,
+      "recall": {
+        "@1": 0.08333333333333333,
+        "@3": 0.5833333333333334,
+        "@10": 0.6666666666666666
+      },
+      "literal_hit_rate": {
+        "@1": 0.0,
+        "@10": 0.5
+      },
+      "accept_rate": 0.225,
+      "fallback_rate": 0.775,
+      "fallback_ok_rate": 0.675,
+      "must_graphic_rate": 0.1,
+      "label_counts": {
+        "accept": 9,
+        "fallback_ok": 27,
+        "must_graphic": 4
+      },
+      "retrieval_ms_total": 622019.31,
+      "retrieval_ms_mean": 15550.48,
+      "vlm_calls": 12,
+      "vlm_calls_per_scene": 0.3
+    },
+    "by_split": {
+      "train": {
+        "n_scenes": 30,
+        "n_recall_scenes": 7,
+        "n_literal_scenes": 2,
+        "recall": {
+          "@1": 0.0,
+          "@3": 0.42857142857142855,
+          "@10": 0.5714285714285714
+        },
+        "literal_hit_rate": {
+          "@1": 0.0,
+          "@10": 0.5
+        },
+        "accept_rate": 0.2,
+        "fallback_rate": 0.8,
+        "fallback_ok_rate": 0.7,
+        "must_graphic_rate": 0.1,
+        "label_counts": {
+          "accept": 6,
+          "fallback_ok": 21,
+          "must_graphic": 3
+        },
+        "retrieval_ms_total": 474106.84,
+        "retrieval_ms_mean": 15803.56,
+        "vlm_calls": 7,
+        "vlm_calls_per_scene": 0.233
+      },
+      "holdout": {
+        "n_scenes": 10,
+        "n_recall_scenes": 5,
+        "n_literal_scenes": 2,
+        "recall": {
+          "@1": 0.2,
+          "@3": 0.8,
+          "@10": 0.8
+        },
+        "literal_hit_rate": {
+          "@1": 0.0,
+          "@10": 0.5
+        },
+        "accept_rate": 0.3,
+        "fallback_rate": 0.7,
+        "fallback_ok_rate": 0.6,
+        "must_graphic_rate": 0.1,
+        "label_counts": {
+          "accept": 3,
+          "fallback_ok": 6,
+          "must_graphic": 1
+        },
+        "retrieval_ms_total": 147912.47,
+        "retrieval_ms_mean": 14791.25,
+        "vlm_calls": 5,
+        "vlm_calls_per_scene": 0.5
+      }
+    },
+    "by_class": {
+      "literal": {
+        "n_scenes": 16,
+        "n_recall_scenes": 4,
+        "n_literal_scenes": 4,
+        "recall": {
+          "@1": 0.0,
+          "@3": 0.25,
+          "@10": 0.5
+        },
+        "literal_hit_rate": {
+          "@1": 0.0,
+          "@10": 0.5
+        },
+        "accept_rate": 0.1875,
+        "fallback_rate": 0.8125,
+        "fallback_ok_rate": 0.625,
+        "must_graphic_rate": 0.1875,
+        "label_counts": {
+          "accept": 3,
+          "fallback_ok": 10,
+          "must_graphic": 3
+        },
+        "retrieval_ms_total": 249576.5,
+        "retrieval_ms_mean": 15598.53,
+        "vlm_calls": 7,
+        "vlm_calls_per_scene": 0.438
+      },
+      "associative": {
+        "n_scenes": 20,
+        "n_recall_scenes": 8,
+        "n_literal_scenes": 0,
+        "recall": {
+          "@1": 0.125,
+          "@3": 0.75,
+          "@10": 0.75
+        },
+        "literal_hit_rate": {
+          "@1": null,
+          "@10": null
+        },
+        "accept_rate": 0.3,
+        "fallback_rate": 0.7,
+        "fallback_ok_rate": 0.7,
+        "must_graphic_rate": 0.0,
+        "label_counts": {
+          "accept": 6,
+          "fallback_ok": 14,
+          "must_graphic": 0
+        },
+        "retrieval_ms_total": 338575.75,
+        "retrieval_ms_mean": 16928.79,
+        "vlm_calls": 3,
+        "vlm_calls_per_scene": 0.15
+      },
+      "abstract": {
+        "n_scenes": 4,
+        "n_recall_scenes": 0,
+        "n_literal_scenes": 0,
+        "recall": {
+          "@1": null,
+          "@3": null,
+          "@10": null
+        },
+        "literal_hit_rate": {
+          "@1": null,
+          "@10": null
+        },
+        "accept_rate": 0.0,
+        "fallback_rate": 1.0,
+        "fallback_ok_rate": 0.75,
+        "must_graphic_rate": 0.25,
+        "label_counts": {
+          "accept": 0,
+          "fallback_ok": 3,
+          "must_graphic": 1
+        },
+        "retrieval_ms_total": 33867.06,
+        "retrieval_ms_mean": 8466.77,
+        "vlm_calls": 2,
+        "vlm_calls_per_scene": 0.5
+      }
+    }
+  },
+  "scenes": [
+    {
+      "scene_id": "часть_02_046",
+      "split": "holdout",
+      "class": "literal",
+      "label": "accept",
+      "confidence": 0.81,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "confused_person_many_choices_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "confused_person_many_choices_01_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "thoughtful_man_making_decision_4_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "library_books_140595_pixabay.mp4",
+        "smoke_slow_motion_dark_224207_pixabay.mp4",
+        "library_books_123513_pixabay.mp4",
+        "busy_city_crowd_blur_2_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "group_of_friends_laughing_67636_pixabay.mp4",
+        "window_light_shadow_29741_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": false,
+        "@10": false
+      }
+    },
+    {
+      "scene_id": "часть_02_005",
+      "split": "holdout",
+      "class": "literal",
+      "label": "must_graphic",
+      "confidence": 0.6,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "confused_young_woman_shrugging_1_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "person_unlocking_phone_then_1_pixabay.mp4",
+        "library_books_123513_pixabay.mp4",
+        "grandparents_portrait_smiling_44686_pixabay.mp4",
+        "person_inside_elevator_looking_1_pixabay.mp4",
+        "books_study_139804_pixabay.mp4",
+        "face_emotion_44646_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "person_eating_breakfast_looking_1_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_002",
+      "split": "holdout",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.83,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "lonely_person_deep_in_2_pixabay.mp4",
+        "lonely_person_sitting_by_2_pixabay.mp4",
+        "lonely_person_window_40797_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "lonely_person_sitting_by_2_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "window_rain_view_94680_pixabay.mp4",
+        "lonely_person_deep_in_2_pixabay.mp4",
+        "lonely_person_window_40797_pixabay.mp4",
+        "lonely_person_window_111331_pixabay.mp4",
+        "window_light_356787_pixabay.mp4",
+        "man_alone_office_desk_246189_pixabay.mp4",
+        "silhouette_sunrise_9369_pixabay.mp4",
+        "empty_room_63973_pixabay.mp4",
+        "night_city_aerial_lights_361384_pixabay.mp4",
+        "night_city_aerial_lights_367169_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_02_155",
+      "split": "train",
+      "class": "abstract",
+      "label": "must_graphic",
+      "confidence": 0.72,
+      "needs_human_review": false,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "phone_glow_face_154835_pixabay.mp4",
+      "selected_rank": 3,
+      "retrieved_ids": [
+        "smartphone_hands_47743_pixabay.mp4",
+        "person_scrolling_contact_list_01_pixabay.mp4",
+        "phone_glow_face_154835_pixabay.mp4",
+        "teenagers_sitting_together_staring_01_pixabay.mp4",
+        "swiping_dating_profiles_smartphone_01_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "family_together_home_186535_pixabay.mp4",
+        "person_unlocking_phone_then_1_pixabay.mp4",
+        "person_eating_breakfast_looking_1_pixabay.mp4",
+        "person_inside_elevator_looking_1_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_209",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "phone_screen_glow_night_220940_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "sad_portrait_350025_pixabay.mp4",
+        "intense_close_up_sad_01_pixabay.mp4",
+        "notebook_writing_hand_closeup_37056_pixabay.mp4",
+        "busy_street_190487_pixabay.mp4",
+        "concert_crowd_lights_98176_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "city_buildings_264521_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "concert_crowd_lights_181114_pixabay.mp4",
+        "road_trip_car_night_133698_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_104",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "old_man_portrait_39887_pixabay.mp4",
+      "selected_rank": 10,
+      "retrieved_ids": [
+        "window_rain_view_94680_pixabay.mp4",
+        "sad_portrait_47159_pixabay.mp4",
+        "person_stretching_arms_in_1_pixabay.mp4",
+        "foggy_forest_walk_136191_pixabay.mp4",
+        "insomnia_smartphone_glow_bed_01_pixabay.mp4",
+        "man_alone_city_212474_pixabay.mp4",
+        "student_writing_140806_pixabay.mp4",
+        "man_walking_alone_rain_134139_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "old_man_portrait_39887_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_078",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.65,
+      "needs_human_review": true,
+      "acceptable_ids": [
+        "thoughtful_man_looking_away_1_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "intense_close_up_sad_01_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "intense_close_up_sad_01_pixabay.mp4",
+        "face_emotion_44646_pixabay.mp4",
+        "thoughtful_man_looking_away_1_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "holding_hands_139464_pixabay.mp4",
+        "closeup_face_looking_into_01_pixabay.mp4",
+        "person_inside_elevator_looking_2_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "handshake_business_172892_pixabay.mp4",
+        "grandparents_portrait_smiling_44645_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_01_053",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "people_greeting_166667_pixabay.mp4",
+      "selected_rank": 3,
+      "retrieved_ids": [
+        "crowd_street_246384_pixabay.mp4",
+        "street_lamp_night_24603_pixabay.mp4",
+        "people_greeting_166667_pixabay.mp4",
+        "city_buildings_246618_pixabay.mp4",
+        "subway_train_people_197828_pixabay.mp4",
+        "people_toasting_glasses_84973_pixabay.mp4",
+        "urban_street_23258_pixabay.mp4",
+        "concert_crowd_lights_181114_pixabay.mp4",
+        "lonely_man_walking_crowded_1_pixabay.mp4",
+        "busy_street_190488_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_125",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "people_conversation_57315_pixabay.mp4",
+      "selected_rank": 5,
+      "retrieved_ids": [
+        "thoughtful_man_making_decision_4_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "sad_portrait_47159_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "people_conversation_57315_pixabay.mp4",
+        "family_together_home_186535_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "busy_city_crowd_blur_2_pixabay.mp4",
+        "office_workers_headphones_monitors_262482_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_096",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "lonely_person_standing_still_1_pixabay.mp4",
+      "selected_rank": 9,
+      "retrieved_ids": [
+        "window_light_356787_pixabay.mp4",
+        "street_lamp_night_24603_pixabay.mp4",
+        "people_toasting_glasses_84973_pixabay.mp4",
+        "lonely_person_window_40797_pixabay.mp4",
+        "attractive_person_sitting_alone_1_pixabay.mp4",
+        "crowd_street_246384_pixabay.mp4",
+        "lonely_man_walking_crowded_03_pixabay.mp4",
+        "people_greeting_166646_pixabay.mp4",
+        "lonely_person_standing_still_1_pixabay.mp4",
+        "window_rain_view_94680_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_140",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "sunset_golden_hour_123020_pixabay.mp4",
+      "selected_rank": 5,
+      "retrieved_ids": [
+        "sunset_golden_hour_190132_pixabay.mp4",
+        "two_elderly_people_holding_1_pixabay.mp4",
+        "meditation_nature_184174_pixabay.mp4",
+        "sleep_bed_128638_pixabay.mp4",
+        "sunset_golden_hour_123020_pixabay.mp4",
+        "books_study_140809_pixabay.mp4",
+        "elevator_doors_closing_person_86008_pixabay.mp4",
+        "books_study_140807_pixabay.mp4",
+        "student_writing_140805_pixabay.mp4",
+        "books_study_70214_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_149",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "office_workers_headphones_monitors_262482_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "window_rain_view_94680_pixabay.mp4",
+        "insomnia_smartphone_glow_bed_01_pixabay.mp4",
+        "books_study_140807_pixabay.mp4",
+        "student_writing_127679_pixabay.mp4",
+        "foggy_forest_walk_136191_pixabay.mp4",
+        "sad_portrait_47159_pixabay.mp4",
+        "office_people_working_136268_pixabay.mp4",
+        "office_workers_headphones_monitors_174007_pixabay.mp4",
+        "student_writing_140806_pixabay.mp4",
+        "notebook_writing_hand_closeup_54117_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_185",
+      "split": "train",
+      "class": "literal",
+      "label": "must_graphic",
+      "confidence": 0.6,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "gradient_waves_background_47499_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "gradient_waves_background_47499_pixabay.mp4",
+        "night_city_aerial_283631_pixabay.mp4",
+        "ocean_waves_slow_motion_309822_pixabay.mp4",
+        "cycling_286769_pixabay.mp4",
+        "robot_110730_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "sunset_golden_hour_52229_pixabay.mp4",
+        "meditation_nature_132413_pixabay.mp4",
+        "drone_landscape_236893_pixabay.mp4",
+        "train_window_view_landscape_177314_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_162",
+      "split": "holdout",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "children_playing_friends_laughing_241228_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "children_playing_friends_laughing_241228_pixabay.mp4",
+        "hands_holding_tight_human_01_pixabay.mp4",
+        "children_playing_friends_laughing_241225_pixabay.mp4",
+        "face_portrait_thinking_45132_pixabay.mp4",
+        "person_watching_phone_while_1_pixabay.mp4",
+        "person_waiting_171044_pixabay.mp4",
+        "looking_out_window_sad_85660_pixabay.mp4",
+        "phone_glow_face_154835_pixabay.mp4",
+        "crowd_street_142033_pixabay.mp4",
+        "person_waiting_in_line_2_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_183",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "people_waiting_room_sitting_19530_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "books_study_140809_pixabay.mp4",
+        "breakfast_table_morning_family_57803_pixabay.mp4",
+        "clock_ticking_68062_pixabay.mp4",
+        "gradient_waves_background_47499_pixabay.mp4",
+        "foggy_forest_walk_136185_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "hands_close_up_141862_pixabay.mp4",
+        "books_study_140807_pixabay.mp4",
+        "books_study_70214_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_122",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "person_stretching_arms_in_1_pixabay.mp4",
+      "selected_rank": 3,
+      "retrieved_ids": [
+        "fitness_workout_33902_pixabay.mp4",
+        "books_study_140809_pixabay.mp4",
+        "person_stretching_arms_in_1_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "person_inside_elevator_looking_1_pixabay.mp4",
+        "clock_ticking_68062_pixabay.mp4",
+        "light_leak_transition_92443_pixabay.mp4",
+        "foggy_forest_walk_136185_pixabay.mp4",
+        "breakfast_table_morning_family_57803_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_000",
+      "split": "holdout",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.89,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "people_toasting_glasses_84973_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "people_toasting_glasses_84973_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "people_toasting_glasses_84973_pixabay.mp4",
+        "intense_close_up_sad_01_pixabay.mp4",
+        "street_lamp_night_24603_pixabay.mp4",
+        "subway_train_people_197828_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "window_rain_view_94680_pixabay.mp4",
+        "person_inside_elevator_looking_2_pixabay.mp4",
+        "office_empty_night_42489_pixabay.mp4",
+        "thoughtful_man_looking_away_1_pixabay.mp4",
+        "man_walking_alone_rain_134139_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": true,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_02_052",
+      "split": "train",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.68,
+      "needs_human_review": true,
+      "acceptable_ids": [
+        "close_up_face_looking_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "close_up_face_looking_01_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "person_inside_elevator_looking_2_pixabay.mp4",
+        "intense_close_up_sad_01_pixabay.mp4",
+        "closeup_face_looking_into_01_pixabay.mp4",
+        "old_man_portrait_125430_pixabay.mp4",
+        "face_emotion_44646_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "holding_hands_139464_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "face_emotion_38170_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": false,
+        "@10": false
+      }
+    },
+    {
+      "scene_id": "часть_01_182",
+      "split": "holdout",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "ocean_waves_slow_motion_309822_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "ocean_waves_slow_motion_309822_pixabay.mp4",
+        "person_eating_breakfast_looking_1_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "swiping_dating_profiles_smartphone_01_pixabay.mp4",
+        "smartphone_hands_47743_pixabay.mp4",
+        "night_city_aerial_lights_367169_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "books_study_140809_pixabay.mp4",
+        "night_city_aerial_283631_pixabay.mp4",
+        "hands_swiping_dating_app_1_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_043",
+      "split": "holdout",
+      "class": "abstract",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "mother_child_1_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "kids_playground_happy_66724_pixabay.mp4",
+        "people_conversation_119698_pixabay.mp4",
+        "children_playing_friends_laughing_148538_pixabay.mp4",
+        "kids_playground_193036_pixabay.mp4",
+        "meditation_nature_123389_pixabay.mp4",
+        "child_running_49914_pixabay.mp4",
+        "man_looking_at_reflection_2_pixabay.mp4",
+        "hand_taking_smartphone_from_6_pixabay.mp4",
+        "mother_child_39972_pixabay.mp4",
+        "friends_walking_together_talking_67629_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_066",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "books_study_70216_pixabay.mp4",
+      "selected_rank": 4,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "holding_hands_6_pixabay.mp4",
+        "coffee_cup_steam_132134_pixabay.mp4",
+        "books_study_70216_pixabay.mp4",
+        "children_playing_friends_laughing_162540_pixabay.mp4",
+        "hand_taking_smartphone_from_2_pixabay.mp4",
+        "robot_110727_pixabay.mp4",
+        "group_of_friends_laughing_124636_pixabay.mp4",
+        "busy_office_worker_multiple_1_pixabay.mp4",
+        "meeting_people_377585_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_115",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "hand_taking_smartphone_table_154832_pixabay.mp4",
+      "selected_rank": 2,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "hand_taking_smartphone_table_154832_pixabay.mp4",
+        "hands_close_up_43721_pixabay.mp4",
+        "friends_drinking_bar_table_187693_pixabay.mp4",
+        "grandparents_portrait_smiling_185789_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "people_conversation_109288_pixabay.mp4",
+        "beer_glasses_bar_closeup_181546_pixabay.mp4",
+        "friends_walking_199623_pixabay.mp4",
+        "street_lamp_night_24602_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_089",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "library_books_122234_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "student_writing_122233_pixabay.mp4",
+        "elderly_person_hands_154834_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "books_study_139804_pixabay.mp4",
+        "person_unlocking_phone_then_1_pixabay.mp4",
+        "library_books_145428_pixabay.mp4",
+        "thoughtful_man_making_decision_4_pixabay.mp4",
+        "street_lamp_night_24603_pixabay.mp4",
+        "office_workers_headphones_monitors_02_pixabay.mp4",
+        "people_toasting_glasses_84973_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_024",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "face_emotion_44646_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "face_emotion_44646_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "intense_close_up_sad_01_pixabay.mp4",
+        "face_emotion_38170_pixabay.mp4",
+        "notebook_writing_hand_closeup_37056_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "man_stops_walking_city_01_pixabay.mp4",
+        "sad_portrait_45287_pixabay.mp4",
+        "person_nervous_anxious_hands_2_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_000",
+      "split": "train",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.76,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "hand_swiping_dating_app_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "hand_swiping_dating_app_01_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "working_late_laptop_52823_pixabay.mp4",
+        "teenagers_sitting_together_staring_01_pixabay.mp4",
+        "person_eating_breakfast_looking_1_pixabay.mp4",
+        "ocean_waves_slow_motion_309822_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "person_inside_elevator_looking_1_pixabay.mp4",
+        "people_conversation_57315_pixabay.mp4",
+        "student_writing_122233_pixabay.mp4",
+        "hand_taking_smartphone_from_2_pixabay.mp4",
+        "smartphone_hands_47743_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": false,
+        "@10": false
+      }
+    },
+    {
+      "scene_id": "часть_01_156",
+      "split": "holdout",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "meeting_people_67462_pixabay.mp4",
+      "selected_rank": 5,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "kids_playground_happy_125310_pixabay.mp4",
+        "beer_glasses_bar_closeup_181546_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "meeting_people_67462_pixabay.mp4",
+        "breakfast_coffee_kitchen_morning_210024_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "people_conversation_119698_pixabay.mp4",
+        "group_of_friends_laughing_124636_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_030",
+      "split": "holdout",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.7,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "man_walking_alone_rain_134139_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "rain_drops_window_glass_204307_pixabay.mp4",
+      "selected_rank": 9,
+      "retrieved_ids": [
+        "window_rain_view_94680_pixabay.mp4",
+        "man_walking_alone_rain_134139_pixabay.mp4",
+        "window_light_356787_pixabay.mp4",
+        "rain_window_drops_84916_pixabay.mp4",
+        "empty_room_63973_pixabay.mp4",
+        "man_alone_office_desk_246189_pixabay.mp4",
+        "lonely_person_window_40797_pixabay.mp4",
+        "face_emotion_44646_pixabay.mp4",
+        "rain_drops_window_glass_204307_pixabay.mp4",
+        "man_alone_office_desk_139472_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_01_109",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "student_writing_122233_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "student_writing_122233_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "window_rain_view_94680_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "books_study_140807_pixabay.mp4",
+        "gradient_waves_background_47499_pixabay.mp4",
+        "sunset_golden_hour_52229_pixabay.mp4",
+        "person_thinking_sunset_135658_pixabay.mp4",
+        "couple_hug_253702_pixabay.mp4",
+        "sunset_golden_hour_190132_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_024",
+      "split": "train",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.8,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "man_sitting_bench_164787_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "man_sitting_bench_164787_pixabay.mp4",
+      "selected_rank": 3,
+      "retrieved_ids": [
+        "lonely_person_window_111331_pixabay.mp4",
+        "window_rain_view_94680_pixabay.mp4",
+        "man_sitting_bench_164787_pixabay.mp4",
+        "man_alone_office_desk_300220_pixabay.mp4",
+        "foggy_forest_walk_136191_pixabay.mp4",
+        "clock_ticking_time_passing_47603_pixabay.mp4",
+        "man_alone_city_212474_pixabay.mp4",
+        "man_walking_alone_rain_134139_pixabay.mp4",
+        "empty_room_138501_pixabay.mp4",
+        "queue_waiting_line_people_53354_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_02_022",
+      "split": "train",
+      "class": "associative",
+      "label": "accept",
+      "confidence": 0.65,
+      "needs_human_review": true,
+      "acceptable_ids": [
+        "concert_crowd_lights_181114_pixabay.mp4",
+        "crowd_of_people_crossing_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "crowd_of_people_crossing_01_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "people_greeting_166667_pixabay.mp4",
+        "street_lamp_night_24603_pixabay.mp4",
+        "concert_crowd_lights_181114_pixabay.mp4",
+        "crowd_street_246384_pixabay.mp4",
+        "people_greeting_166665_pixabay.mp4",
+        "lonely_man_window_night_88921_pixabay.mp4",
+        "people_greeting_166655_pixabay.mp4",
+        "people_toasting_glasses_84973_pixabay.mp4",
+        "urban_street_23258_pixabay.mp4",
+        "people_greeting_166646_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_01_105",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "books_study_139802_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "books_study_139802_pixabay.mp4",
+        "looking_out_window_sad_85658_pixabay.mp4",
+        "student_writing_122233_pixabay.mp4",
+        "looking_out_window_sad_85660_pixabay.mp4",
+        "old_man_portrait_125430_pixabay.mp4",
+        "people_conversation_19706_pixabay.mp4",
+        "books_study_139804_pixabay.mp4",
+        "office_workers_headphones_monitors_02_pixabay.mp4",
+        "library_books_122231_pixabay.mp4",
+        "confused_person_looking_at_4_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_001",
+      "split": "train",
+      "class": "literal",
+      "label": "accept",
+      "confidence": 0.7,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "teenagers_sitting_together_staring_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "teenagers_sitting_together_staring_01_pixabay.mp4",
+      "selected_rank": 7,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "smartphone_hands_47743_pixabay.mp4",
+        "hands_swiping_dating_app_1_pixabay.mp4",
+        "phone_glow_face_154833_pixabay.mp4",
+        "swiping_dating_profiles_smartphone_01_pixabay.mp4",
+        "finger_tapping_heart_like_01_pixabay.mp4",
+        "teenagers_sitting_together_staring_01_pixabay.mp4",
+        "elderly_person_hands_154834_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "finger_hovering_over_smartphone_01_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": false,
+        "@10": true
+      }
+    },
+    {
+      "scene_id": "часть_01_040",
+      "split": "train",
+      "class": "abstract",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "holding_hands_6_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "mother_child_1_pixabay.mp4",
+        "hands_swiping_dating_app_1_pixabay.mp4",
+        "meeting_people_377585_pixabay.mp4",
+        "road_trip_car_night_133698_pixabay.mp4",
+        "disconnected_office_employees_working_70345_pixabay.mp4",
+        "abstract_bokeh_lights_273098_pixabay.mp4",
+        "swiping_dating_profiles_smartphone_01_pixabay.mp4",
+        "teenagers_sitting_together_staring_01_pixabay.mp4",
+        "guitar_playing_32615_pixabay.mp4",
+        "hand_reaching_smartphone_closeup_45657_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_178",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "two_kids_running_street_251066_pixabay.mp4",
+      "selected_rank": 8,
+      "retrieved_ids": [
+        "night_city_aerial_lights_367169_pixabay.mp4",
+        "city_buildings_264518_pixabay.mp4",
+        "robot_110730_pixabay.mp4",
+        "light_leak_transition_92443_pixabay.mp4",
+        "sunset_golden_hour_52229_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "library_books_122235_pixabay.mp4",
+        "two_kids_running_street_251066_pixabay.mp4",
+        "city_buildings_262909_pixabay.mp4",
+        "night_city_aerial_283631_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_196",
+      "split": "train",
+      "class": "literal",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "ocean_waves_slow_motion_132284_pixabay.mp4",
+      "selected_rank": 10,
+      "retrieved_ids": [
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "face_emotion_44646_pixabay.mp4",
+        "close_up_eye_reflecting_01_pixabay.mp4",
+        "factory_worker_routine_monotonous_1_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "hand_taking_smartphone_from_1_pixabay.mp4",
+        "hand_taking_smartphone_table_154832_pixabay.mp4",
+        "smartphone_hands_47743_pixabay.mp4",
+        "ocean_waves_slow_motion_132284_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_078",
+      "split": "train",
+      "class": "literal",
+      "label": "must_graphic",
+      "confidence": 0.6,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "kids_playground_183579_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "kids_playground_183579_pixabay.mp4",
+        "people_escalator_phones_down_231167_pixabay.mp4",
+        "empty_room_138501_pixabay.mp4",
+        "kids_playground_110862_pixabay.mp4",
+        "cooking_pan_kitchen_69973_pixabay.mp4",
+        "meeting_people_67462_pixabay.mp4",
+        "children_playing_friends_laughing_241225_pixabay.mp4",
+        "people_conversation_19706_pixabay.mp4",
+        "people_toasting_glasses_84973_pixabay.mp4",
+        "face_emotion_38170_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_073",
+      "split": "train",
+      "class": "literal",
+      "label": "accept",
+      "confidence": 0.7,
+      "needs_human_review": false,
+      "acceptable_ids": [
+        "young_professional_working_late_01_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "young_professional_working_late_01_pixabay.mp4",
+      "selected_rank": null,
+      "retrieved_ids": [
+        "library_books_122234_pixabay.mp4",
+        "office_workers_headphones_monitors_02_pixabay.mp4",
+        "books_study_139804_pixabay.mp4",
+        "office_people_working_136268_pixabay.mp4",
+        "books_study_139802_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "library_books_122230_pixabay.mp4",
+        "office_people_working_136261_pixabay.mp4",
+        "office_people_working_136259_pixabay.mp4",
+        "library_books_145428_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": false,
+        "@10": false
+      }
+    },
+    {
+      "scene_id": "часть_01_048",
+      "split": "train",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "books_study_140809_pixabay.mp4",
+      "selected_rank": 2,
+      "retrieved_ids": [
+        "working_late_laptop_52823_pixabay.mp4",
+        "books_study_140809_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "hands_close_up_141862_pixabay.mp4",
+        "books_study_140807_pixabay.mp4",
+        "people_waiting_room_sitting_19530_pixabay.mp4",
+        "window_rain_view_94680_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "sad_portrait_47159_pixabay.mp4",
+        "sunset_golden_hour_202864_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_02_190",
+      "split": "train",
+      "class": "abstract",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [],
+      "recall_eligible": false,
+      "selected_id": "student_writing_122233_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "student_writing_122233_pixabay.mp4",
+        "books_study_139804_pixabay.mp4",
+        "books_study_139802_pixabay.mp4",
+        "office_workers_headphones_monitors_02_pixabay.mp4",
+        "working_late_laptop_52823_pixabay.mp4",
+        "office_people_working_136268_pixabay.mp4",
+        "library_books_122231_pixabay.mp4",
+        "books_study_70214_pixabay.mp4",
+        "sad_portrait_350025_pixabay.mp4",
+        "books_study_140807_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": null,
+        "@3": null,
+        "@10": null
+      }
+    },
+    {
+      "scene_id": "часть_01_132",
+      "split": "holdout",
+      "class": "associative",
+      "label": "fallback_ok",
+      "confidence": 0.55,
+      "needs_human_review": true,
+      "acceptable_ids": [
+        "lonely_person_window_40797_pixabay.mp4"
+      ],
+      "recall_eligible": true,
+      "selected_id": "face_emotion_44646_pixabay.mp4",
+      "selected_rank": 1,
+      "retrieved_ids": [
+        "face_emotion_44646_pixabay.mp4",
+        "lonely_man_dark_bedroom_01_pixabay.mp4",
+        "lonely_person_window_40797_pixabay.mp4",
+        "hands_typing_keyboard_44423_pixabay.mp4",
+        "phone_call_alone_dark_204421_pixabay.mp4",
+        "friends_laughing_204420_pixabay.mp4",
+        "notebook_writing_hand_closeup_111289_pixabay.mp4",
+        "swiping_dating_profiles_smartphone_01_pixabay.mp4",
+        "busy_city_crowd_blur_2_pixabay.mp4",
+        "family_together_home_186535_pixabay.mp4"
+      ],
+      "hit": {
+        "@1": false,
+        "@3": true,
+        "@10": true
+      }
+    }
+  ],
+  "errors": {},
+  "label_counts": {
+    "accept": 9,
+    "must_graphic": 4,
+    "fallback_ok": 27
+  },
+  "class_counts": {
+    "literal": 16,
+    "associative": 20,
+    "abstract": 4
+  },
+  "split_counts": {
+    "holdout": 10,
+    "train": 30
+  }
+}

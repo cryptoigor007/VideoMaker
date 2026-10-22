@@ -7,12 +7,23 @@ Deterministic for the same inputs + algorithm_version + seed.
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
 from .config import CinematicSettings
 from .edit_plan import EditPlan, Scene, CropRect, MotionKeyframe
+from .fallback_render import graphic_marker_path, is_graphic_path
+
+_logger = logging.getLogger(__name__)
+
+
+def _log_fn(log=None):
+    if log is not None:
+        return log
+    return lambda msg: _logger.info("%s", msg)
+
 
 
 def _stable_id(*parts: str) -> str:
@@ -52,11 +63,84 @@ def _scene_flag_index(path: str, fallback: int,
         return 0
 
 
-def _apply_fallback_flags(scene: Scene, flags: dict) -> None:
+def _flag_for_scene(scene_flags: dict | None, scene_index: int) -> dict:
+    """1-based scene → флаги P0-2 (ключи int и str равноправны)."""
+    if not isinstance(scene_flags, dict):
+        return {}
+    try:
+        val = scene_flags.get(int(scene_index))
+        if val is None:
+            val = scene_flags.get(str(int(scene_index)))
+        return val if isinstance(val, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ensure_push_in(scene: Scene, target: float = 0.04,
+                    max_zoom: float = 1.25) -> None:
+    """Гарантировать медленный push-in ≥ target для treated-сцены.
+
+    Существующий cinematic zoom сохраняем, если он уже даёт нужный прирост;
+    иначе мягко усиливаем его, не меняя pan-составляющую.
+    """
+    try:
+        cap = max(1.0, float(max_zoom or 1.0))
+    except Exception:
+        cap = 1.25
+    motion = list(scene.motion or [])
+    if motion:
+        first = motion[0]
+        last = motion[-1]
+        try:
+            delta = float(last.scale) - float(first.scale)
+        except Exception:
+            delta = 0.0
+        if delta >= target - 1e-6:
+            return
+        start = max(1.0, min(cap, float(getattr(first, "scale", 1.0) or 1.0)))
+        end = min(cap, start + target)
+        if end <= start + 1e-6:
+            return
+        scene.motion = [
+            MotionKeyframe(t=0.0, scale=start, pan_x=first.pan_x,
+                           pan_y=first.pan_y, easing=first.easing),
+            MotionKeyframe(t=1.0, scale=end, pan_x=last.pan_x,
+                           pan_y=last.pan_y, easing=last.easing),
+        ]
+    else:
+        end = min(cap, 1.0 + target)
+        if end <= 1.0 + 1e-6:
+            return
+        scene.motion = [
+            MotionKeyframe(t=0.0, scale=1.0, easing="ease_in_out"),
+            MotionKeyframe(t=1.0, scale=end, easing="ease_in_out"),
+        ]
+
+
+def _graphic_gentle_motion(scene: Scene, max_zoom: float = 1.25) -> None:
+    """Фон/карточка: без резких панорам, только мягкий 2% push-in."""
+    try:
+        end = min(max(1.0, float(max_zoom or 1.0)), 1.02)
+    except Exception:
+        end = 1.02
+    if end <= 1.0 + 1e-6:
+        scene.motion = [MotionKeyframe(t=0.0, scale=1.0),
+                        MotionKeyframe(t=1.0, scale=1.0)]
+        return
+    scene.motion = [
+        MotionKeyframe(t=0.0, scale=1.0, easing="ease_in_out"),
+        MotionKeyframe(t=1.0, scale=end, easing="ease_in_out"),
+    ]
+
+
+def _apply_fallback_flags(scene: Scene, flags: dict,
+                          max_zoom: float = 1.25) -> None:
     """P0-2: пометить сцену плана treated/graphic_fallback для рендера.
 
-    Обработку здесь не включаем (её может не быть в рендере): только
-    reason/warnings, чтобы флаг доехал до манифеста/отчёта и был виден в логе.
+    Флаги пишутся в reason (он переживает apply_rhythm) и warnings; рендер
+    читает их через ``fallback_render.scene_flags``. Для treated сразу
+    усиливается zoom до медленного push-in ≥4%, для graphic — полный кадр
+    и спокойное движение (фон/карточку не должно резать кропом).
     """
     if not isinstance(flags, dict):
         return
@@ -64,14 +148,27 @@ def _apply_fallback_flags(scene: Scene, flags: dict) -> None:
     if flags.get("treated"):
         scene.warnings.append("treated")
         scene.reason = (scene.reason + f"; treated=1; fallback={fb}")[:300]
+        try:
+            _ensure_push_in(scene, 0.04, max_zoom)
+        except Exception:
+            pass
     elif fb not in ("", "none"):
         scene.reason = (scene.reason + f"; fallback={fb}")[:300]
-    if flags.get("graphic_fallback"):
+    # [P3] no_file-сцена получает маркер фона — для рендера она graphic,
+    # даже если манифест не выставил graphic_fallback.
+    _is_graphic = bool(flags.get("graphic_fallback")) or is_graphic_path(
+        getattr(scene, "source_path", ""))
+    if _is_graphic:
         scene.warnings.append("graphic_fallback")
-        # Нейтрального фона в рендере пока нет — честно помечаем, что слот
-        # мог быть закрыт клипом другой сцены (master логирует это отдельно).
-        scene.warnings.append("graphic_fallback_no_neutral_bg")
+        # B4: нейтральный фон теперь реально рендерится (маркер → файл),
+        # поэтому прежнее предупреждение об отсутствии фона снято.
+        scene.warnings.append("graphic_fallback_neutral_bg")
         scene.reason = (scene.reason + "; graphic_fallback=1")[:300]
+        try:
+            scene.crop = CropRect()
+            _graphic_gentle_motion(scene, max_zoom)
+        except Exception:
+            pass
         try:
             scene.confidence = min(float(scene.confidence), 0.3)
         except Exception:
@@ -281,12 +378,71 @@ def _pad_bound_for_transitions(
     return padded
 
 
+def _diversify_clip_sequence(
+    clips: Sequence[dict],
+    *,
+    total_duration: float,
+    log=None,
+) -> list[dict]:
+    """[B3] Глобальный анти-повтор: не более 2 похожих клипов подряд.
+
+    Работает и для обычного ранжирования, и внутри сценного пула. Похожесть —
+    эмбеддинги описаний базы (cosine >= 0.9) либо совпадение тегов/имени
+    файла; при замене пишет ``[SB] diversity: заменён клип (похож на
+    предыдущий)``.
+    """
+    items = list(clips or [])
+    if len(items) < 3:
+        return items
+
+    def _as_cand(c: dict) -> dict:
+        if str(c.get("file") or ""):
+            return c
+        return {"file": str(c.get("path") or c.get("source") or ""),
+                "description": c.get("description") or "",
+                "tags": c.get("tags")}
+
+    try:
+        from video_maker.semantic.scene_policy import VisualDiversityTracker
+    except Exception:
+        return items
+    tracker = VisualDiversityTracker()
+    out: list[dict] = []
+    remaining = list(items)
+    n = len(items)
+    _logger_fn = _log_fn(log)
+    while remaining:
+        at = float(total_duration or 0.0) * len(out) / max(1, n)
+        pick_i = 0
+        blocked = False
+        for i, c in enumerate(remaining):
+            if not tracker.would_violate(_as_cand(c), at):
+                pick_i = i
+                break
+            blocked = True
+        if blocked and pick_i > 0:
+            # Нашли непохожий клип дальше по списку — это замена, а не повтор.
+            _logger_fn("[SB] diversity: заменён клип (похож на предыдущий)")
+        elif blocked and pick_i == 0:
+            # Все оставшиеся похожи на предыдущие: честно фиксируем вынужденный
+            # повтор (дыра в кадре хуже), чтобы лог не врал про «замену».
+            _logger_fn("[SB] diversity: forced repeat — все кандидаты похожи "
+                       "на предыдущие")
+        chosen = remaining.pop(pick_i)
+        tracker.record(_as_cand(chosen), at)
+        out.append(chosen)
+    return out
+
+
 def _scene_bound_shots(
     paths: Sequence[str],
     windows: Sequence[tuple[float, float]],
     clip_durations: Sequence[float] | None = None,
     scene_preferred: dict[int, list[str]] | None = None,
     scene_texts: Sequence[str] | None = None,
+    shot_windows: Sequence[Sequence[dict]] | None = None,
+    scene_flags: dict | None = None,
+    log=None,
 ) -> tuple[list[str], list[float], list[float], list[int]] | None:
     """Жёсткая привязка: клипы папки сцены N → окно сцены N.
 
@@ -294,12 +450,44 @@ def _scene_bound_shots(
     (её создаёт fix_scenes для слабых сцен), затем порядок из манифеста
     (лучшие кандидаты), затем остальные. Один клип закрывает окно; если он
     короче — повторяется со сдвигом внутри ЭТОЙ ЖЕ сцены.
+
+    [B3] Длинная сцена (>6с) с несколькими кандидатами делится на 2-3 шота:
+    ``shot_windows`` — границы по паузам транскрипта; каждому шоту свой клип
+    из пула сцены. Короткая сцена остаётся одним шотом (как раньше).
+
+    [B4] Сцена с ``graphic_fallback`` не занимает клип другой сцены: в план
+    ставится маркер нейтрального фона на всё окно сцены (клипы её папки,
+    если они есть, игнорируются — политика уже решила, что они не годятся).
+    То же для сцены с ``fallback=no_file``: честный фон вместо чужого клипа.
+
+    [P1] Одна сцена (один сегмент длиннее 6с) тоже может делиться на 2-3
+    шота: привязка не отключается, если ``shot_windows[0]`` содержит >1 шота.
+    Одиночная graphic/no_file-сцена получает фон на всё окно.
+
     Возвращает (paths, slices, source_offsets, scene_idx).
     """
-    if not paths or len(windows) < 2:
+    if not windows:
+        return None
+    # [P1] Одиночное окно: разрешаем привязку для длинной сцены (несколько
+    # шотов) и для graphic/no_file-сцены (фон на всё окно).
+    _scene1_flags = _flag_for_scene(scene_flags, 1)
+    _single_graphic = bool(
+        _scene1_flags.get("graphic_fallback")
+        or str(_scene1_flags.get("fallback") or "") == "no_file"
+    )
+    _single_multi = False
+    if len(windows) == 1 and shot_windows:
+        try:
+            _single_multi = len(list(shot_windows[0] or [])) > 1
+        except Exception:
+            _single_multi = False
+    if len(windows) < 2 and not (_single_multi or _single_graphic):
+        return None
+    if not paths and not _single_graphic:
         return None
     try:
         from video_maker.semantic.matcher import scene_index_from_path
+        from video_maker.semantic.scene_policy import VisualDiversityTracker
     except Exception:
         return None
     import os as _os
@@ -312,8 +500,18 @@ def _scene_bound_shots(
             unbound.append(i)
         else:
             by_scene.setdefault(idx, []).append(i)
+    # [P1] Плоский пул без NN_папок при одном окне: все клипы принадлежат
+    # единственной сцене — иначе 3 шота не набрать.
+    if _single_multi and 1 not in by_scene and unbound:
+        by_scene[1] = list(unbound)
+        unbound = []
 
-    def _rank(pi: int, scene_idx: int) -> tuple | None:
+    def _target_shots(scene_idx: int) -> int:
+        if shot_windows and 0 <= scene_idx - 1 < len(shot_windows):
+            return max(1, len(shot_windows[scene_idx - 1] or []))
+        return 1
+
+    def _rank(pi: int, scene_idx: int, max_pref_pos: int) -> tuple | None:
         p = paths[pi]
         folder = str(Path(p).parent.name).lower()
         is_fix = 0 if folder.endswith("_fix") else 1
@@ -327,10 +525,9 @@ def _scene_bound_shots(
                     break
         except Exception:
             pass
-        # Кандидаты сцены: ПЕРВЫЙ клип манифеста (осознанный выбор пайплайна)
-        # и _fix-клип (если fix_scenes его добавил). Остальные файлы папки —
-        # часто отклонённые/слабые кандидаты, их в кадр не пускаем.
-        if pref and not (is_fix == 0 or pos == 0):
+        # Кандидаты сцены: первые max_pref_pos клипов манифеста (для 2-3 шотов)
+        # и _fix-клип. Остальные файлы папки — часто отклонённые кандидаты.
+        if pref and not (is_fix == 0 or pos < max_pref_pos):
             return None
         # Смысловой скор по тексту ИМЕННО этой сцены: при равном скоре
         # выигрывает _fix-папка, затем порядок манифеста.
@@ -344,9 +541,11 @@ def _scene_bound_shots(
         return (-sc_score, is_fix, pos, p)
 
     for _idx in list(by_scene):
+        _has_pref = bool((scene_preferred or {}).get(_idx))
+        _max_pos = max(1, _target_shots(_idx) + 1) if _has_pref else 1
         _ranked = []
         for _pi in by_scene[_idx]:
-            _r = _rank(_pi, _idx)
+            _r = _rank(_pi, _idx, _max_pos)
             if _r is not None:
                 _ranked.append((_r, _pi))
         if _ranked:
@@ -355,10 +554,23 @@ def _scene_bound_shots(
         else:
             # preferred-файл не попал в выборку — не оставляем сцену пустой
             by_scene[_idx] = sorted(by_scene[_idx], key=lambda pi: paths[pi])
+    _bg_scenes = {
+        int(k) for k, v in (scene_flags or {}).items()
+        if str(k).isdigit() and isinstance(v, dict)
+        and (v.get("graphic_fallback")
+             or str(v.get("fallback") or "") == "no_file")
+        and 1 <= int(k) <= len(windows)
+    }
     # Нужен именно сценный пул: минимум 2 папки, и хотя бы одна попадает в окна.
-    if len(by_scene) < 2:
+    # [B4] Если часть сцен — graphic/no_file, привязку не отключаем: их окна
+    # заполнит нейтральный фон, даже когда клиповая папка всего одна.
+    # [P1] Одиночная длинная сцена с несколькими шотами — тоже валидный пул.
+    if len(by_scene) < 2 and not _bg_scenes and not _single_multi:
         return None
-    if not any((idx - 1) < len(windows) for idx in by_scene):
+    if by_scene and not any((idx - 1) < len(windows) for idx in by_scene) \
+            and not _bg_scenes:
+        return None
+    if not by_scene and not _bg_scenes:
         return None
 
     def _avail(pi: int) -> float:
@@ -373,25 +585,118 @@ def _scene_bound_shots(
     out_slices: list[float] = []
     out_offsets: list[float] = []
     out_scene: list[int] = []
+    tracker = VisualDiversityTracker()
+    _log = _log_fn(log)
 
     for wi, (ws, we) in enumerate(windows):
-        # Один лучший клип на сцену: остальные клипы папки могут быть
-        # слабыми/отклонёнными кандидатами и только размывают соответствие.
-        idxs = list(by_scene.get(wi + 1) or [])[:1]
-        if not idxs:
+        # Один лучший клип на сцену; для длинной сцены — до 3 шотов из пула
+        # манифеста (клипы уже прошли политику отбора, дублей в сцене нет).
+        # +1 клип — запас на diversity-замену похожего кадра.
+        width = max(0.05, float(we) - float(ws))
+        _fl = _flag_for_scene(scene_flags, wi + 1)
+        if _fl.get("graphic_fallback"):
+            # [B4] Нейтральный фон на всё окно сцены. Никаких клипов чужих
+            # сцен и никаких «доборов» из пула — политика решила graphic.
+            try:
+                _log(f"[B4] graphic-сцена {wi + 1}: плейсхолдер нейтрального фона "
+                     f"({width:.1f}с), клип не занимаем")
+            except Exception:
+                pass
+            out_paths.append(graphic_marker_path(wi + 1))
+            out_slices.append(width)
+            out_offsets.append(0.0)
+            out_scene.append(wi)
+            # [P3] Фон разрывает серию похожих клипов: следующий клип не
+            # должен считаться «третьим подряд» через graphic-сцену.
+            try:
+                tracker.record_gap(ws)
+            except Exception:
+                pass
+            continue
+        _pref_here = (scene_preferred or {}).get(wi + 1) or []
+        # [P1] Одиночная длинная сцена делится на шоты и без scene_preferred:
+        # пул её клипов уже отранжирован по смыслу.
+        _target_k = (_target_shots(wi + 1)
+                     if (_pref_here or _single_multi) else 1)
+        idxs_all = list(by_scene.get(wi + 1) or [])[: _target_k + 1]
+        if not idxs_all:
+            # [P3] Политика сказала no_file — не занимаем клип чужой сцены,
+            # ставим нейтральный фон (как graphic), а не «добираем».
+            if str(_fl.get("fallback") or "") == "no_file":
+                try:
+                    _log(f"[B4] сцена {wi + 1}: fallback=no_file — "
+                         f"нейтральный фон ({width:.1f}с), клип не занимаем")
+                except Exception:
+                    pass
+                out_paths.append(graphic_marker_path(wi + 1))
+                out_slices.append(width)
+                out_offsets.append(0.0)
+                out_scene.append(wi)
+                try:
+                    tracker.record_gap(ws)
+                except Exception:
+                    pass
+                continue
             # Сцена без клипов: добираем нераспределённым клипом, не ломая окно.
             if unbound:
-                idxs = [unbound.pop(0)]
+                idxs_all = [unbound.pop(0)]
             else:
-                idxs = [wi % len(paths)]
-        width = max(0.05, float(we) - float(ws))
-        k = len(idxs)
-        share = width / k
+                idxs_all = [wi % len(paths)]
+        # Длительности шотов из аудиоструктуры; хвост сливаем в последний шот,
+        # если клипов меньше, чем резов (лучше длинный план, чем дубль).
+        shot_list = (shot_windows[wi] if shot_windows and wi < len(shot_windows)
+                     else None) or []
+        shot_durs_all = [max(0.05, float(s["end"]) - float(s["start"]))
+                         for s in shot_list]
+        k_pick = min(_target_k, len(shot_durs_all) or _target_k, len(idxs_all))
+
+        # [B3] Diversity: если клип шота похож на два предыдущих — берём
+        # следующий из пула сцены (не выбрасывая слабые/короткие варианты).
+        used: list[int] = []
+        for pos in range(k_pick):
+            unused = [pi for pi in idxs_all if pi not in used]
+            if not unused:
+                break
+            at = ws + (sum(shot_durs_all[:pos])
+                       if pos < len(shot_durs_all)
+                       else width * pos / max(1, k_pick))
+            pick = unused[0]
+            blocked = False
+            for pi in unused:
+                cand = {"file": paths[pi], "kind": "lib"}
+                if tracker.would_violate(cand, at):
+                    blocked = True
+                    continue
+                pick = pi
+                break
+            if blocked and pick != unused[0]:
+                try:
+                    _log("[SB] diversity: заменён клип (похож на предыдущий)")
+                except Exception:
+                    pass
+            used.append(pick)
+            try:
+                tracker.record({"file": paths[pick], "kind": "lib"}, at)
+            except Exception:
+                pass
+        if not used:
+            used = list(idxs_all[:k_pick])
+        idxs = used
+        shot_durs = shot_durs_all[: len(idxs)]
+        if len(shot_durs) < len(idxs):
+            shot_durs = shot_durs + [width / len(idxs)] * (len(idxs) - len(shot_durs))
+        elif len(shot_durs) > len(idxs):
+            shot_durs = shot_durs[: len(idxs) - 1] + [sum(shot_durs[len(idxs) - 1:])]
+        total_shot = sum(shot_durs) or width
+        slices = [width * d / total_shot for d in shot_durs]
+
+        share_durs = [slices[i] if i < len(slices) else width / max(1, len(idxs))
+                      for i in range(len(idxs))]
         remaining = width
         for pos, pi in enumerate(idxs):
             p = paths[pi]
             avail = _avail(pi)
-            d = remaining if pos == k - 1 else min(share, remaining)
+            d = share_durs[pos] if pos < len(idxs) - 1 else remaining
             d = max(0.05, min(d, avail, remaining))
             out_paths.append(p)
             out_slices.append(d)
@@ -484,7 +789,9 @@ class PlanBuilder:
                 for sc, i, c in scored:
                     if c not in ordered:
                         ordered.append(c)
-                clips = ordered
+                clips = _diversify_clip_sequence(
+                    ordered, total_duration=float(audio_duration or 0.0),
+                )
 
         # Fallback: if no B-roll mapping yet, create one static scene per major segment
         if not clips and segs:
@@ -745,6 +1052,7 @@ class PlanBuilder:
         clip_durations: list[float] | None = None,
         scene_bound: bool = False,
         scene_preferred: dict[int, list[str]] | None = None,
+        log=None,
     ) -> EditPlan:
         """Plan from ordered file paths (final selected list).
 
@@ -755,6 +1063,7 @@ class PlanBuilder:
         n = max(1, len(paths))
         weights = weights or [1.0 / n] * n
         segs = list(transcript_segments or [])
+        _log = _log_fn(log)
         # [P0-2] Флаги сцен из smart_broll (master кладёт их в settings).
         _scene_flags = getattr(self.settings, "scene_flags", None) or {}
 
@@ -766,10 +1075,23 @@ class PlanBuilder:
         _ord_note = ""
         if scene_bound and segs:
             _windows = _scene_windows_from_segments(segs, float(target_duration or 0.0))
+            # [B3] Шоты по аудиоструктуре: длинная сцена → 2-3 реза по паузам.
+            _shot_windows: list[list[dict]] = []
+            try:
+                from video_maker.semantic.scene_policy import scene_shot_windows
+                _shot_windows = scene_shot_windows(
+                    _windows, segs,
+                    min_shot_sec=float(getattr(self.settings, "min_shot_sec", 2.0) or 2.0),
+                )
+            except Exception as _sw_e:
+                _log(f"[ORD] шоты сцен пропущены: {str(_sw_e)[:80]}")
             _bound = _scene_bound_shots(
                 paths, _windows, clip_durations,
                 scene_preferred=scene_preferred,
                 scene_texts=[str(s.get("text") or "") for s in segs],
+                shot_windows=_shot_windows,
+                scene_flags=_scene_flags,
+                log=_log,
             )
             if _bound:
                 _dur_by_path: dict[str, float] = {}
@@ -783,8 +1105,11 @@ class PlanBuilder:
                 n = max(1, len(paths))
                 _total_b = sum(_bound_slices) or 1.0
                 weights = [d / _total_b for d in _bound_slices]
+                _multi = sum(1 for i in range(1, len(_bound_scene))
+                             if _bound_scene[i] == _bound_scene[i - 1])
                 _ord_note = (
-                    f"[ORD] scene→slots: {len(_bound_slices)} планов, "
+                    f"[ORD] scene→slots: {len(_bound_slices)} планов "
+                    f"(+{_multi} шотов в длинных сценах), "
                     f"{len(_windows)} окон, {len(set(_bound_scene))} сцен"
                 )
 
@@ -822,6 +1147,22 @@ class PlanBuilder:
                     weights = [weights[_j] for _j in _sb_order]
                     if clip_durations and len(clip_durations) == n:
                         clip_durations = [clip_durations[_j] for _j in _sb_order]
+                    # [B3] Анти-повтор визуального типа в ранжировании:
+                    # похожий клип уступает место следующему кандидату.
+                    _pairs = [
+                        {"path": paths[_i], "w": weights[_i],
+                         "d": (clip_durations[_i] if clip_durations
+                               and len(clip_durations) == n else None)}
+                        for _i in range(n)
+                    ]
+                    _pairs = _diversify_clip_sequence(
+                        _pairs, total_duration=float(target_duration or 0.0),
+                        log=_log,
+                    )
+                    paths = [str(x.get("path") or "") for x in _pairs]
+                    weights = [float(x.get("w") or 0.0) for x in _pairs]
+                    if clip_durations and len(clip_durations) == n:
+                        clip_durations = [float(x.get("d") or 0.0) for x in _pairs]
             except Exception:
                 pass
 
@@ -1043,7 +1384,10 @@ class PlanBuilder:
                 _si_flag = _scene_flag_index(path, _si_flag, scene_preferred)
                 _fl = _scene_flags.get(_si_flag) or _scene_flags.get(str(_si_flag))
                 if _fl:
-                    _apply_fallback_flags(_scene_obj, _fl)
+                    _apply_fallback_flags(
+                        _scene_obj, _fl,
+                        max_zoom=float(getattr(self.settings, "max_zoom", 1.25) or 1.25),
+                    )
             scenes.append(_scene_obj)
             t_cursor += slice_dur
         # [VM-FIX] Контент плана обязан покрывать озвучку с запасом на переходы
@@ -1103,4 +1447,17 @@ class PlanBuilder:
         )
         if _ord_note:
             _plan.warnings.append(_ord_note)
+        try:
+            _g_n = sum(1 for v in (_scene_flags or {}).values()
+                       if isinstance(v, dict) and v.get("graphic_fallback"))
+            _t_n = sum(1 for v in (_scene_flags or {}).values()
+                       if isinstance(v, dict) and v.get("treated"))
+            if _g_n:
+                _plan.warnings.append(
+                    f"[B4] graphic_fallback: {_g_n} сцен — нейтральный фон")
+            if _t_n:
+                _plan.warnings.append(
+                    f"[B4] treated: {_t_n} сцен — blur+grade+push-in")
+        except Exception:
+            pass
         return _plan

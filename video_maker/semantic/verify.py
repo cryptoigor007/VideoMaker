@@ -10,9 +10,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -23,13 +26,14 @@ _ANY_FENCE_RE = re.compile(r"[\[{].*[\]}]", re.DOTALL)
 # ======================================================================
 # [VM-P0-3] VLM убран с критического пути:
 #   1) дешёвый префильтр (blur/тьма/статичность/точные дубли) ДО Vision;
-#   2) Vision видит только ТОП-3 кандидата сцены;
+#   2) Vision видит только ТОП-2 кандидата сцены;
 #   3) режим «вето»: «действие буквально?» да/нет/сомневаюсь;
+#      при «сомневаюсь» — 3-й кандидат (в пределах фолбэка ≤2 singles);
 #   4) кэш (scene_hash, query, model, prompt_version) — повтор = 0 вызовов;
 #   5) фолбэк по одному — не более 2 одиночных доработок на сцену.
 # ======================================================================
 _PROMPT_VERSION = "verify-v4-veto-2026-10-22"
-_VETO_TOP = 3
+_VETO_TOP = 2
 _FALLBACK_SINGLES = 2
 _SCENE_STATE_TTL = 900.0
 
@@ -54,7 +58,30 @@ _QF_DARK_MEAN = max(0.0, _env_float("VM_VISION_DARK_MEAN", 22.0))
 # средняя |Δ| между двумя кадрами 0..255: <0.08 — стоп-кадр/фриз.
 _QF_MOTION_MIN = max(0.0, _env_float("VM_VISION_MOTION_MIN", 0.08))
 _QF_WIDTH = 640
-_SKIP_WHAT = "VLM: вне топ-3 (не оценивался)"
+_SKIP_WHAT = "VLM: вне топ-2 (не оценивался)"
+
+# [VM-PERF-4K] Кадровый префильтр — только для ЛЁГКИХ источников:
+#   * tiny/small-превью стока и локальные мелкие файлы;
+#   * файлы меньше ~50 МБ.
+# Библиотечные 4K на SMB (27-57 МБ и больше) уже проверены при ingest:
+# декодировать их ради blur/dark — 3-6 секунд НА КАДР, сцена росла до 29 минут.
+# Такой файл пропускает кадровые проверки; остаются только дешёвые
+# (длительность, дубли по size/sha1, hard-теги).
+_QF_FRAME_MAX_MB = max(1.0, _env_float("VM_VISION_PREFILTER_MAX_MB", 50.0))
+_QF_FRAME_MAX_BYTES = int(_QF_FRAME_MAX_MB * 1024 * 1024)
+# Локальный кэш tiny-превью: даже если том смонтирован «рядом», это лёгкий файл.
+_QF_LIGHT_DIRS: tuple[str, ...] = (
+    str(Path.home() / "video_maker" / "lib_previews").rstrip(os.sep),
+)
+# Корни библиотеки на сетевом томе: кадры не извлекаем независимо от размера
+# (4K-клип на 27 МБ всё равно декодируется секундами). Можно переопределить:
+# VM_VISION_HEAVY_ROOTS="/Volumes/video/broll_library:/other/root".
+_QF_HEAVY_ROOTS: tuple[str, ...] = tuple(
+    s.strip().rstrip(os.sep)
+    for s in (os.environ.get("VM_VISION_HEAVY_ROOTS")
+              or "/Volumes/video/broll_library").split(os.pathsep)
+    if s.strip()
+)
 
 
 def _ffmpeg_bin() -> str:
@@ -65,13 +92,25 @@ def _ffmpeg_bin() -> str:
         return "ffmpeg"
 
 
-def extract_frames(clip_path: str, out_dir: Path, *, count: int = 2) -> list[str]:
+def extract_frames(clip_path: str, out_dir: Path, *, count: int = 2,
+                   log=print) -> list[str]:
     """Кадры из клипа — jpg для vision.
 
     Имена файлов уникальны для каждого клипа: иначе в общей папке партии
     кадры разных клипов перезаписывают друг друга и модель видит только
     последний клип (описания смещались).
+
+    [VM-VISION-FRAMES] Постоянный кэш кадров: 4K/SMB клип декодируется ОДИН
+    раз на (abspath, size, mtime_ns). Повторный вызов возвращает готовые jpg
+    без ffmpeg/ffprobe (0 субпроцессов); первый — извлекает и атомарно
+    сохраняет в ``~/video_maker/vision_frames``.
     """
+    cached = _frames_cache_get(clip_path, count)
+    if cached is not None:
+        if log:
+            log(f"[VISION] кадры из кэша: {len(cached)}")
+        return cached
+    t_cache0 = time.perf_counter()
     ff = _ffmpeg_bin()
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = re.sub(r"[^\w.-]", "_", Path(str(clip_path)).stem)[:48] or "clip"
@@ -115,6 +154,16 @@ def extract_frames(clip_path: str, out_dir: Path, *, count: int = 2) -> list[str
                 frames.append(str(dst))
         except Exception:
             continue
+    # [VM-VISION-FRAMES] Кэшируем только полный набор (иначе повтор вернул бы
+    # меньше кадров, чем извлёк бы ffmpeg) и только штатный путь Vision (count=2).
+    if frames and len(frames) == len(times) and int(count) == 2:
+        try:
+            n_saved = _frames_cache_put(clip_path, frames, log=log)
+            if n_saved and log:
+                log(f"[VISION] кадры извлечены и закэшированы: {n_saved} "
+                    f"({time.perf_counter() - t_cache0:.2f}с)")
+        except Exception:
+            pass  # кэш — оптимизация: его сбой не должен ломать извлечение
     return frames
 
 
@@ -493,10 +542,149 @@ def _hard_hit(entry: dict) -> str:
 # ======================================================================
 # [VM-P0-3] Дешёвая оценка кадров без Vision: резкость (дисперсия Лапласа),
 # яркость, motion energy по двум кадрам. Один раз на файл, результат и сами
-# кадры кэшируются — топ-3 потом переиспользует эти же кадры для Vision.
+# кадры кэшируются — топ-2 потом переиспользует эти же кадры для Vision.
 # ======================================================================
 _QUALITY_CACHE: dict[tuple[str, int, int], dict] = {}
 _HASH_CACHE: dict[tuple[str, int, int], str] = {}
+
+# [VM-PERF-4K] Дисковый кэш качества: (path, size, mtime) → blur/bright/motion.
+# Переживает рестарт и общий для всех сцен/прогонов: один и тот же файл больше
+# не декодируется повторно. Кадры в кэш НЕ пишем — только числа.
+_QUALITY_DISK_LIMIT = 20000
+_QUALITY_DISK: dict[str, dict] | None = None
+_QUALITY_DISK_DIRTY = False
+_QUALITY_DISK_LOCK = threading.Lock()
+
+
+def _quality_disk_path() -> Path:
+    raw = str(os.environ.get("VM_VISION_QUALITY_CACHE") or "").strip()
+    if raw:
+        return Path(os.path.expanduser(raw))
+    return Path.home() / "video_maker" / "vision_quality_cache.json"
+
+
+def _quality_disk_key(sig: tuple[str, int, int]) -> str:
+    return f"{sig[0]}|{sig[1]}|{sig[2]}"
+
+
+def _clean_quality(v) -> dict | None:
+    """Валидировать запись кэша: только конечные числа blur/bright (+motion)."""
+    if not isinstance(v, dict):
+        return None
+    try:
+        blur = float(v.get("blur"))
+        bright = float(v.get("bright"))
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(blur) and math.isfinite(bright)):
+        return None
+    motion = None
+    if v.get("motion") is not None:
+        try:
+            motion = float(v.get("motion"))
+        except (TypeError, ValueError):
+            motion = None
+        if motion is not None and not math.isfinite(motion):
+            motion = None
+    return {"blur": blur, "bright": bright, "motion": motion}
+
+
+def _quality_disk_load() -> dict[str, dict]:
+    global _QUALITY_DISK
+    if _QUALITY_DISK is not None:
+        return _QUALITY_DISK
+    with _QUALITY_DISK_LOCK:
+        if _QUALITY_DISK is not None:
+            return _QUALITY_DISK
+        data: dict[str, dict] = {}
+        try:
+            raw = json.loads(_quality_disk_path().read_text(encoding="utf-8"))
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                clean = _clean_quality(v)
+                if clean is not None:
+                    data[str(k)] = clean
+        if len(data) > _QUALITY_DISK_LIMIT:  # JSON хранит порядок: режем старые
+            data = dict(list(data.items())[-_QUALITY_DISK_LIMIT:])
+        _QUALITY_DISK = data
+        return data
+
+
+def _quality_disk_get(sig: tuple[str, int, int]) -> dict | None:
+    try:
+        return _quality_disk_load().get(_quality_disk_key(sig))
+    except Exception:
+        return None
+
+
+def _quality_disk_put(sig: tuple[str, int, int], res: dict) -> None:
+    global _QUALITY_DISK_DIRTY
+    clean = _clean_quality(res)
+    if clean is None:
+        return
+    data = _quality_disk_load()
+    with _QUALITY_DISK_LOCK:
+        data[_quality_disk_key(sig)] = clean
+        if len(data) > _QUALITY_DISK_LIMIT:
+            for k in list(data)[:len(data) - _QUALITY_DISK_LIMIT]:
+                data.pop(k, None)
+        _QUALITY_DISK_DIRTY = True
+
+
+def _quality_disk_flush() -> None:
+    """Атомарно сохранить кэш качества (после префильтра, не на каждый файл)."""
+    global _QUALITY_DISK_DIRTY
+    with _QUALITY_DISK_LOCK:
+        if _QUALITY_DISK is None or not _QUALITY_DISK_DIRTY:
+            return
+        data = dict(_QUALITY_DISK)
+        _QUALITY_DISK_DIRTY = False
+    try:
+        p = _quality_disk_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                       encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        with _QUALITY_DISK_LOCK:
+            _QUALITY_DISK_DIRTY = True  # не теряем до следующего префильтра
+
+
+def _heavy_source(path: str | Path, entry: dict | None = None,
+                  size: int | None = None) -> bool:
+    """Тяжёлый ли источник для кадрового префильтра (4K/библиотека на SMB).
+
+    Эвристики по порядку: явный флаг entry → локальные превью → корни
+    библиотеки → размер файла. stat по одному файлу дешёвый, realpath и
+    обход каталогов на SMB не делаем.
+    """
+    if entry is not None:
+        flag = entry.get("prefilter_frames")
+        if flag is True:
+            return False
+        if flag is False or entry.get("heavy_source") is True:
+            return True
+        if entry.get("heavy_source") is False:
+            return False
+    try:
+        p = os.path.abspath(str(path))
+    except Exception:
+        return True
+    for d in _QF_LIGHT_DIRS:
+        if p == d or p.startswith(d + os.sep):
+            return False
+    for root in _QF_HEAVY_ROOTS:
+        if p == root or p.startswith(root + os.sep):
+            return True
+    if size is None:
+        try:
+            size = int(os.stat(p).st_size)
+        except Exception:
+            return True
+    return int(size) >= _QF_FRAME_MAX_BYTES
 
 
 def _file_sig(path: str | Path) -> tuple[str, int, int] | None:
@@ -507,6 +695,259 @@ def _file_sig(path: str | Path) -> tuple[str, int, int] | None:
         return (os.path.abspath(str(p)), int(st.st_size), int(st.st_mtime_ns))
     except Exception:
         return None
+
+
+# ======================================================================
+# [VM-VISION-FRAMES] Постоянный кэш кадров Vision.
+#
+# Финальный Vision просит 2 кадра 640px. Декодирование 4K с SMB под
+# нагрузкой — ~46с на кадр, т.е. сцена >1.5 мин при КАЖДОМ прогоне. Здесь
+# кадры сохраняются на диск и переиспользуются навсегда (пока файл не
+# изменился): ключ = sha1(abspath|size|mtime_ns), значение = `<key>.f0.jpg`,
+# `<key>.f1.jpg` + манифест `<key>.json`. На попадании ffmpeg/ffprobe НЕ
+# запускаются вообще (0 субпроцессов), проверяются только size>2KB и
+# JPEG-маркеры.
+#
+# Лимит: VM_VISION_FRAMES_MAX файлов (≈20000) и VM_VISION_FRAMES_MAX_MB
+# (≈2048 МБ). При превышении удаляются самые старые ключи (LRU по mtime
+# манифеста). Каталог можно переопределить: VM_VISION_FRAMES_DIR.
+# ======================================================================
+_FRAMES_CACHE_MIN_BYTES = 2000
+_FRAMES_CACHE_VERSION = 1
+_FRAMES_CACHE_LOCK = threading.Lock()
+_FRAMES_CACHE_PRUNE_LOCK = threading.Lock()
+_FRAMES_CACHE_KEY_LOCKS: dict[str, threading.Lock] = {}
+_FRAMES_CACHE_USAGE: dict[str, int] | None = None
+
+
+def _frames_cache_dir() -> Path:
+    raw = str(os.environ.get("VM_VISION_FRAMES_DIR") or "").strip()
+    if raw:
+        try:
+            return Path(os.path.expanduser(raw))
+        except Exception:
+            pass
+    return Path.home() / "video_maker" / "vision_frames"
+
+
+def _frames_cache_key(sig: tuple[str, int, int]) -> str:
+    """Ключ клипа: abspath|size|mtime_ns (переименование = новый ключ)."""
+    raw = f"{sig[0]}|{sig[1]}|{sig[2]}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _frames_cache_limits() -> tuple[int, int]:
+    max_files = int(max(1.0, _env_float("VM_VISION_FRAMES_MAX", 20000.0)))
+    max_mb = max(1.0, _env_float("VM_VISION_FRAMES_MAX_MB", 2048.0))
+    return max_files, int(max_mb * 1024 * 1024)
+
+
+def _jpeg_ok(path: Path) -> bool:
+    """Дешёвая валидность кадра: >2KB, читается, маркеры JPEG на месте."""
+    try:
+        if path.stat().st_size <= _FRAMES_CACHE_MIN_BYTES:
+            return False
+        with open(path, "rb") as fh:
+            head = fh.read(3)
+            fh.seek(-2, os.SEEK_END)
+            tail = fh.read(2)
+        return head[:2] == b"\xff\xd8" and tail == b"\xff\xd9"
+    except (OSError, ValueError):
+        return False
+
+
+def _frames_cache_get(clip_path: str, count: int) -> list[str] | None:
+    """Готовые кадры из постоянного кэша или None (нужно извлекать)."""
+    if int(count or 0) != 2:
+        return None  # count=0/3-5 — другой набор кадров, кэш только для Vision
+    sig = _file_sig(clip_path)
+    if sig is None:
+        return None
+    cdir = _frames_cache_dir()
+    key = _frames_cache_key(sig)
+    mp = cdir / f"{key}.json"
+    try:
+        man = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(man, dict):
+        return None
+    try:
+        # Двойная проверка ключа: sha1-коллизия/подмена манифеста не пройдёт.
+        if (str(man.get("path") or "") != sig[0]
+                or int(man.get("size")) != sig[1]
+                or int(man.get("mtime_ns")) != sig[2]
+                or int(man.get("v") or 0) != _FRAMES_CACHE_VERSION
+                or int(man.get("width") or 0) != _QF_WIDTH):
+            return None
+        n = int(man.get("n") or 0)
+    except (TypeError, ValueError):
+        return None
+    if n < 1 or n > 2:
+        return None
+    frames: list[str] = []
+    for i in range(n):
+        fp = cdir / f"{key}.f{i}.jpg"
+        if not _jpeg_ok(fp):
+            return None  # битый/недописанный кадр — извлекаем заново
+        frames.append(str(fp))
+    try:  # LRU: кэш-хит = «клип ещё нужен», при переполнении уйдёт не он
+        os.utime(mp, None)
+    except OSError:
+        pass
+    return frames
+
+
+def _frames_cache_key_lock(key: str) -> threading.Lock:
+    """Один ffmpeg на ключ даже при параллельных сценах/потоках."""
+    with _FRAMES_CACHE_LOCK:
+        lk = _FRAMES_CACHE_KEY_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _FRAMES_CACHE_KEY_LOCKS[key] = lk
+        return lk
+
+
+def _frames_cache_scan_usage() -> dict[str, int]:
+    files = 0
+    size = 0
+    try:
+        with os.scandir(_frames_cache_dir()) as it:
+            for de in it:
+                try:
+                    if de.is_file():
+                        files += 1
+                        size += int(de.stat().st_size)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return {"files": files, "bytes": size}
+
+
+def _frames_cache_after_put(n_files: int, n_bytes: int, *, log=None) -> None:
+    """Учесть новые файлы и при превышении лимита почистить старые."""
+    global _FRAMES_CACHE_USAGE
+    with _FRAMES_CACHE_LOCK:
+        if _FRAMES_CACHE_USAGE is None:
+            _FRAMES_CACHE_USAGE = _frames_cache_scan_usage()
+        _FRAMES_CACHE_USAGE["files"] += max(0, n_files)
+        _FRAMES_CACHE_USAGE["bytes"] += max(0, n_bytes)
+        usage = dict(_FRAMES_CACHE_USAGE)
+    max_files, max_bytes = _frames_cache_limits()
+    if usage["files"] > max_files or usage["bytes"] > max_bytes:
+        _frames_cache_prune(log=log)
+
+
+def _frames_cache_prune(*, log=None) -> int:
+    """Удалить самые старые ключи (манифест + его кадры) до ~90% лимита."""
+    global _FRAMES_CACHE_USAGE
+    max_files, max_bytes = _frames_cache_limits()
+    with _FRAMES_CACHE_PRUNE_LOCK:
+        cdir = _frames_cache_dir()
+        manifests: list[tuple[float, str]] = []
+        try:
+            with os.scandir(cdir) as it:
+                for de in it:
+                    name = de.name
+                    if not name.endswith(".json") or name.startswith("."):
+                        continue
+                    try:
+                        manifests.append((de.stat().st_mtime, name[:-5]))
+                    except OSError:
+                        continue
+        except OSError:
+            with _FRAMES_CACHE_LOCK:
+                _FRAMES_CACHE_USAGE = None
+            return 0
+        manifests.sort()  # старые (давно не используемые) — первыми
+        usage = _frames_cache_scan_usage()
+        keep_files = max(1, int(max_files * 0.9))
+        keep_bytes = max(1, int(max_bytes * 0.9))
+        removed = 0
+        for _mt, key in manifests:
+            if usage["files"] <= keep_files and usage["bytes"] <= keep_bytes:
+                break
+            for suffix in (".json", ".f0.jpg", ".f1.jpg"):
+                p = cdir / f"{key}{suffix}"
+                try:
+                    sz = p.stat().st_size
+                except OSError:
+                    continue
+                try:
+                    p.unlink()
+                    usage["files"] -= 1
+                    usage["bytes"] -= sz
+                    removed += 1
+                except OSError:
+                    continue
+        with _FRAMES_CACHE_LOCK:
+            _FRAMES_CACHE_USAGE = usage
+    if removed and log:
+        log(f"[VISION] кэш кадров: удалено {removed} старых файлов")
+    return removed
+
+
+def _frames_cache_put(clip_path: str, frames: list[str], *, log=None) -> int:
+    """Атомарно сохранить кадры в постоянный кэш; вернуть число кадров (0 — нет)."""
+    if not frames:
+        return 0
+    sig = _file_sig(clip_path)
+    if sig is None:
+        return 0
+    key = _frames_cache_key(sig)
+    cdir = _frames_cache_dir()
+    try:
+        cdir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return 0
+    lock = _frames_cache_key_lock(key)
+    with lock:
+        # Другой поток мог сохранить этот же клип, пока мы декодировали.
+        ready = _frames_cache_get(clip_path, 2)
+        if ready is not None:
+            return len(ready)
+        written: list[Path] = []
+        total_bytes = 0
+        try:
+            for i, src in enumerate(frames[:2]):
+                sp = Path(str(src))
+                if not _jpeg_ok(sp):
+                    raise ValueError("bad frame")
+                dst = cdir / f"{key}.f{i}.jpg"
+                tmp = cdir / f".{key}.f{i}.{os.getpid()}.{threading.get_ident()}.tmp"
+                shutil.copyfile(sp, tmp)
+                os.replace(tmp, dst)  # атомарная публикация кадра
+                written.append(dst)
+                total_bytes += dst.stat().st_size
+            man = {
+                "v": _FRAMES_CACHE_VERSION,
+                "path": sig[0],
+                "size": sig[1],
+                "mtime_ns": sig[2],
+                "n": len(written),
+                "width": _QF_WIDTH,
+                "created": time.time(),
+            }
+            tmp_man = cdir / f".{key}.json.{os.getpid()}.{threading.get_ident()}.tmp"
+            tmp_man.write_text(json.dumps(man, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_man, cdir / f"{key}.json")  # манифест — последним
+            total_bytes += (cdir / f"{key}.json").stat().st_size
+        except Exception:
+            # Не оставляем недописанный набор: иначе кэш вернул бы меньше кадров.
+            for p in written:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            for tmp in cdir.glob(f".{key}.*.tmp"):
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            return 0
+    _frames_cache_after_put(len(written) + 1, total_bytes, log=log)
+    return len(written)
 
 
 def _content_hash(path: str | Path) -> str:
@@ -569,17 +1010,27 @@ def _grab_quality_frame(clip_path: str, t: float, dst: Path, timeout: int = 12) 
 
 def _quality_stats(clip_path: str | Path, duration: float = 0.0, *,
                    tmp_dir: Path | None = None) -> dict | None:
-    """{blur, bright, motion, frames} по двум кадрам; None — проверить нельзя.
+    """{blur, bright, motion, frames} по ОДНОМУ кадру; None — не проверяли.
 
-    Любая ошибка/таймаут = None (кандидат НЕ отсеивается: решает Vision).
+    [VM-PERF-4K] Тяжёлые источники (4K на SMB / файлы ≥ ~50 МБ) не декодируем:
+    их качество уже проверено при ingest. Любая ошибка/таймаут = None
+    (кандидат НЕ отсеивается: решает Vision).
     """
     sig = _file_sig(clip_path)
     if sig is None:
+        return None
+    if _heavy_source(clip_path, size=int(sig[1])):
         return None
     cached = _QUALITY_CACHE.get(sig)
     if cached is not None:
         frames = [f for f in (cached.get("frames") or []) if Path(f).exists()]
         return {**cached, "frames": frames}
+    disk = _quality_disk_get(sig)
+    if disk is not None:
+        # Числа из прошлого запуска: кадров нет — Vision извлечёт свои.
+        res = {**disk, "frames": []}
+        _QUALITY_CACHE[sig] = res
+        return res
     try:
         import numpy as np
         from PIL import Image
@@ -594,17 +1045,15 @@ def _quality_stats(clip_path: str | Path, duration: float = 0.0, *,
             dur = 0.0
     if dur <= 0.5:
         return None
-    # Точки совпадают с extract_frames(count=2): для коротких клипов — один
-    # кадр в середине, для длинных — 25%/60%. Тогда Vision топ-3 видит те же
-    # кадры, что и раньше (сравнимость вердиктов), а motion считается по двум.
+    # [VM-PERF-4K] Один кадр вместо двух: префильтру хватает blur/яркости.
+    # Точка та же, что была первой у пары (25% / 50% для коротких), чтобы
+    # отсев остался сравнимым. motion без второго кадра не считаем (None).
     if dur <= 6.0:
         t0 = max(0.05, dur * 0.50)
-        t1 = max(t0 + 0.15, dur * 0.80)
     else:
         t0 = max(0.05, dur * 0.25)
-        t1 = max(t0 + 0.15, dur * 0.60)
-    if t1 >= dur - 0.05:
-        t1 = max(0.10, dur - 0.10)
+    if t0 >= dur - 0.05:
+        t0 = max(0.10, dur - 0.10)
     out_dir = _quality_tmp_dir(clip_path, tmp_dir)
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -612,44 +1061,27 @@ def _quality_stats(clip_path: str | Path, duration: float = 0.0, *,
         return None
     stem = re.sub(r"[^\w.-]", "_", Path(str(clip_path)).stem)[:40] or "clip"
     tag = hashlib.sha1(sig[0].encode("utf-8")).hexdigest()[:8]
-    arrs: list = []
-    frames: list[str] = []
-    for i, t in enumerate((t0, t1)):
-        dst = out_dir / f"q_{stem}_{tag}_{os.getpid()}_f{i}.jpg"
-        f = _grab_quality_frame(str(clip_path), t, dst)
-        if not f:
-            if i == 0:
-                break  # первый кадр не взялся — второй по SMB ждать бессмысленно
-            continue
-        try:
-            a = np.asarray(Image.open(f).convert("L"), dtype=np.float32)
-        except Exception:
-            continue
-        if a.ndim != 2 or min(a.shape) < 8:
-            continue
-        arrs.append(a)
-        frames.append(f)
-    if not arrs:
+    dst = out_dir / f"q_{stem}_{tag}_{os.getpid()}_f0.jpg"
+    f = _grab_quality_frame(str(clip_path), t0, dst)
+    if not f:
         return None
-    lap_vars: list[float] = []
-    for a in arrs:
-        # дискретный лапласиан (эквивалент cv2.Laplacian во внутренней области)
-        lap = (-4.0 * a[1:-1, 1:-1] + a[:-2, 1:-1] + a[2:, 1:-1]
-               + a[1:-1, :-2] + a[1:-1, 2:])
-        lap_vars.append(float(lap.var()))
-    # Оцениваем по ЛУЧШЕМУ из двух кадров: один тёмный/смазанный кадр
-    # (фейд, переход) не должен отсеивать нормальный клип.
-    bright = float(max(float(a.mean()) for a in arrs))
-    motion: float | None = None
-    if len(arrs) >= 2 and arrs[0].shape == arrs[1].shape:
-        motion = float(np.abs(arrs[1] - arrs[0]).mean())
+    try:
+        a = np.asarray(Image.open(f).convert("L"), dtype=np.float32)
+    except Exception:
+        return None
+    if a.ndim != 2 or min(a.shape) < 8:
+        return None
+    # дискретный лапласиан (эквивалент cv2.Laplacian во внутренней области)
+    lap = (-4.0 * a[1:-1, 1:-1] + a[:-2, 1:-1] + a[2:, 1:-1]
+           + a[1:-1, :-2] + a[1:-1, 2:])
     res = {
-        "blur": float(max(lap_vars)),
-        "bright": bright,
-        "motion": motion,
-        "frames": frames,
+        "blur": float(lap.var()),
+        "bright": float(a.mean()),
+        "motion": None,
+        "frames": [f],
     }
     _QUALITY_CACHE[sig] = res
+    _quality_disk_put(sig, res)
     return res
 
 
@@ -846,10 +1278,22 @@ def prefilter_candidates(entries: list[dict], *, log=print,
             e["prefilter"] = "short"
             n_short += 1
 
-    # [VM-P0-3] резкость/яркость/motion — два дешёвых кадра, без Vision.
+    # [VM-P0-3] резкость/яркость/motion — дешёвый кадр, без Vision.
+    # [VM-PERF-4K] Кадры берём ТОЛЬКО у лёгких источников: tiny/small-превью,
+    # локальные файлы < ~50 МБ. Библиотечный 4K на SMB не декодируем — его
+    # качество проверено при ingest; остаются длительность/дубли/hard-теги.
+    quality_all = [e for e in entries
+                   if not e.get("verified") and str(e.get("file") or "")]
+    quality_todo: list[dict] = []
+    n_no_frames = 0
+    for e in quality_all:
+        vf = str(e.get("verify_file") or e.get("file") or "")
+        if _heavy_source(vf, e):
+            e["prefilter_no_frames"] = True  # видно в отладке/манифесте пула
+            n_no_frames += 1
+        else:
+            quality_todo.append(e)
     # Ошибка/таймаут анализа НЕ отсеивает кандидата (решит Vision).
-    quality_todo = [e for e in entries
-                    if not e.get("verified") and str(e.get("file") or "")]
     if quality_todo:
         def _one(e: dict):
             vf = str(e.get("verify_file") or e.get("file") or "")
@@ -875,7 +1319,7 @@ def prefilter_candidates(entries: list[dict], *, log=print,
             if e.get("verified") or not st:
                 continue
             frames = st.get("frames") or []
-            if frames:  # переиспользуем для Vision топ-3 (экономия ffmpeg)
+            if frames:  # короткие клипы: Vision топ-2 переиспользует кадр
                 e["_vision_frames"] = frames
             bright = st.get("bright")
             blur = st.get("blur")
@@ -901,6 +1345,10 @@ def prefilter_candidates(entries: list[dict], *, log=print,
                 e["what"] = f"предфильтр: размыто (резкость {blur:.0f} < {_QF_BLUR_MIN:.0f})"
                 e["prefilter"] = "blur"
                 n_blur += 1
+    if log and n_no_frames:
+        log("[VISION] префильтр: кадры не извлекались (4K/SMB), "
+            f"проверены только дешёвые: {n_no_frames}")
+    _quality_disk_flush()  # один раз на префильтр, не на файл
 
     total = n_dup + n_hard + n_bad + n_short + n_blur + n_dark + n_static
     if log and total:
@@ -1021,7 +1469,7 @@ def _apply_veto(e: dict, c: dict | None, min_score: int) -> str:
 def _rank_todo(items: list[dict]) -> list[dict]:
     """Текущее ранжирование = порядок вызывающего (smart_broll уже сделал pre-rank).
 
-    Здесь НЕ пересортировываем: иначе топ-3 переставал бы совпадать с тем
+    Здесь НЕ пересортировываем: иначе топ-2 переставал бы совпадать с тем
     ранжированием, по которому вызывающий строил пул (база+сток, RRF, история).
     """
     return list(items)
@@ -1043,7 +1491,7 @@ def reset_scene_state() -> None:
 
 
 def _scene_state(key: str) -> dict:
-    """Бюджет VLM на сцену: 1 батч топ-3 + ≤2 одиночных доработки."""
+    """Бюджет VLM на сцену: 1 батч топ-2 + ≤2 одиночных доработки."""
     now = time.time()
     st = _SCENE_STATE.get(key)
     if not st or (now - float(st.get("updated") or 0)) > _SCENE_STATE_TTL:
@@ -1062,12 +1510,13 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
                              tmp_dir: Path | None = None, deadline: float | None = None,
                              prefilter: bool = True,
                              stats: dict | None = None) -> list[dict]:
-    """[VM-P0-3] Vision только по ТОП-3 кандидатам сцены, режим «вето».
+    """[VM-P0-3] Vision только по ТОП-2 кандидатам сцены, режим «вето».
 
     Префильтр (дубли/hard/короткие/blur/тёмные/стоп-кадры) — без Vision.
-    Топ-3 сцены оцениваются ОДНИМ вызовом (чередование кадров сохранено),
-    остальные не оцениваются. Если ни один не прошёл вето и score < min_score —
-    до 2 одиночных доработок на сцену. Кэш: (scene_hash, query, model,
+    Топ-2 сцены оцениваются ОДНИМ вызовом (чередование кадров сохранено),
+    остальные не оцениваются. Если ни один не прошёл вето и score < min_score
+    (или топ ответил «сомневаюсь») — до 2 одиночных доработок на сцену
+    (3-й и следующий кандидаты). Кэш: (scene_hash, query, model,
     prompt_version); повторный прогон = 0 вызовов.
 
     stats (необязательно) — накопитель реальных HTTP-вызовов: ``stats["calls"]``
@@ -1127,7 +1576,7 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
                 sc = int(row[0])
                 what = str(row[1] or "")
                 # [VM-FIX B2] Старый кэш «пропуска» (-1, VLM:) — не оценка:
-                # пул мог измениться, кандидат обязан участвовать в топ-3 заново.
+                # пул мог измениться, кандидат обязан участвовать в топ-2 заново.
                 if sc < 0 and what.startswith("VLM:"):
                     row = None
             if row is not None:
@@ -1171,7 +1620,7 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
                 frames_of[id(e)] = extract_frames(
                     str(e.get("verify_file") or e["file"]),
                     (tmp_dir or Path(str(e.get("verify_file") or e["file"])).parent / ".verify_frames"),
-                    count=frames_count)
+                    count=frames_count, log=log)
         return frames_of[id(e)]
 
     def _frames_many(items: list[dict]) -> list[list[str]]:
@@ -1186,9 +1635,9 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
         f = str(e.get("file") or "")
         th = th_of.get(id(e))
         sc = e.get("score")
-        # [VM-FIX B2] «Пропуск вне топ-3» — эфемерный маркер прогона, НЕ оценка.
+        # [VM-FIX B2] «Пропуск вне топ-2» — эфемерный маркер прогона, НЕ оценка.
         # В кэш пишем только реальные оценки >= 0: иначе кандидат навсегда
-        # остаётся -1 и не оценивается, даже если в новом пуле стал топ-3.
+        # остаётся -1 и не оценивается, даже если в новом пуле стал топ-2.
         if (cache is not None and f and th and isinstance(sc, int) and sc >= 0):
             try:
                 from datetime import datetime as _dt, timezone as _tz
@@ -1273,7 +1722,7 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
         log(f"[VISION] {mark} {Path(str(e.get('file'))).name[:40]} | {sc}/10 — "
             f"{tail} | {str(e.get('what'))[:60]}")
 
-    # Группируем по сцене: бюджет топ-3 и фолбэка — на сцену, не на вызов.
+    # Группируем по сцене: бюджет топ-2 и фолбэка — на сцену, не на вызов.
     groups: dict[str, list[dict]] = {}
     order: list[str] = []
     for e in entries:
@@ -1290,7 +1739,18 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
         if e.get("veto") == "pass":
             st["approved"] = True
 
-    # Фаза A: план на сцену (топ-3) и общий список на батч. Батчить топы
+    def _needs_fallback(plan: dict) -> bool:
+        """Добираем одиночно, если нет «да» и топ слабый ИЛИ топ «сомневаюсь»."""
+        st = plan["state"]
+        if st.get("approved"):
+            return False
+        if int(st.get("best", -1)) < min_score:
+            return True
+        # [PERF-BUDGET] «Сомневаюсь» у топ-2 — смотрим 3-го (≤2 singles).
+        return any(str(e.get("literal_action") or "") == "сомневаюсь"
+                   for e in plan["top"])
+
+    # Фаза A: план на сцену (топ-2) и общий список на батч. Батчить топы
     # РАЗНЫХ сцен вместе важно: у финального verify_pool в сцене 1-2 клипа,
     # и вызов на каждую сцену раздул бы число запросов.
     plans: list[dict] = []
@@ -1355,7 +1815,7 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
     for p in plans:
         p["vlm"] = sum(1 for e in p["top"] if e.get("veto"))
 
-    # Фаза B: фолбэк по одному (≤2 на сцену) и пометка «вне топ-3».
+    # Фаза B: фолбэк по одному (≤2 на сцену) и пометка «вне топ-2».
     for p in plans:
         st = p["state"]
         ranked = p["ranked"]
@@ -1376,8 +1836,8 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
                     p["vlm"] += 1
                     _note(st, e)
                     _log_candidate(e)
-            # «вето» не пройдено и score ниже порога — добираем из остатка
-            if not st.get("approved") and int(st.get("best", -1)) < min_score:
+            # «вето» не пройдено и score ниже порога / топ «сомневаюсь» — добираем из остатка
+            if _needs_fallback(p):
                 for e in p["rest"]:
                     if int(st.get("singles", 0)) >= _FALLBACK_SINGLES:
                         break
@@ -1394,7 +1854,7 @@ def verify_candidates_gemini(entries: list[dict], *, key: str, keys: list[str] |
                 _mark_skip(e)
         else:
             # следующий чанк той же сцены: только если не прошли вето/порог
-            if not st.get("approved") and int(st.get("best", -1)) < min_score:
+            if _needs_fallback(p):
                 for e in ranked:
                     if int(st.get("singles", 0)) >= _FALLBACK_SINGLES:
                         break
@@ -1491,7 +1951,7 @@ def verify_batch_opencode(batch: list[dict], *, log=print,
     for e in batch:
         if not str(e.get("file") or ""):
             continue
-        frames = extract_frames(str(e.get("verify_file") or e["file"]), tmp)
+        frames = extract_frames(str(e.get("verify_file") or e["file"]), tmp, log=log)
         if not frames:
             continue
         prompt = (
@@ -1550,7 +2010,7 @@ def verify_pool(entries: list[dict], *, key: str, model: str = "gemini-3.5-flash
     """Проверить скачанные клипы; слабые (score < min_score) удалить.
 
     [VM-P0-3] Дешёвый префильтр (дубли/hard/битые/короткие/blur/тьма/стоп-кадр)
-    отсеивает кандидатов без Vision. Vision видит только топ-3 сцены в режиме
+    отсеивает кандидатов без Vision. Vision видит только топ-2 сцены в режиме
     «вето» (один вызов, чередование «Кандидат N → его кадры» сохранено), плюс
     ≤2 одиночных доработки. Кэш: (scene_hash, query, model, prompt_version) —
     повторный прогон не делает вызовов. OpenCode-VL — резерв ≤2 на сцену.
@@ -1650,7 +2110,7 @@ def verify_pool(entries: list[dict], *, key: str, model: str = "gemini-3.5-flash
                     pass
 
     def _opencode_leftovers() -> None:
-        # [VM-P0-3] «вне топ-3» не дооцениваем; одиночный резерв — ≤2 на сцену
+        # [VM-P0-3] «вне топ-2» не дооцениваем; одиночный резерв — ≤2 на сцену
         budget: dict[str, int] = {}
         todo: list[dict] = []
         for e in entries:

@@ -112,6 +112,9 @@ class Settings:
 
     # Прочее
     keep_temp_files: bool = False
+    # A3: proxy-мастер 1080p (быстрый превью) + отдельный native 4K conform.
+    # OFF по умолчанию — существующий путь 4K не меняется.
+    render_proxy: bool = False
     # Target only applies to final BGM mixes; voice-only output avoids an extra encode pass.
     target_lufs: float = -14.0
     vstack_top_ratio: float = 0.6
@@ -142,6 +145,7 @@ class Settings:
     cinematic_seed: int = 42
     cinematic_transition_sfx: bool = False  # whoosh under soft dissolves
     cinematic_smart_broll: bool = True      # умный подбор B-roll по смыслу (псевдо-нейролинк)
+    disable_dobor: bool = False             # не добирать слабые сцены через fix_scenes
     cinematic_keyword_cuts: bool = True     # смена кадра под ключевые слова озвучки
     cinematic_min_shot: float = 1.3         # минимальная длина плана при пословном монтаже, сек
 
@@ -163,6 +167,8 @@ class Settings:
             whisper_language=os.getenv("WHISPER_LANGUAGE", "ru"),
             whisper_device=os.getenv("WHISPER_DEVICE", "cpu"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
+            render_proxy=str(os.getenv("VM_RENDER_PROXY", "")).strip().lower()
+            in ("1", "true", "yes", "on", "да"),
         )
 
 

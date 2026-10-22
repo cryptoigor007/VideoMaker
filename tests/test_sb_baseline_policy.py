@@ -21,6 +21,7 @@ from video_maker.semantic.scene_policy import (  # noqa: E402
     select_scene,
 )
 from video_maker.pipeline.master import (  # noqa: E402
+    _disable_dobor,
     _manifest_scene_flags,
     _run_fix_scenes_filtered,
 )
@@ -287,6 +288,18 @@ def test_fix_scenes_skips_graphic_fallback(tmp_path: Path):
     assert fixed["scenes"][0]["graphic_fallback"] is True
     assert fixed["scenes"][1]["files"] == ["fixed_1"]
     assert not (tmp_path / "smart_broll_manifest.fix.json").exists()
+
+
+def test_disable_dobor_setting(tmp_path: Path, monkeypatch):
+    """[PERF-BUDGET] Настройка отключения добора: env важнее JSON, дефолт false."""
+    monkeypatch.delenv("VM_DISABLE_DOBOR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert _disable_dobor() is False
+    (tmp_path / ".video_maker_settings.json").write_text(
+        json.dumps({"disable_dobor": True}), encoding="utf-8")
+    assert _disable_dobor() is True
+    monkeypatch.setenv("VM_DISABLE_DOBOR", "0")
+    assert _disable_dobor() is False
 
 
 def _repeat_segments(tmp_path: Path, count: int = 3) -> Path:

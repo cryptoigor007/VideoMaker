@@ -4,7 +4,7 @@
 * B1 — `_SCENE_STATE` не течёт между прогонами;
 * B2 — `vlm_skipped` (-1) не сохраняется в кэш как оценка;
 * префильтр режет точные дубли / blur / тёмные / стоп-кадры;
-* топ-3 + не более 2 одиночных доработок на сцену;
+* топ-2 + не более 2 одиночных доработок на сцену;
 * повторный прогон того же пула = 0 Vision-вызовов.
 """
 
@@ -151,25 +151,25 @@ def test_scene_state_reset_between_runs(tmp_path: Path, monkeypatch, isolated_ca
 def test_cache_second_run_makes_zero_calls(tmp_path: Path, monkeypatch, isolated_cache):
     fake = _fake_llm(score=2, verdict="нет")
     monkeypatch.setattr(verify, "_gemini_json", fake)
-    entries = [_entry(tmp_path, i) for i in range(3)]
+    entries = [_entry(tmp_path, i) for i in range(2)]
 
     verify.verify_candidates_gemini(
         entries, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None)
-    assert fake.calls == [3]  # только топ-3 одним вызовом; фолбэк не нужен
+    assert fake.calls == [2]  # только топ-2 одним вызовом; фолбэк не нужен
 
     con = sqlite3.connect(str(isolated_cache))
     rows = con.execute("SELECT file, score FROM scores").fetchall()
     con.close()
-    assert len(rows) == 3 and all(int(sc) >= 0 for _f, sc in rows)
+    assert len(rows) == 2 and all(int(sc) >= 0 for _f, sc in rows)
 
     # Второй прогон того же пула (новые dict'ы): всё из кэша, 0 вызовов.
     verify.reset_scene_state()
-    fresh = [_entry(tmp_path, i) for i in range(3)]
+    fresh = [_entry(tmp_path, i) for i in range(2)]
     verify.verify_candidates_gemini(
         fresh, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None)
-    assert fake.calls == [3]
+    assert fake.calls == [2]
     assert all(e.get("cached") for e in fresh)
 
 
@@ -181,9 +181,9 @@ def test_skipped_is_not_cached_and_gets_evaluated_next_run(
     verify.verify_candidates_gemini(
         entries, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None)
-    assert fake.calls == [3]
+    assert fake.calls == [2]
     skipped = [e["file"] for e in entries if e.get("vlm_skipped")]
-    assert len(skipped) == 2
+    assert len(skipped) == 3
 
     con = sqlite3.connect(str(isolated_cache))
     cached_skips = [
@@ -194,13 +194,13 @@ def test_skipped_is_not_cached_and_gets_evaluated_next_run(
     con.close()
     assert cached_skips == []  # «пропуск» не сохранён как оценка
 
-    # Пул изменился: бывшие пропущенные стали топ-3 — они обязаны оцениться.
+    # Пул изменился: бывшие пропущенные стали топ-2 — они обязаны оцениться.
     verify.reset_scene_state()
-    rerun = [_entry(tmp_path, 3), _entry(tmp_path, 4), _entry(tmp_path, 9)]
+    rerun = [_entry(tmp_path, 3), _entry(tmp_path, 4)]
     verify.verify_candidates_gemini(
         rerun, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None)
-    assert fake.calls[-1] == 3  # оба бывших пропуска + новый кандидат
+    assert fake.calls[-1] == 2  # оба бывших пропуска
     assert all(e.get("score") == 2 for e in rerun[:2])
     assert not rerun[0].get("vlm_skipped") and not rerun[1].get("vlm_skipped")
 
@@ -211,7 +211,7 @@ def test_verify_pool_ignores_legacy_skip_rows(
     monkeypatch.setattr(verify, "_gemini_json", fake)
     # Префильтр не нужен: проверяем именно кэш verify_pool.
     monkeypatch.setattr(verify, "prefilter_candidates", lambda *a, **k: [])
-    entries = [_entry(tmp_path, i) for i in range(3)]
+    entries = [_entry(tmp_path, i) for i in range(2)]
 
     # Эмулируем старый баг: «пропуск» записан в кэш как -1.
     con = sqlite3.connect(str(isolated_cache))
@@ -226,7 +226,7 @@ def test_verify_pool_ignores_legacy_skip_rows(
 
     verify.verify_pool(entries, key="k", model="m", min_score=2,
                        log=None, use_opencode=False)
-    assert fake.calls == [3]  # старый -1 не считается оценкой
+    assert fake.calls == [2]  # старый -1 не считается оценкой
     assert all(e.get("score") == 2 and not e.get("vlm_skipped") for e in entries)
 
 
@@ -235,21 +235,21 @@ def test_stats_counts_real_calls_not_cache(
     fake = _fake_llm(score=2, verdict="нет")
     monkeypatch.setattr(verify, "_gemini_json", fake)
     stats: dict = {"calls": 0}
-    entries = [_entry(tmp_path, i) for i in range(3)]
+    entries = [_entry(tmp_path, i) for i in range(2)]
     verify.verify_candidates_gemini(
         entries, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None, stats=stats)
     assert stats["calls"] == 1  # ровно один HTTP-вызов батча
 
     verify.reset_scene_state()
-    fresh = [_entry(tmp_path, i) for i in range(3)]
+    fresh = [_entry(tmp_path, i) for i in range(2)]
     verify.verify_candidates_gemini(
         fresh, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=None, stats=stats)
     assert stats["calls"] == 1  # кэш не инкрементит счётчик
 
 
-def test_top3_and_at_most_two_fallbacks(tmp_path: Path, monkeypatch, isolated_cache):
+def test_top2_and_at_most_two_fallbacks(tmp_path: Path, monkeypatch, isolated_cache):
     fake = _fake_llm(score=2, verdict="нет")
     monkeypatch.setattr(verify, "_gemini_json", fake)
     entries = [_entry(tmp_path, i) for i in range(6)]
@@ -258,10 +258,26 @@ def test_top3_and_at_most_two_fallbacks(tmp_path: Path, monkeypatch, isolated_ca
         entries, key="k", model="m", use_cache=True, prefilter=False,
         min_score=6, log=None)
 
-    assert fake.calls == [3, 1, 1]  # батч топ-3 + ровно 2 одиночных
+    assert fake.calls == [2, 1, 1]  # батч топ-2 + ровно 2 одиночных
     evaluated = [e for e in entries if isinstance(e.get("score"), int) and e["score"] >= 0]
-    assert len(evaluated) == 5
-    assert sum(1 for e in entries if e.get("vlm_skipped")) == 1
+    assert len(evaluated) == 4
+    assert sum(1 for e in entries if e.get("vlm_skipped")) == 2
+
+
+def test_uncertain_top2_gets_third_candidate(
+        tmp_path: Path, monkeypatch, isolated_cache):
+    """[PERF-BUDGET] Топ-2 «сомневаюсь» — оцениваем 3-го (фолбэк ≤2)."""
+    fake = _fake_llm(score=6, verdict="сомневаюсь")
+    monkeypatch.setattr(verify, "_gemini_json", fake)
+    entries = [_entry(tmp_path, i) for i in range(3)]
+
+    verify.verify_candidates_gemini(
+        entries, key="k", model="m", use_cache=True, prefilter=False,
+        min_score=6, log=None)
+
+    assert fake.calls == [2, 1]  # батч топ-2 + 3-й одиночно
+    assert all(e.get("score") == 6 for e in entries)
+    assert not any(e.get("vlm_skipped") for e in entries)
 
 
 def test_two_scenes_same_text_get_own_vlm_calls(
@@ -284,12 +300,12 @@ def test_two_scenes_same_text_get_own_vlm_calls(
         entries, key="k", model="m", use_cache=True, prefilter=False,
         min_score=2, log=logs.append)
 
-    # Каждая сцена реально оценена: 6 кандидатов суммарно, ни одного -1.
-    assert sum(fake.calls) == 6 and len(fake.calls) == 2  # 5 + 1: батчи обеих сцен
-    assert all(e.get("score") == 3 for e in entries)
-    assert not any(e.get("vlm_skipped") for e in entries)
-    # Итог по сценам: две строки, у каждой VLM 3 и вызовов > 0.
+    # Каждая сцена реально оценена: по 2 кандидата (топ-2) в одном батче.
+    assert sum(fake.calls) == 4 and len(fake.calls) == 1  # батч обеих сцен
+    assert all(e.get("score") == 3 for e in entries[:2] + entries[3:5])
+    assert [e.get("vlm_skipped") for e in (entries[2], entries[5])] == [True, True]
+    # Итог по сценам: две строки, у каждой VLM 2 и вызовов > 0.
     scene_lines = [s for s in logs if "VLM" in s and "сцена" in s]
     assert len(scene_lines) == 2
-    assert all("VLM 3" in s for s in scene_lines)
+    assert all("VLM 2" in s for s in scene_lines)
     assert all(int(s.split("вызовов ")[1].split()[0]) > 0 for s in scene_lines)

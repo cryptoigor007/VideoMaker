@@ -19,8 +19,8 @@ def _tmp_db(tmp: Path) -> None:
     library.db_path = _dbp  # type: ignore[assignment]
 
 
-def test_history_and_rank(tmp: Path) -> None:
-    _tmp_db(tmp)
+def test_history_and_rank(tmp_path: Path) -> None:
+    _tmp_db(tmp_path / "perf.db")
     perf_history.reset()
     good = {"file": "/x/good.mp4"}
     bad = {"file": "/x/bad.mp4"}
@@ -60,8 +60,8 @@ def _fake_search(n: int = 12):
              "provider": "pixabay", "score": 1.0} for f in files]
 
 
-def test_early_exit(tmp: Path) -> None:
-    _tmp_db(tmp)
+def test_early_exit(tmp_path: Path) -> None:
+    _tmp_db(tmp_path / "perf.db")
     perf_history.reset()
     library.search_library_multi = lambda *a, **k: _fake_search(12)  # type: ignore
     library.search_stock_multi = lambda *a, **k: []  # type: ignore
@@ -87,11 +87,11 @@ def test_early_exit(tmp: Path) -> None:
     assert st.get("checked") == 4, st
     assert len(calls) == 1, calls
     assert cands[0].get("score") == 9
-    print(f"[TEST] ранний выход: 1 вызов, проверено {st['checked']}/8: OK")
+    print(f"[TEST] ранний выход: 1 вызов, проверено {st['checked']}/5: OK")
 
 
-def test_budget_and_topup(tmp: Path) -> None:
-    _tmp_db(tmp)
+def test_budget_and_topup(tmp_path: Path) -> None:
+    _tmp_db(tmp_path / "perf.db")
     perf_history.reset()
     library.search_library_multi = lambda *a, **k: _fake_search(20)  # type: ignore
     library.search_stock_multi = lambda *a, **k: []  # type: ignore
@@ -112,10 +112,10 @@ def test_budget_and_topup(tmp: Path) -> None:
         sc, orientation="wide", per_scene=2, log=lambda *a: None,
         used_urls=set(), vlm_budget=12, use_history=False)
     st = sc.get("_pool_stats") or {}
-    assert st.get("candidates") == 12, st
-    assert st.get("checked") == 12, st
-    assert len(calls) == 3, calls  # 4 + 4 + 4
-    print(f"[TEST] бюджет 8 + добор до 12: вызовы {len(calls)}, проверено 12: OK")
+    assert st.get("candidates") == 8, st
+    assert st.get("checked") == 8, st
+    assert calls == [4, 1, 3], calls  # 4 + 1 (бюджет 5) + 3 (добор до 8)
+    print(f"[TEST] бюджет 5 + добор до 8: вызовы {calls}, проверено 8: OK")
 
 
 def test_settings_invalidation() -> None:

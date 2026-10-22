@@ -26,9 +26,11 @@ from .scene_policy import (
     ClipUsageTracker,
     GraphicFallbackBudget,
     SceneDecision,
+    VisualDiversityTracker,
     candidate_id,
     candidate_score,
     log_decision,
+    scene_shot_windows,
     select_scene,
 )
 from .stock import download_file, safe_slug, search_stock
@@ -36,6 +38,16 @@ from .taxonomy import themes_for_tokens
 
 
 _LIB_PREVIEW_DIR = Path.home() / "video_maker" / "lib_previews"
+
+# [PERF-BUDGET] Бюджеты подбора на сцену: 5 кандидатов по умолчанию,
+# добор до 8 — только если ни один не набрал ≥6 (см. _scene_pool_candidates).
+_CAND_BUDGET = 5
+_CAND_TOPUP = 8
+# Сильная библиотека: лучший pre-rank кандидат ≥7/10 — сток для сцены не ищем.
+# Для «оценки» берём и балл клипа из базы (Vision при ingest), но только когда
+# pre-rank-релевантность уже высокая (≥5): иначе высокий балл не про эту сцену.
+_LIB_STRONG_SCORE = 7.0
+_LIB_STRONG_PRE_MIN = 5.0
 
 
 def _pixabay_id_from_name(path: str) -> str:
@@ -161,7 +173,8 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                            used_urls: set[str], library_only: bool = False,
                            vlm_budget: int = 12, use_stock: bool = True,
                            verify: bool = True, early_exit: bool = True,
-                           use_history: bool = True, cand_budget: int = 8,
+                           use_history: bool = True, cand_budget: int = _CAND_BUDGET,
+                           cand_topup: int | None = None,
                            cand_chunk: int = 4) -> list[dict]:
     """[VM-CASCADE] Пул кандидатов сцены: веер базы + веер стока (tiny) → VLM → ранжирование.
 
@@ -187,7 +200,26 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
         stats["total_ms"] = round((time.monotonic() - t_all) * 1000.0, 2)
         sc["_pool_stats"] = stats
 
-    queries = [str(q) for q in (sc.get("queries") or []) if str(q).strip()][:3]
+    literal_queries = [str(q) for q in (sc.get("queries") or []) if str(q).strip()][:3]
+    scene_class = _norm_scene_class(sc.get("scene_class"))
+    confidence = _norm_scene_confidence(sc.get("confidence"))
+    assoc_queries = [str(q) for q in (sc.get("assoc_queries") or []) if str(q).strip()][:2]
+    # [A2] Низкая confidence / abstract: веер из ОБОИХ путей — буквальные
+    # запросы остаются первыми и не отрезаются ассоциативным прочтением.
+    _fan = bool(assoc_queries) and (
+        confidence < SCENE_LOW_CONFIDENCE or scene_class in ("associative", "abstract"))
+    queries = list(literal_queries)
+    if _fan:
+        for _q in assoc_queries:
+            if _q not in queries:
+                queries.append(_q)
+        queries = queries[:4]
+        try:
+            log(f"[SB] сцена {int(sc.get('idx', 0)) + 1}: {scene_class} "
+                f"conf={confidence:.2f} — веер literal+assoc "
+                f"({len(literal_queries)}+{max(0, len(queries) - len(literal_queries))})")
+        except Exception:
+            pass
     if not queries:
         _stamp_stats()
         return []
@@ -228,13 +260,47 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                       "source_url": rec.get("source_url"), "duration": rec.get("duration"),
                       "width": rec.get("width"), "height": rec.get("height"),
                       "db_score": rec.get("score")})
-    # 2) сток — веер запросов × источников, tiny-превью для оценки
-    if not library_only and use_stock:
+    # 2) сток — веер запросов × источников, tiny-превью для оценки.
+    # [PERF-BUDGET] Если библиотека уже дала сильного кандидата (pre-rank ≥7/10),
+    # сток для этой сцены не ищем: экономит поиск/скачивание/VLM-слоты.
+    _lib_strong = 0.0
+    if cands:
+        try:
+            _probe = _pre_rank_candidates(cands, sc, use_history=use_history)
+            if _probe:
+                _best = _probe[0]
+                _pre = float(_best.get("_pre_score") or 0.0) * 10.0
+                _known = _best.get("score")
+                if not isinstance(_known, int):
+                    _known = _best.get("db_score")
+                _known10 = float(_known) if isinstance(_known, (int, float)) else -1.0
+                _lib_strong = max(
+                    _pre,
+                    _known10 if _pre >= _LIB_STRONG_PRE_MIN else -1.0,
+                )
+        except Exception as _pre:
+            log(f"[SB] pre-rank библиотеки пропущен: {str(_pre)[:80]}")
+    _stock_allowed = not library_only and use_stock
+    _stock_skip = bool(_stock_allowed and _lib_strong >= _LIB_STRONG_SCORE)
+    if _stock_skip:
+        stats["stock_skipped"] = True
+        stats["lib_strength"] = round(_lib_strong, 2)
+        try:
+            log(f"[SB] сцена {int(sc.get('idx', 0)) + 1}: библиотека ≥7 → сток пропущен")
+        except Exception:
+            pass
+    if _stock_allowed and not _stock_skip:
         _t_stock = time.monotonic()
+        _stock_kw: dict = {}
+        if _fan:
+            # Веер двух путей: не даём search_stock_multi отрезать assoc-запросы
+            # дефолтным лимитом 2 (обычные сцены работают как раньше).
+            _stock_kw["max_queries"] = max(2, min(4, len(queries)))
         try:
             st_hits = search_stock_multi(queries, orientation=orientation, per_query=20,
                                          limit=max(10, per_scene * 3),
-                                         exclude_urls=used_urls, log=log)
+                                         exclude_urls=used_urls, log=log,
+                                         **_stock_kw)
         except Exception as _e:
             log(f"[SB] веер стока не удался: {str(_e)[:80]}")
             st_hits = []
@@ -269,7 +335,8 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
         except Exception as _pre:
             log(f"[SB] pre-rank пропущен: {str(_pre)[:80]}")
 
-    # 3) превью и VLM-оценка: бюджет 8 кандидатов, ранний выход, добор до 12
+    # 3) превью и VLM-оценка: бюджет 5 кандидатов, ранний выход,
+    # добор до 8 только если ни один не набрал ≥6
     _t_vlm = time.monotonic()
     if verify and not sc.get("_no_verify"):
         try:
@@ -280,8 +347,9 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                 _scene_idx: int | None = int(sc.get("idx"))
             except (TypeError, ValueError):
                 _scene_idx = None
-            budget = max(1, min(int(cand_budget or 8), int(vlm_budget or 12)))
-            topup = max(budget, int(vlm_budget or 12))
+            budget = max(1, min(int(cand_budget or _CAND_BUDGET), int(vlm_budget or 12)))
+            topup = max(budget, min(int(cand_topup or _CAND_TOPUP),
+                                    int(vlm_budget or 12)))
             chunk_n = max(2, min(6, int(cand_chunk or 4)))
             entries: list[dict] = []
             taken = 0
@@ -351,7 +419,7 @@ def _scene_pool_candidates(sc: dict, *, orientation: str, per_scene: int, log,
                                 f"({vals[0]}/10, проверено {checked_now}/{len(entries)})")
                             break
                     continue
-                # все собранные проверены: добираем бюджет, затем добор до 12 при <6
+                # все собранные проверены: добираем бюджет, затем добор до 8 при <6
                 if len(entries) < min(budget, len(cands)) and taken < len(cands):
                     _take(min(budget, len(cands)))
                     continue
@@ -603,12 +671,79 @@ def _sentence_slots(segments: list[dict], max_len: float = 6.5) -> list[dict]:
     return slots
 
 
+SCENE_CLASSES = ("literal", "associative", "abstract")
+DEFAULT_SCENE_CLASS = "literal"
+DEFAULT_SCENE_CONFIDENCE = 0.5
+SCENE_LOW_CONFIDENCE = 0.7
+
+
+def _norm_scene_class(raw) -> str:
+    """Класс сцены из ответа Gemini (иначе literal)."""
+    s = str(raw or "").strip().lower()
+    return s if s in SCENE_CLASSES else DEFAULT_SCENE_CLASS
+
+
+def _norm_scene_confidence(raw) -> float:
+    """Уверенность 0..1 (дефолт 0.5); проценты (85) приводим к 0.85."""
+    if isinstance(raw, bool) or raw is None:
+        return DEFAULT_SCENE_CONFIDENCE
+    try:
+        v = float(str(raw).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return DEFAULT_SCENE_CONFIDENCE
+    if v != v or v in (float("inf"), float("-inf")):
+        return DEFAULT_SCENE_CONFIDENCE
+    if v > 1.0:
+        v = v / 100.0
+    return round(min(1.0, max(0.0, v)), 3)
+
+
+def _assoc_search_queries(text: str, *, scene_class: str = DEFAULT_SCENE_CLASS,
+                          mood: str = "", emotions: list[str] | None = None,
+                          phrase_index: int = 0,
+                          exclude: list[str] | None = None) -> list[str]:
+    """Второй путь веера: настроение/атмосфера/лексикон вместо буквального объекта.
+
+    Нужен при низкой confidence и для abstract: буквальный запрос мог «отрезать»
+    клип по словам, тогда как смысл сцены — эмоция или обобщение.
+    """
+    skip = {str(q).strip().lower() for q in (exclude or []) if str(q).strip()}
+    out: list[str] = []
+
+    def add(q: str) -> None:
+        q = str(q or "").strip()
+        if q and q.lower() not in skip and q not in out:
+            out.append(q)
+
+    mood_s = str(mood or "").strip().lower()
+    if scene_class == "abstract":
+        # Абстракция: сначала атмосфера, но буквальные запросы не отменяем.
+        _base = mood_s or next(
+            (str(x).strip().lower() for x in (emotions or []) if str(x).strip()), "")
+        add(f"{_base} atmosphere cinematic" if _base
+            else "atmospheric background cinematic")
+    elif mood_s:
+        add(f"{mood_s} atmospheric scene")
+    for e in [str(x).strip().lower() for x in (emotions or []) if str(x).strip()][:2]:
+        add(f"{e} mood cinematic")
+    try:
+        for q in queries_for_text(text, max_queries=2, phrase_index=phrase_index):
+            add(q)
+    except Exception:
+        pass
+    return out[:3]
+
+
 def plan_scenes(segments: list[dict], target_duration: float | None = None,
                 slot_seconds: float = 9.0, max_scenes: int | None = None,
-                query_variant: int = 0, analysis_queries: list[dict] | None = None) -> list[dict]:
+                query_variant: int = 0, analysis_queries: list[dict] | None = None,
+                min_shot_sec: float = 2.0,
+                max_shots: int = 3) -> list[dict]:
     """Сцены с запросами: [{idx,start,end,text,queries,themes}].
 
     analysis_queries (Gemini) в приоритете: точные описания сцен → точные клипы.
+    [B3] Для сцены >6с считается ``_shot_windows`` — 2-3 шота по паузам
+    транскрипта; наружу (в манифест) уйдёт уже с привязанными клипами.
     """
     total = float(target_duration) if target_duration else (
         float(segments[-1].get("end", 0.0)) if segments else 0.0
@@ -624,10 +759,17 @@ def plan_scenes(segments: list[dict], target_duration: float | None = None,
         weights: dict = {}
         visual = ""
         shot = mood = ""
+        scene_class = DEFAULT_SCENE_CLASS
+        confidence = DEFAULT_SCENE_CONFIDENCE
+        assoc: list[str] = []
+        _has_item = False
+        # [VM-SB] разные сцены с одной темой берут РАЗНЫЕ фразы — пул разнообразнее
+        _pi = (query_variant + int(slot.get("idx", 0))) % 3
         extra_scenes: list[dict] = []
         if analysis_queries and text:
             item = _match_analysis_item(text, analysis_queries)
             if item is not None:
+                _has_item = True
                 q = [str(x) for x in (item.get("queries") or []) if str(x).strip()][:3]
                 emo = [str(x) for x in (item.get("emotions") or []) if str(x).strip()][:6]
                 avoid = [str(x) for x in (item.get("must_not") or []) if str(x).strip()][:6]
@@ -636,6 +778,8 @@ def plan_scenes(segments: list[dict], target_duration: float | None = None,
                 weights = item.get("weights") if isinstance(item.get("weights"), dict) else {}
                 hard = [str(x) for x in (item.get("hard") or []) if str(x).strip()][:6]
                 visual = str(item.get("visual") or "").strip()
+                scene_class = _norm_scene_class(item.get("scene_class"))
+                confidence = _norm_scene_confidence(item.get("confidence"))
             # [VM-FIX] Перечисления: анализ разбил пункты на ОТДЕЛЬНЫЕ сцены
             # («очередь», «лифт», «завтрак») — добавляем пул-сцену на КАЖДЫЙ
             # пункт, чтобы в пуле была своя картинка на каждый пункт.
@@ -652,34 +796,67 @@ def plan_scenes(segments: list[dict], target_duration: float | None = None,
                         continue
                     if not _it_t <= _tt:  # пункт перечисления — фрагмент фразы
                         continue
+                    _it_class = _norm_scene_class(_it.get("scene_class"))
+                    _it_conf = _norm_scene_confidence(_it.get("confidence"))
+                    _it_q = [str(x) for x in (_it.get("queries") or []) if str(x).strip()][:3]
+                    _it_emo = [str(x) for x in (_it.get("emotions") or []) if str(x).strip()][:6]
+                    _it_assoc: list[str] = []
+                    if _it_conf < SCENE_LOW_CONFIDENCE or _it_class == "abstract":
+                        _it_assoc = _assoc_search_queries(
+                            text, scene_class=_it_class,
+                            mood=str(_it.get("mood") or ""),
+                            emotions=_it_emo, phrase_index=_pi, exclude=_it_q)
                     extra_scenes.append({
                         **slot,
-                        "queries": [str(x) for x in (_it.get("queries") or []) if str(x).strip()][:3],
-                        "emotions": [str(x) for x in (_it.get("emotions") or []) if str(x).strip()][:6],
+                        "queries": _it_q,
+                        "emotions": _it_emo,
                         "avoid": [str(x) for x in (_it.get("must_not") or []) if str(x).strip()][:6],
                         "hard": [str(x) for x in (_it.get("hard") or []) if str(x).strip()][:6],
                         "shot": str(_it.get("shot") or "").strip(),
                         "mood": str(_it.get("mood") or "").strip(),
                         "weights": _it.get("weights") if isinstance(_it.get("weights"), dict) else {},
                         "visual": str(_it.get("visual") or "").strip(),
+                        "scene_class": _it_class,
+                        "confidence": _it_conf,
+                        "assoc_queries": _it_assoc,
                         "themes": themes_for_tokens(_it_t),
                     })
                     _extras += 1
             except Exception:
                 pass
         if not q:
-            # [VM-SB] разные сцены с одной темой берут РАЗНЫЕ фразы — пул разнообразнее
-            _pi = (query_variant + int(slot.get("idx", 0))) % 3
             q = queries_for_text(text, max_queries=2, phrase_index=_pi) if text else []
+        # Низкая confidence: веер из двух путей — буквальный + ассоциативный,
+        # чтобы буквальный клип не был отрезан одним прочтением сцены.
+        if _has_item and text and (
+            confidence < SCENE_LOW_CONFIDENCE or scene_class == "abstract"
+        ):
+            assoc = _assoc_search_queries(
+                text, scene_class=scene_class, mood=mood, emotions=emo,
+                phrase_index=_pi, exclude=q)
         out.append({**slot, "queries": q, "emotions": emo, "avoid": avoid,
                     "hard": hard, "shot": shot, "mood": mood, "weights": weights,
-                    "visual": visual,
+                    "visual": visual, "scene_class": scene_class,
+                    "confidence": confidence, "assoc_queries": assoc,
                     "themes": themes_for_tokens(tokenize(text))})
         out.extend(extra_scenes)
     for _i, _sc in enumerate(out):  # уникальные idx после добавления пунктов перечислений
         _sc["idx"] = _i
     if max_scenes:
         out = out[: int(max_scenes)]
+    # [B3] Шоты по аудиоструктуре: паузы/ударные слова. Только для длинных
+    # сцен (>6с); короткая фраза остаётся одним шотом. Клипы привяжутся
+    # позже (сколько реально прошло политику отбора).
+    try:
+        _wins = [(float(s.get("start") or 0.0), float(s.get("end") or 0.0))
+                 for s in out]
+        _shots = scene_shot_windows(
+            _wins, segments, max_shots=max_shots, min_shot_sec=min_shot_sec)
+        for _sc, _sw in zip(out, _shots):
+            if len(_sw) > 1:
+                _sc["_shot_windows"] = _sw
+    except Exception:
+        pass
     return out
 
 
@@ -961,6 +1138,96 @@ def _progress_valid(prog: dict, *, source: str, audio_hash: str, settings_hash: 
     return True, ""
 
 
+def _scene_public(sc: dict) -> dict:
+    """Сцена без служебных ключей (``_pool_stats``, ``_shot_windows``…)."""
+    return {k: v for k, v in (sc or {}).items() if not str(k).startswith("_")}
+
+
+def _requested_clips(sc: dict, base: int) -> int:
+    """Сколько клипов просить под сцену: 2-3 шота + запас на diversity.
+
+    Длинной сцене нужен один клип на шот и ещё один «следующий кандидат»,
+    чтобы заменить слишком похожий кадр. Короткая сцена — как раньше.
+    """
+    try:
+        n = len(sc.get("_shot_windows") or [])
+    except Exception:
+        n = 0
+    if n <= 1:
+        return max(1, int(base or 1))
+    return max(1, int(base or 1), min(4, n + 1))
+
+
+def _planned_shots(sc: dict) -> list[dict]:
+    """План шотов без клипов (dry-run/до отбора): [{start,end,clip,score}]."""
+    wins = sc.get("_shot_windows") or []
+    if not wins:
+        try:
+            wins = [{"start": float(sc.get("start") or 0.0),
+                     "end": float(sc.get("end") or 0.0)}]
+        except (TypeError, ValueError):
+            wins = []
+    return [
+        {"start": round(float(w.get("start") or 0.0), 3),
+         "end": round(float(w.get("end") or 0.0), 3),
+         "clip": "", "score": None}
+        for w in wins
+    ]
+
+
+def _score_for_file(file: str, downloaded: list[dict]) -> int | None:
+    """Балл выбранного клипа из записей скачивания (file/library_file)."""
+    if not file:
+        return None
+    target = os.path.basename(str(file))
+    for d in downloaded or []:
+        for key in ("file", "library_file"):
+            raw = str(d.get(key) or "")
+            if raw and (raw == file or os.path.basename(raw) == target):
+                sc = d.get("score")
+                if isinstance(sc, int) and not isinstance(sc, bool):
+                    return sc
+    return None
+
+
+def _shots_for_scene(sc: dict, files: list[str],
+                     downloaded: list[dict] | None = None) -> list[dict]:
+    """Привязать клипы к шотам сцены: без дублей внутри сцены.
+
+    Число шотов = min(шотов по аудио, клипов в пуле). Если клипов меньше,
+    хвостовые окна сливаются в последний шот (лучше длинный план, чем дубль).
+    """
+    good = [str(f) for f in (files or []) if f]
+    if not good:
+        return []
+    wins = list(sc.get("_shot_windows") or [])
+    if not wins:
+        try:
+            wins = [{"start": float(sc.get("start") or 0.0),
+                     "end": float(sc.get("end") or 0.0)}]
+        except (TypeError, ValueError):
+            wins = []
+    if not wins:
+        return []
+    n = min(len(wins), len(good))
+    if n <= 0:
+        return []
+    if len(wins) > n:
+        wins = wins[: n - 1] + [{
+            "start": wins[n - 1].get("start", 0.0),
+            "end": wins[-1].get("end", 0.0),
+        }]
+    out: list[dict] = []
+    for w, f in zip(wins, good[:n]):
+        out.append({
+            "start": round(float(w.get("start") or 0.0), 3),
+            "end": round(float(w.get("end") or 0.0), 3),
+            "clip": f,
+            "score": _score_for_file(f, downloaded or []),
+        })
+    return out
+
+
 def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = None,
                     segments_json: str | None = None, out_root: str = "/Volumes/video/broll_downloads/smart",
                     series: str | None = None, per_scene: int = 2, orientation: str = "wide",
@@ -1058,7 +1325,12 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
         except Exception:
             pass
     for sc in scenes:
+        _conf = _norm_scene_confidence(sc.get("confidence"))
+        _assoc_n = len(sc.get("assoc_queries") or [])
+        _assoc_part = f" | assoc: {_assoc_n}" if _assoc_n else ""
         log(f"[SB] сцена {sc['idx'] + 1}: {sc['start']:.1f}–{sc['end']:.1f}с | "
+            f"класс: {_norm_scene_class(sc.get('scene_class'))} {_conf:.2f}"
+            f"{_assoc_part} | "
             f"темы: {','.join(sc['themes'].keys()) or '—'} | запросы: {sc['queries'] or '—'}")
 
     manifest: dict = {
@@ -1068,7 +1340,11 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
     if dry_run:
         manifest["dry_run"] = True
         for sc in scenes:
-            manifest["scenes"].append({**sc, "files": []})
+            _entry = {**_scene_public(sc), "files": []}
+            _entry["shots"] = _planned_shots(sc)
+            manifest["scenes"].append(_entry)
+        manifest["shots_total"] = sum(
+            len(s.get("shots") or []) for s in manifest["scenes"])
         return manifest
 
     if _prog is None:
@@ -1095,7 +1371,15 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             if _k >= len(scenes):
                 continue
             _files = [str(f) for f in (_rec.get("files") or []) if f]
-            _entry = {**scenes[_k], "files": _files}
+            _entry = {**_scene_public(scenes[_k]), "files": _files}
+            _prev_shots = [
+                s for s in (_rec.get("shots") or [])
+                if isinstance(s, dict) and str(s.get("clip") or "") in set(_files)
+            ]
+            _entry["shots"] = (
+                _prev_shots
+                or _shots_for_scene(scenes[_k], _files, _rec.get("downloaded") or [])
+            )
             for _rk in ("fallback", "treated", "graphic_fallback",
                         "selected_score", "fallback_reason"):
                 if _rk in _rec:
@@ -1133,6 +1417,7 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
     _baseline = SceneBaseline(out_dir, log=log)
     _clip_usage = ClipUsageTracker()
     _graphic_budget = GraphicFallbackBudget()
+    _diversity = VisualDiversityTracker()
     if _resume:
         for _k in sorted(_completed, key=int):
             if _k >= len(scenes):
@@ -1140,9 +1425,12 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             _rec = (_prog.get("scenes") or {}).get(str(_k)) or {}
             _scn = scenes[_k]
             _at = float(_scn.get("start", 0.0) or 0.0)
-            for _f in (_rec.get("files") or []):
+            _prev_files = [str(f) for f in (_rec.get("files") or []) if f]
+            for _f in _prev_files:
                 if _f:
                     _clip_usage.record({"file": str(_f)}, _at)
+            for _i_shot, _f in enumerate(_prev_files):
+                _diversity.record({"file": str(_f)}, _at + _i_shot * 0.5)
             if _rec.get("graphic_fallback"):
                 _graphic_budget.record(float(_scn.get("end", 0.0) or 0.0) - _at)
             else:
@@ -1153,10 +1441,14 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             )
 
     def _finish(sc: dict, files: list[str],
-                decision: SceneDecision | None = None) -> None:
+                decision: SceneDecision | None = None) -> dict:
         """Зафиксировать сцену: манифест + атомарный _progress.json."""
         idx = int(sc.get("idx", 0))
-        _entry = {**sc, "files": list(files)}
+        _entry = {**_scene_public(sc), "files": list(files)}
+        downs = [d for d in manifest["downloaded"]
+                 if int(d.get("scene", -1)) == idx]
+        _shots = _shots_for_scene(sc, files, downs)
+        _entry["shots"] = _shots
         _eff_fb = None
         if decision is not None:
             _eff_fb = decision.fallback
@@ -1170,8 +1462,6 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                 "fallback_reason": decision.reason,
             })
         manifest["scenes"].append(_entry)
-        downs = [d for d in manifest["downloaded"]
-                 if int(d.get("scene", -1)) == idx]
         if decision is not None:
             for _d in downs:
                 _d.setdefault("fallback", _eff_fb)
@@ -1203,6 +1493,10 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             "vlm_calls": int(st.get("calls") or 0),
             "cache_hits": int(st.get("cached") or 0),
             "ts": datetime.now(timezone.utc).isoformat(),
+            "scene_class": _norm_scene_class(sc.get("scene_class")),
+            "confidence": _norm_scene_confidence(sc.get("confidence")),
+            "shots": _shots,
+            "shots_count": len(_shots),
         }
         if decision is not None:
             _rec.update({
@@ -1221,12 +1515,13 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             })
         _prog["scenes"][str(idx)] = _rec
         _write_progress()
+        return _entry
 
     def _finish_scene(sc: dict, files: list[str],
                       decision: SceneDecision | None,
                       cands: list[dict] | None) -> None:
         """Зафиксировать сцену + строку baseline (P0-1)."""
-        _finish(sc, files, decision)
+        _entry = _finish(sc, files, decision)
         st = sc.get("_pool_stats") or {}
         _stage["search_ms"] += float(st.get("search_ms") or 0.0)
         _stage["vlm_ms"] += float(st.get("vlm_ms") or 0.0)
@@ -1265,6 +1560,9 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             fallback_reason=decision.reason if decision is not None else "",
             treated=bool(decision.treated) if decision is not None else False,
             graphic_fallback=bool(decision.graphic) if decision is not None else False,
+            scene_class=str(sc.get("scene_class") or ""),
+            scene_confidence=sc.get("confidence"),
+            shots_count=len(_entry.get("shots") or []),
         )
 
     for sc in scenes:
@@ -1276,11 +1574,16 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                 if _old.is_dir():
                     shutil.rmtree(_old, ignore_errors=True)
         sc_files: list[str] = []
+        # [B3] Длинной сцене нужно 2-3 клипа (по шоту на каждый), короткой — 1.
+        _eff_per = _requested_clips(sc, per_scene)
+        if _eff_per > int(per_scene or 1):
+            log(f"[SB] сцена {sc['idx'] + 1}: шотов "
+                f"{len(sc.get('_shot_windows') or [])} — пул до {_eff_per} клипов")
         # [VM-CASCADE] Новый путь: веер запросов (база+сток) → tiny-превью → VLM (чередование)
         # → мягкий отбор лучших. Старый путь остаётся фолбэком при любой ошибке.
         try:
             _cands = _scene_pool_candidates(
-                sc, orientation=orientation, per_scene=per_scene, log=log,
+                sc, orientation=orientation, per_scene=_eff_per, log=log,
                 used_urls=used_urls, library_only=library_only,
                 vlm_budget=int(sc.get("vlm_budget") or 12), use_stock=True, verify=verify)
         except Exception as _pe:
@@ -1292,12 +1595,13 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             _decision: SceneDecision | None = None
             try:
                 _decision = select_scene(
-                    _cands, sc, per_scene=per_scene, orientation=orientation,
-                    usage=_clip_usage, graphic_budget=_graphic_budget, log=log)
+                    _cands, sc, per_scene=_eff_per, orientation=orientation,
+                    usage=_clip_usage, graphic_budget=_graphic_budget,
+                    diversity=_diversity, log=log)
             except Exception as _se:
                 log(f"[SB] fallback-политика не удалась — пул как есть: {str(_se)[:100]}")
                 _decision = SceneDecision(
-                    candidates=list(_cands[:max(1, int(per_scene))]),
+                    candidates=list(_cands[:max(1, int(_eff_per))]),
                     primary=_cands[0], fallback="policy_error", treated=False,
                     graphic=False, best_score=candidate_score(_cands[0]),
                     primary_score=candidate_score(_cands[0]),
@@ -1308,7 +1612,7 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                 _finish_scene(sc, [], _decision, _cands)
                 continue
             for _c in _decision.candidates:
-                if len(sc_files) >= per_scene:
+                if len(sc_files) >= _eff_per:
                     break
                 _slug = safe_slug(str(_c.get("query") or "broll"))
                 folder = out_dir / f"{sc['idx'] + 1:02d}_{_slug}"
@@ -1388,7 +1692,7 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             _finish_scene(sc, sc_files, _decision, _cands)
             continue
         n_queries = max(1, len(sc["queries"]))
-        per_query = max(1, -(-per_scene // n_queries))  # ceil: больше разных клипов
+        per_query = max(1, -(-_eff_per // n_queries))  # ceil: больше разных клипов
         for qi, query in enumerate(sc["queries"]):
             slug = safe_slug(query)
             folder = out_dir / f"{sc['idx'] + 1:02d}_{slug}"
@@ -1407,14 +1711,14 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                     if sc.get("shot"):
                         _wt[str(sc["shot"]).lower()] = float(_w.get("shot", 1) or 1)
                     hits = search_library(_q_enriched, orientation=orientation,
-                                          limit=max(2, per_scene * 2), exclude=_lib_used,
+                                          limit=max(2, _eff_per * 2), exclude=_lib_used,
                                           avoid=set(sc.get("avoid") or []),
                                           hard=set(sc.get("hard") or []),
                                           weight_terms=_wt)
                 except Exception:
                     hits = []
                 for rec in hits:
-                    if len(sc_files) >= per_scene:
+                    if len(sc_files) >= _eff_per:
                         break
                     src = str(rec.get("file") or "")
                     if not src or src in _lib_used:
@@ -1464,8 +1768,8 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                             log(f"[SB] ★ сцена {sc['idx'] + 1}: лучший {Path(_entries[0]['file']).name[:38]} — {_best}/10")
                         else:
                             log(f"[SB] ⚠ сцена {sc['idx'] + 1}: лучший {_best}/10 — ниже 7, берём как есть")
-                        if len(_entries) > per_scene:
-                            for _d in _entries[per_scene:]:
+                        if len(_entries) > _eff_per:
+                            for _d in _entries[_eff_per:]:
                                 try:
                                     Path(_d["file"]).unlink()
                                 except Exception:
@@ -1476,7 +1780,7 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                                     sc_files.remove(_d["file"])
                 except Exception as _se:
                     log(f"[SB] оценка кандидатов пропущена: {_se}")
-            if len(sc_files) >= per_scene:
+            if len(sc_files) >= _eff_per:
                 break
             if library_only:
                 continue
@@ -1489,10 +1793,10 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                 -min(c["duration"], 12.0),
                 abs(c["duration"] - 8.0),
             ))
-            need = max(1, min(per_query, per_scene - len(sc_files)))
+            need = max(1, min(per_query, _eff_per - len(sc_files)))
             q_count = 0
             for c in cands:
-                if len(sc_files) >= per_scene or q_count >= need:
+                if len(sc_files) >= _eff_per or q_count >= need:
                     break
                 if not c["url"] or c["url"] in used_urls:
                     continue
@@ -1513,7 +1817,7 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                     })
                     log(f"[SB] ↓ сцена {sc['idx'] + 1}: {fname} ({c['duration']:.0f}с, "
                         f"{c['width']}x{c['height']}{' 4K' if c.get('is4k') else ''})")
-            if len(sc_files) >= per_scene:
+            if len(sc_files) >= _eff_per:
                 break
         _legacy_cands = [d for d in manifest["downloaded"]
                          if int(d.get("scene", -1)) == _idx]
@@ -1543,11 +1847,15 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
                 _vlm_extra_calls += int(_vstats.get("calls") or 0)
                 _bad = _bad_stock_files(_to_verify, max_score=5)
                 if _bad:
+                    _sc_by_idx = {int(s.get("idx", 0)): s for s in scenes}
                     for _sc in manifest["scenes"]:
                         _old_files = [str(f) for f in (_sc.get("files") or []) if f]
                         _new_files = [f for f in _old_files if f not in _bad]
                         if _new_files != _old_files:
                             _sc["files"] = _new_files
+                            _orig = _sc_by_idx.get(int(_sc.get("idx", -1)))
+                            _sc["shots"] = _shots_for_scene(
+                                _orig or _sc, _new_files, manifest["downloaded"])
                             if not _new_files and not _sc.get("graphic_fallback"):
                                 _sc["fallback"] = "no_file"
                                 _sc["selected_score"] = None
@@ -1620,10 +1928,16 @@ def run_smart_broll(*, audio_path: str | None = None, srt_path: str | None = Non
             _rec["status"] = "done" if _files else "skipped"
             _rec["downloaded"] = [d for d in manifest["downloaded"]
                                   if int(d.get("scene", -1)) == int(_k)]
+            _rec["shots"] = list(_s.get("shots") or [])
+            _rec["shots_count"] = len(_rec["shots"])
             for _rk in ("fallback", "treated", "graphic_fallback",
                         "selected_score", "fallback_reason"):
                 if _rk in _s:
                     _rec[_rk] = _s[_rk]
+        for _s in manifest["scenes"]:
+            _s.setdefault("shots", [])
+        manifest["shots_total"] = sum(
+            len(s.get("shots") or []) for s in manifest["scenes"])
         _write_progress()
     except Exception:
         pass

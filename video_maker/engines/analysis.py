@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -231,7 +232,7 @@ def list_available_gemini_models(
 STATE_PATH = Path.home() / "video_maker" / "cache" / "gemini_state.json"
 
 # Stage D: response cache key = hash(audio) + model + schema
-ANALYSIS_SCHEMA_VERSION = "v6-enumeration-actions-broll"
+ANALYSIS_SCHEMA_VERSION = "v7-scene-classes"
 ANALYSIS_CACHE_DIR = Path.home() / "video_maker" / "cache" / "gemini_analysis"
 
 
@@ -881,6 +882,11 @@ _BROLL_CHUNK_PROMPT = """Ты — режиссёр монтажа докумен
 - "mood": одно английское слово настроения (melancholic, joyful, tense, calm)
 - "hard": 0–3 английских слова-СТОП (если есть в клипе — клип НЕ подходит вообще)
 - "weights": приоритеты 1–3, например {{"emotions": 3, "queries": 2, "mood": 1}}
+- "scene_class": literal | associative | abstract — тип связи кадра с текстом:
+  literal — конкретный объект/действие прямо из слов предложения;
+  associative — эмоция/состояние/метафора, буквального объекта в словах нет;
+  abstract — обобщение/рассуждение без визуального якоря
+- "confidence": 0.0–1.0 — уверенность, что visual и queries точно передают смысл предложения
 
 Примеры правильной связки:
 «В детстве лучший друг появлялся за неделю» → visual: «Двое детей бегут по улице, смеются»; queries: ["children running playing street", "two kids laughing outdoors"]
@@ -888,7 +894,7 @@ _BROLL_CHUNK_PROMPT = """Ты — режиссёр монтажа докумен
 «собирались, выпивали в компании» → visual: «Компания друзей за столом в баре, бокалы, смех»; queries: ["friends drinking bar table", "company toasting glasses party"]
 
 Верни ТОЛЬКО валидный JSON-массив (без markdown и пояснений), на КАЖДОЕ предложение — свой объект, ничего не пропускай и не объединяй:
-[{{"text": "...", "visual": "...", "queries": ["...", "..."], "emotions": [], "must_not": [], "shot": "medium", "mood": "calm", "hard": [], "weights": {{"queries": 2}}}}]
+[{{"text": "...", "visual": "...", "queries": ["...", "..."], "emotions": [], "must_not": [], "shot": "medium", "mood": "calm", "hard": [], "weights": {{"queries": 2}}, "scene_class": "literal", "confidence": 0.85}}]
 
 Озвучка:
 {timings}"""
@@ -913,6 +919,32 @@ def _chunk_segments(segments: list[dict], chunk_seconds: float = 60.0,
     if cur:
         chunks.append(cur)
     return chunks
+
+
+SCENE_CLASSES = ("literal", "associative", "abstract")
+DEFAULT_SCENE_CLASS = "literal"
+DEFAULT_SCENE_CONFIDENCE = 0.5
+
+
+def _norm_scene_class(raw) -> str:
+    """Класс сцены: literal | associative | abstract (иначе дефолт literal)."""
+    s = str(raw or "").strip().lower()
+    return s if s in SCENE_CLASSES else DEFAULT_SCENE_CLASS
+
+
+def _norm_scene_confidence(raw) -> float:
+    """Уверенность 0..1; мусор/пропуск → 0.5, проценты модели (85) → 0.85."""
+    if isinstance(raw, bool) or raw is None:
+        return DEFAULT_SCENE_CONFIDENCE
+    try:
+        v = float(str(raw).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return DEFAULT_SCENE_CONFIDENCE
+    if not math.isfinite(v):
+        return DEFAULT_SCENE_CONFIDENCE
+    if v > 1.0:  # модель иногда отвечает в процентах/0–100
+        v = v / 100.0
+    return round(min(1.0, max(0.0, v)), 3)
 
 
 def _parse_scenes_json(raw: str) -> list[dict]:
@@ -945,6 +977,8 @@ def _parse_scenes_json(raw: str) -> list[dict]:
             "shot": str(it.get("shot") or "").strip(),
             "mood": str(it.get("mood") or "").strip(),
             "hard": hd, "weights": w,
+            "scene_class": _norm_scene_class(it.get("scene_class")),
+            "confidence": _norm_scene_confidence(it.get("confidence")),
         })
     return out
 
@@ -1802,6 +1836,8 @@ def _norm_broll(raw) -> list:
             "hard": [str(x).strip() for x in (it.get("hard") or []) if str(x).strip()][:6],
             "weights": ({str(k): float(v) for k, v in it.get("weights").items()
                          if isinstance(v, (int, float))} if isinstance(it.get("weights"), dict) else {}),
+            "scene_class": _norm_scene_class(it.get("scene_class")),
+            "confidence": _norm_scene_confidence(it.get("confidence")),
         })
     return out
 

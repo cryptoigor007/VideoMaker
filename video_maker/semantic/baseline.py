@@ -5,8 +5,12 @@
 * ``scenes.jsonl`` — одна JSON-строка на сцену, поля:
   scene_id, scene_text, queries, candidate_ids, candidate_scores,
   selected_clip, selected_score, fallback_used, search_ms, vlm_calls,
-  cache_hits, ts;
-* ``run_summary.json`` — сцены, ≥6, средний балл, время по стадиям, VLM/сцену.
+  cache_hits, ts; плюс scene_class (literal|associative|abstract) и
+  confidence 0..1, когда их дал анализ; плюс shots_count (2-3 у длинных
+  сцен, когда сцена разложена на под-шоты);
+* ``run_summary.json`` — сцены, ≥6, средний балл, время по стадиям, VLM/сцену,
+  распределение классов сцен (scene_class_counts), средняя confidence и
+  число шотов (shots_total / multi_shot_scenes).
 
 Модуль намеренно не зависит от smart_broll, чтобы его можно было тестировать
 отдельно. Все ошибки записи логируются и не валят рендер.
@@ -156,6 +160,9 @@ class SceneBaseline:
         fallback_reason: str = "",
         treated: bool = False,
         graphic_fallback: bool = False,
+        scene_class: str = "",
+        scene_confidence: float | None = None,
+        shots_count: int | None = None,
         persist: bool = True,
     ) -> dict:
         rec = {
@@ -189,6 +196,30 @@ class SceneBaseline:
             rec["treated"] = True
         if graphic_fallback:
             rec["graphic_fallback"] = True
+        # [A2] Класс сцены и уверенность анализа (только если переданы:
+        # старые записи без них остаются валидными).
+        cls = str(scene_class or "").strip().lower()
+        if cls in ("literal", "associative", "abstract"):
+            rec["scene_class"] = cls
+        if scene_confidence is not None:
+            try:
+                conf = float(scene_confidence)
+            except (TypeError, ValueError):
+                conf = None
+            if conf is not None and conf == conf and conf not in (
+                float("inf"), float("-inf")
+            ):
+                rec["confidence"] = round(min(1.0, max(0.0, conf)), 3)
+        # [B3] Число шотов сцены (2-3 у длинных сцен, 1 у коротких/старых).
+        if shots_count is not None:
+            try:
+                n_shots = max(0, int(shots_count))
+            except (TypeError, ValueError):
+                n_shots = 0
+            if n_shots:
+                rec["shots_count"] = n_shots
+                if n_shots > 1:
+                    rec["multi_shot"] = True
         self.records[int(scene_index)] = rec
         if self.enabled and persist:
             self._append(rec)
@@ -235,6 +266,9 @@ class SceneBaseline:
             fallback_reason=str(progress_rec.get("fallback_reason") or "resume"),
             treated=bool(progress_rec.get("treated")),
             graphic_fallback=bool(progress_rec.get("graphic_fallback")),
+            scene_class=str(scene.get("scene_class") or ""),
+            scene_confidence=scene.get("confidence"),
+            shots_count=progress_rec.get("shots_count"),
             persist=True,
         )
 
@@ -267,6 +301,21 @@ class SceneBaseline:
         ge6 = sum(1 for s in scores if s >= 6)
         avg = round(sum(scores) / len(scores), 2) if scores else 0.0
         fallback_counts = Counter(str(r.get("fallback_used") or "none") for r in records)
+        class_counts = Counter(str(r.get("scene_class") or "unknown") for r in records)
+        for _cls in ("literal", "associative", "abstract"):
+            class_counts.setdefault(_cls, 0)
+        confs = [
+            float(r.get("confidence")) for r in records
+            if isinstance(r.get("confidence"), (int, float))
+            and not isinstance(r.get("confidence"), bool)
+        ]
+        avg_conf = round(sum(confs) / len(confs), 3) if confs else 0.0
+        shots_counts = [
+            int(r.get("shots_count")) for r in records
+            if isinstance(r.get("shots_count"), int)
+        ]
+        shots_total = sum(shots_counts)
+        multi_shots = sum(1 for n in shots_counts if n > 1)
 
         # Максимальная серия graphic_fallback (для контроля лимита 2/12с).
         max_run = 0
@@ -301,6 +350,12 @@ class SceneBaseline:
             "vlm_per_scene": round(calls_total / max(1, int(total_scenes)), 3),
             "cache_hits": int(cache_hits),
             "fallback_counts": dict(sorted(fallback_counts.items())),
+            "scene_class_counts": dict(sorted(class_counts.items())),
+            "avg_scene_confidence": float(avg_conf),
+            "shots_total": int(shots_total),
+            "multi_shot_scenes": int(multi_shots),
+            "avg_shots_per_scene": round(
+                shots_total / max(1, len(shots_counts)), 2) if shots_counts else 0.0,
             "treated_scenes": sum(1 for r in records if r.get("treated")),
             "graphic_fallback": {
                 "scenes": sum(1 for r in records if r.get("graphic_fallback")),

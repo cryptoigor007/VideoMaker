@@ -52,7 +52,28 @@ def _log_fallback_summary(flags: dict[int, dict], ctx: PipelineContext,
         ctx.log(f"[SB] {prefix}: treated (лёгкая обработка) — {treated} сцен")
     if graphic:
         ctx.log(f"[SB] {prefix}: graphic_fallback — {graphic} сцен без клипа; "
-                f"нейтральный фон рендером пока не реализован (только пометка)")
+                f"рендер ставит нейтральный фон/карточку (B4)")
+
+
+def _disable_dobor() -> bool:
+    """[PERF-BUDGET] Отключён ли добор слабых сцен (fix_scenes).
+
+    Приоритет: env VM_DISABLE_DOBOR → ~/.video_maker_settings.json:disable_dobor.
+    По умолчанию выключено (добор работает как раньше).
+    """
+    raw = os.environ.get("VM_DISABLE_DOBOR")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip().lower() in {"1", "true", "yes", "on", "да"}
+    try:
+        settings_path = os.path.join(os.path.expanduser("~"), ".video_maker_settings.json")
+        with open(settings_path, encoding="utf-8") as f:
+            data = json.load(f)
+        value = data.get("disable_dobor", False) if isinstance(data, dict) else False
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "да"}
+        return bool(value)
+    except Exception:
+        return False
 
 
 def _run_fix_scenes_filtered(script: str, manifest_path: str, log_fn) -> None:
@@ -252,7 +273,9 @@ class MasterBuilder(Stage):
                         _fx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
                             os.path.abspath(__file__)))), "tools", "fix_scenes.py")
                         _mp = os.path.join(_dir, "smart_broll_manifest.json")
-                        if os.path.exists(_fx) and os.path.exists(_mp):
+                        if _disable_dobor():
+                            ctx.log("[MASTER] добор отключён настройкой")
+                        elif os.path.exists(_fx) and os.path.exists(_mp):
                             ctx.log("[MASTER] добор слабых сцен (докачка до порога)…")
                             _run_fix_scenes_filtered(_fx, _mp, ctx.log)
                             try:
@@ -277,7 +300,16 @@ class MasterBuilder(Stage):
                         # обрыва на внешнем диске при 10ГБ записи).
                         _same_vol = False
                         try:
-                            _same_vol = os.stat(_dir).st_dev == os.stat(ctx.output_folder).st_dev
+                            _out_dev = os.stat(ctx.output_folder).st_dev
+                            _devs = set()
+                            for _f in (video_files or [])[:50]:
+                                try:
+                                    _devs.add(os.stat(os.path.realpath(_f)).st_dev)
+                                except Exception:
+                                    pass
+                            # «Тот же том» только если РЕАЛЬНЫЕ файлы (а не симлинки
+                            # на SMB) лежат на том же устройстве, что и вывод.
+                            _same_vol = bool(_devs) and _devs == {_out_dev}
                         except Exception:
                             _same_vol = False
                         if _same_vol:

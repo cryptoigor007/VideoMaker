@@ -41,6 +41,7 @@ DEFAULT_DB = Path.home() / "video_maker" / "broll_library.db"
 DEFAULT_ROOT = Path("/Volumes/video/broll_library")
 DEFAULT_OUT = Path.home() / "video_maker" / "audit"
 DEFAULT_EMB = Path.home() / "video_maker" / "broll_embeddings.json"
+DEFAULT_MOOD_CACHE = Path.home() / "video_maker" / "mood_emb_cache.json"
 DEFAULT_ALT_DB = Path("/Volumes/video/broll_library/library.db")
 MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 SKIP_DIRS = {"licenses", ".frames", "__pycache__", ".git", ".Trash"}
@@ -329,9 +330,23 @@ def phash_frame(path: str, ts: float, timeout: int = 35) -> str | None:
 
 
 def compute_phash(files: list[str], stats: dict[str, dict], durations: dict[str, float],
-                  max_files: int, workers: int, log=print) -> tuple[dict[str, dict], dict]:
-    todo = files[:max_files]
+                  max_files: int, workers: int, log=print,
+                  cache_path: Path | None = None) -> tuple[dict[str, dict], dict]:
+    selected = files[:max_files]
+    cache = load_hash_cache(cache_path) if cache_path else {}
     out: dict[str, dict] = {}
+    todo: list[str] = []
+    reused = 0
+    for f in selected:
+        ent = cache.get(f) or {}
+        st = stats.get(f) or {}
+        if ent.get("value") and ent.get("size") == st.get("size") \
+                and ent.get("mtime") == st.get("mtime"):
+            out[f] = {"value": str(ent["value"]),
+                      "frame_s": float(ent.get("frame_s") or 0.0)}
+            reused += 1
+        else:
+            todo.append(f)
     failed = 0
     t0 = time.time()
 
@@ -347,13 +362,23 @@ def compute_phash(files: list[str], stats: dict[str, dict], durations: dict[str,
             f, val, ts = fut.result()
             if val:
                 out[f] = {"value": val, "frame_s": round(ts, 3)}
+                st = stats.get(f) or {}
+                if cache_path:
+                    cache[f] = {"value": val, "frame_s": round(ts, 3),
+                                "size": st.get("size"), "mtime": st.get("mtime")}
             else:
                 failed += 1
             if i % 10 == 0 or i == len(futs):
                 log(f"  phash {i}/{len(futs)} ({time.time() - t0:.1f}s)")
+    if cache_path:
+        try:
+            cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     return out, {
-        "candidates": len(files), "computed": len(out), "failed": failed,
-        "sampled": len(todo), "seconds": round(time.time() - t0, 1),
+        "candidates": len(files), "selected": len(selected), "computed": len(todo),
+        "reused_from_cache": reused, "failed": failed,
+        "sampled": len(selected), "seconds": round(time.time() - t0, 1),
         "distance_threshold": 8,
     }
 
@@ -379,6 +404,50 @@ class DSU:
         for x in list(self.parent):
             groups[self.find(x)].append(x)
         return [sorted(v) for v in groups.values() if len(v) > 1]
+
+
+def hamming64(a: str, b: str) -> int:
+    """Hamming distance двух 64-bit pHash (hex-строки)."""
+    return (int(str(a), 16) ^ int(str(b), 16)).bit_count()
+
+
+def phash_duplicate_clusters(phash_map: dict[str, dict], rows_by_file: dict[str, dict],
+                             max_distance: int = 8,
+                             aspect_tolerance: float = 0.08) -> tuple[list[list[str]], dict]:
+    """Кандидаты-дубли по pHash: близкое расстояние + совместимый aspect ratio.
+
+    Возвращает кластеры файлов и статистику. Ничего не удаляет.
+    """
+    pairs: list[tuple[str, str, int]] = []
+    files = sorted(phash_map)
+    for i in range(len(files)):
+        for j in range(i + 1, len(files)):
+            a, b = files[i], files[j]
+            ra, rb = rows_by_file.get(a) or {}, rows_by_file.get(b) or {}
+            try:
+                wa, ha = int(ra.get("width") or 0), int(ra.get("height") or 0)
+                wb, hb = int(rb.get("width") or 0), int(rb.get("height") or 0)
+            except (TypeError, ValueError):
+                continue
+            aa = (wa / ha) if ha else 0
+            ab = (wb / hb) if hb else 0
+            if aa and ab and abs(aa - ab) > aspect_tolerance:
+                continue
+            try:
+                dist = hamming64(phash_map[a]["value"], phash_map[b]["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if dist <= max_distance:
+                pairs.append((a, b, dist))
+    dsu = DSU()
+    for a, b, _d in pairs:
+        dsu.union(a, b)
+    clusters = dsu.clusters()
+    return clusters, {"pairs": len(pairs), "clusters": len(clusters),
+                      "members": sum(len(c) for c in clusters),
+                      "distance_threshold": max_distance,
+                      "aspect_tolerance": aspect_tolerance,
+                      "min_distance": min((d for _a, _b, d in pairs), default=None)}
 
 
 def semantic_duplicates(emb: dict, db_files: set[str], threshold: float,
@@ -515,6 +584,25 @@ def load_embeddings(path: Path) -> tuple[dict, dict]:
         return {}, {"exists": True, "error": str(exc)[:160], "path": str(path)}
 
 
+def load_mood_cache(path: Path) -> dict:
+    """Метаданные кэша mood-эмбеддингов (40 настроений)."""
+    if not path.exists():
+        return {"exists": False}
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        items = d.get("items") if isinstance(d, dict) else {}
+        return {
+            "exists": True,
+            "path": str(path),
+            "bytes": path.stat().st_size,
+            "model": d.get("model"),
+            "vectors": len(items or {}),
+            "slugs": sorted((items or {}).keys()),
+        }
+    except Exception as exc:
+        return {"exists": True, "path": str(path), "error": str(exc)[:160]}
+
+
 def health_score(total: int, missing: int, prov_gap: int, dup_members: int,
                  no_emb: int, short_desc: int, meta_gap: int, consistency: int) -> tuple[float, dict]:
     if not total:
@@ -538,6 +626,7 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     ap.add_argument("--alt-db", type=Path, default=DEFAULT_ALT_DB)
     ap.add_argument("--embeddings", type=Path, default=DEFAULT_EMB)
+    ap.add_argument("--mood-cache", type=Path, default=DEFAULT_MOOD_CACHE)
     ap.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--limit", type=int, default=0, help="ограничить число клипов (пилот)")
     ap.add_argument("--check-files", dest="check_files", action="store_true", default=True)
@@ -549,6 +638,10 @@ def main() -> int:
     ap.add_argument("--hash-prefix-mb", type=float, default=1.0,
                     help="0 = без prefix-фильтра (читать всё)")
     ap.add_argument("--phash-max", type=int, default=48, help="0 = не считать pHash")
+    ap.add_argument("--phash-distance", type=int, default=8,
+                    help="Hamming-порог pHash (64-bit)")
+    ap.add_argument("--phash-aspect-tolerance", type=float, default=0.08,
+                    help="допустимая разница aspect ratio для pHash-кандидатов")
     ap.add_argument("--semantic-threshold", type=float, default=0.92)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--jobs", type=int, default=4, help="параллельные чтения файлов")
@@ -682,6 +775,26 @@ def main() -> int:
     no_emb_rows = [r for r in rows if str(r.get("file") or "") not in emb_files]
     log(f"Эмбеддинги: {len(files) - len(no_emb)}/{len(files)} | без вектора: {len(no_emb)}")
 
+    mood_meta = load_mood_cache(args.mood_cache)
+    mood_db: dict = {}
+    for tname in ("moods", "clip_moods", "mood_runs"):
+        if tname in tables:
+            try:
+                mood_db[f"{tname}_rows"] = conn.execute(
+                    f"SELECT COUNT(*) FROM {tname}").fetchone()[0]
+            except Exception as exc:
+                mood_db[f"{tname}_error"] = str(exc)[:120]
+    if "clip_moods" in tables:
+        try:
+            mood_db["clips_with_mood"] = conn.execute(
+                "SELECT COUNT(DISTINCT clip_id) FROM clip_moods").fetchone()[0]
+        except Exception as exc:
+            mood_db["clip_moods_error"] = str(exc)[:120]
+    mood_meta["db"] = mood_db
+    mood_meta["applied"] = bool(mood_db.get("clips_with_mood"))
+    log(f"Mood: словарь {mood_meta.get('vectors', 0)}/40, "
+        f"в БД назначено клипов: {mood_db.get('clips_with_mood', 0)}")
+
     # ---- дубли: sha256 ---------------------------------------------------
     sha_map: dict[str, str] = {}
     phash_map: dict[str, dict] = {}
@@ -713,20 +826,13 @@ def main() -> int:
             src_items.append((f, f"{r.get('provider')}:{aid}"))
     source_clusters = make_clusters(src_items)
 
-    # ---- дубли: semantic CLIP/текстовые эмбеддинги ----------------------
-    sem_clusters, sem_meta = semantic_duplicates(emb, set(files),
-                                                 args.semantic_threshold, log=log)
-    sem_members = {f for cl in sem_clusters for f in cl["files"]}
-
-    # ---- дубли: pHash ----------------------------------------------------
+    # ---- дубли: pHash (после exact sha256) ------------------------------
     phash_stats: dict = {}
     phash_clusters: list[list[str]] = []
     if args.phash_max > 0 and readable_files:
         prio: list[str] = []
         for cl in exact_clusters:
             prio.extend(cl)
-        for cl in sem_clusters[:20]:
-            prio.extend(cl["files"])
         for cl in source_clusters:
             prio.extend(cl)
         # добираем кандидатов из групп одинакового размера
@@ -749,43 +855,35 @@ def main() -> int:
         log(f"pHash: {len(ordered)} кандидатов...")
         durations_by_file = {str(r.get("file") or ""): float(r.get("duration") or 0) for r in rows}
         computed_ph, phash_stats = compute_phash(ordered, stats, durations_by_file,
-                                                 args.phash_max, args.jobs, log=log)
+                                                 args.phash_max, args.jobs, log=log,
+                                                 cache_path=out_dir / "_phash_cache.json")
         phash_map.update(computed_ph)
-        pairs = []
-        plist = sorted(phash_map)
-        for i in range(len(plist)):
-            for j in range(i + 1, len(plist)):
-                a, b = plist[i], plist[j]
-                ra = next((r for r in rows if str(r.get("file") or "") == a), None)
-                rb = next((r for r in rows if str(r.get("file") or "") == b), None)
-                if not ra or not rb:
-                    continue
-                wa, ha = int(ra.get("width") or 0), int(ra.get("height") or 0)
-                wb, hb = int(rb.get("width") or 0), int(rb.get("height") or 0)
-                aa = (wa / ha) if ha else 0
-                ab = (wb / hb) if hb else 0
-                if aa and ab and abs(aa - ab) > 0.08:
-                    continue
-                dist = (int(phash_map[a]["value"], 16) ^ int(phash_map[b]["value"], 16)).bit_count()
-                if dist <= 8:
-                    pairs.append((a, b, dist))
-        dsu = DSU()
-        for a, b, _d in pairs:
-            dsu.union(a, b)
-        phash_clusters = dsu.clusters()
-        phash_stats["pairs"] = len(pairs)
-        phash_stats["clusters"] = len(phash_clusters)
-        phash_stats["members"] = sum(len(c) for c in phash_clusters)
-        log(f"  pHash: {len(pairs)} близких пар -> {len(phash_clusters)} кластеров")
+        rows_by_file = {str(r.get("file") or ""): r for r in rows}
+        phash_clusters, ph_cluster_stats = phash_duplicate_clusters(
+            phash_map, rows_by_file, max_distance=args.phash_distance,
+            aspect_tolerance=args.phash_aspect_tolerance)
+        phash_stats.update(ph_cluster_stats)
+        log(f"  pHash: {ph_cluster_stats['pairs']} близких пар -> "
+            f"{len(phash_clusters)} кластеров")
+
+    # ---- дубли: semantic (CLIP-подобные текстовые эмбеддинги, 0.92) ------
+    sem_clusters, sem_meta = semantic_duplicates(emb, set(files),
+                                                 args.semantic_threshold, log=log)
+    sem_meta["kind"] = ("text-embedding Gemini (CLIP-подобная стадия; "
+                        "визуальный CLIP в окружении не установлен)")
+    sem_members = {f for cl in sem_clusters for f in cl["files"]}
 
     # ---- файлы вне индекса / зеркало / вторая БД ------------------------
     orphan_disk: list[str] = []
-    if args.scan_orphans and args.root.exists():
+    scan_performed = bool(args.scan_orphans and args.root.exists())
+    if scan_performed:
         t0 = time.time()
         on_disk = walk_library(args.root)
         orphan_disk = sorted(on_disk - set(files))
         log(f"Скан диска: {len(on_disk)} файлов, вне индекса {len(orphan_disk)} "
             f"({time.time() - t0:.1f}s)")
+    else:
+        log("Скан диска пропущен (--no-scan-orphans или root недоступен)")
 
     index_meta: dict = {"exists": False}
     idx_path = args.root / "library_index.json"
@@ -828,12 +926,16 @@ def main() -> int:
 
     # orphan rows в служебных таблицах
     db_hygiene: dict = {"tables": db_tables}
+    lib_names = Counter(Path(f).name for f in files)
     for tname, col in (("usage", "file"), ("scores", "file"), ("clip_perf", "path")):
         if tname in tables:
             try:
-                vals = {str(r[0]) for r in conn.execute(f"SELECT {col} FROM {tname}")}
+                vals = [str(r[0]) for r in conn.execute(f"SELECT {col} FROM {tname}")]
                 db_hygiene[f"{tname}_rows"] = len(vals)
-                db_hygiene[f"{tname}_orphans"] = len(vals - set(files))
+                db_hygiene[f"{tname}_orphans"] = len(set(vals) - set(files))
+                if tname == "usage":
+                    db_hygiene["usage_linkable_by_unique_basename"] = sum(
+                        1 for v in vals if lib_names.get(Path(v).name) == 1)
             except Exception as exc:
                 db_hygiene[f"{tname}_error"] = str(exc)[:120]
     conn.close()
@@ -862,6 +964,9 @@ def main() -> int:
         "stage3_exact_clusters": len(exact_clusters),
         "stage3_exact_members": len(exact_members),
         "stage4_phash_computed": phash_stats.get("computed", 0),
+        "stage4_phash_reused": phash_stats.get("reused_from_cache", 0),
+        "stage4_phash_available": (phash_stats.get("computed", 0)
+                                   + phash_stats.get("reused_from_cache", 0)),
         "stage5_phash_clusters": len(phash_clusters),
         "stage5_phash_members": sum(len(c) for c in phash_clusters),
         "stage6_semantic_pairs": sem_meta.get("pairs", 0),
@@ -895,11 +1000,12 @@ def main() -> int:
         },
         "files": {
             "checked": args.check_files,
+            "scan_performed": scan_performed,
             "missing": len(missing),
             "missing_sample": missing[:50],
             "zero_size": len(zero_size),
             "disk_bytes": total_bytes,
-            "orphans_on_disk": len(orphan_disk),
+            "orphans_on_disk": len(orphan_disk) if scan_performed else None,
             "orphans_sample": orphan_disk[:50],
         },
         "provenance": {
@@ -935,6 +1041,7 @@ def main() -> int:
             "extra_embeddings": len(extra_emb),
             "extra_embeddings_sample": extra_emb[:10],
         },
+        "mood": mood_meta,
         "duplicates": {
             "cascade": cascade,
             "sha256": {"hashed": len(sha_map), **hash_stats},
@@ -1013,9 +1120,12 @@ def main() -> int:
     md.append(f"| local/custom | {pct(len(localish), len(rows))} |")
     md.append(f"| Без сертификата | {pct(len(no_cert), len(rows))} |")
     md.append(f"| Без эмбеддинга | {pct(len(no_emb), len(rows))} |")
+    md.append(f"| Mood-словарь / назначено в БД | {mood_meta.get('vectors', 0)}/40 / "
+              f"{mood_db.get('clips_with_mood', 0)} |")
     md.append(f"| Пустые / короткие описания | {len(empty_desc)} / {len(short_desc)} |")
     md.append(f"| Дубли: exact / phash / semantic | {len(exact_clusters)} / {len(phash_clusters)} / {len(sem_clusters)} |")
-    md.append(f"| Файлов вне индекса на диске | {len(orphan_disk)} |")
+    md.append(f"| Файлов вне индекса на диске | "
+              f"{len(orphan_disk) if scan_performed else 'не сканировалось'} |")
     md.append(f"| Вторая БД | {'да' if alt_meta.get('exists') else 'нет'} |")
     md.append("")
     md.append("## 2. Inventory")
@@ -1050,7 +1160,18 @@ def main() -> int:
     md.append("|---|---|")
     md.append(rows_table(top(Counter(str(r.get('provider') or 'unknown') for r in no_source), 20)))
     md.append("")
-    md.append("## 4. Дубли (только кандидаты)")
+    md.append("## 4. Mood-слой")
+    md.append("")
+    md.append(f"- Кэш словаря: `{args.mood_cache}` — "
+              f"{'есть' if mood_meta.get('exists') else 'нет'}, "
+              f"векторов **{mood_meta.get('vectors', 0)}/40**, модель `{mood_meta.get('model')}`.")
+    md.append(f"- В БД: moods={mood_db.get('moods_rows', 0)}, "
+              f"clip_moods={mood_db.get('clip_moods_rows', 0)}, "
+              f"клипов с mood={mood_db.get('clips_with_mood', 0)}.")
+    md.append("- Mood в production-БД не записан: слой доступен только в v2-копии "
+              "(mood_embeddings.py --apply).")
+    md.append("")
+    md.append("## 5. Дубли (только кандидаты)")
     md.append("")
     md.append("| Стадия | Результат |")
     md.append("|---|---|")
@@ -1058,14 +1179,17 @@ def main() -> int:
     md.append(f"| sha256 посчитано | {cascade['stage2_sha256_hashed']} файлов |")
     md.append(f"| exact-кластеры | {len(exact_clusters)} ({len(exact_members)} файлов, "
               f"{human_bytes(exact_waste)} лишних) |")
-    md.append(f"| pHash посчитано | {phash_stats.get('computed', 0)} (sampled {phash_stats.get('sampled', 0)}) |")
+    md.append(f"| pHash посчитано | {phash_stats.get('computed', 0)} новых + "
+              f"{phash_stats.get('reused_from_cache', 0)} из кэша "
+              f"(sampled {phash_stats.get('sampled', 0)}) |")
     md.append(f"| pHash-кластеры | {len(phash_clusters)} |")
     md.append(f"| semantic-пары ≥ {args.semantic_threshold} | {sem_meta.get('pairs', 0)} |")
     md.append(f"| semantic-кластеры | {len(sem_clusters)} ({len(sem_members)} файлов) |")
     md.append(f"| одинаковый provider id | {len(source_clusters)} |")
     md.append("")
-    md.append("Ничего не удалено. `semantic` — похожие описания/сцены, а не обязательно "
-              "побайтовый дубль; решение принимает человек.")
+    md.append("Ничего не удалено. `semantic` — косинус текстовых эмбеддингов Gemini "
+              "≥ 0.92 (визуальный CLIP в окружении не установлен); это похожие "
+              "описания/сцены, а не обязательно побайтовый дубль. Решение принимает человек.")
     md.append("")
     if exact_clusters:
         md.append("### Exact-дубли (top)")
@@ -1083,19 +1207,22 @@ def main() -> int:
             for f in cl["files"][:6]:
                 md.append(f"  - `{f}`")
         md.append("")
-    md.append("## 5. Файлы и гигиена")
+    md.append("## 6. Файлы и гигиена")
     md.append("")
     md.append(f"- missing: {len(missing)}; zero-size: {len(zero_size)}; "
-              f"вне индекса: {len(orphan_disk)}.")
+              f"вне индекса: {len(orphan_disk) if scan_performed else 'скан пропущен (SMB)'}.")
     md.append(f"- `library_index.json`: {index_meta}.")
     md.append(f"- вторая БД: {alt_meta}.")
     md.append(f"- служебные таблицы: {db_tables}.")
+    if "usage_linkable_by_unique_basename" in db_hygiene:
+        md.append(f"- `usage`: путей, привязываемых по уникальному basename: "
+                  f"{db_hygiene['usage_linkable_by_unique_basename']}.")
     for tname in ("usage", "scores", "clip_perf"):
         if f"{tname}_orphans" in db_hygiene:
             md.append(f"- `{tname}`: строк {db_hygiene.get(f'{tname}_rows')}, "
                       f"orphan {db_hygiene.get(f'{tname}_orphans')}.")
     md.append("")
-    md.append("## 6. Здоровье и приоритеты")
+    md.append("## 7. Здоровье и приоритеты")
     md.append("")
     md.append(f"**{score}/100.** Штрафы: `{score_parts}`.")
     md.append("")
@@ -1105,7 +1232,7 @@ def main() -> int:
     md.append("4. Добить эмбеддинги и описания (25%).")
     md.append("5. Убрать вторую БД/рассинхрон зеркала (5%).")
     md.append("")
-    md.append("## 7. Артефакты")
+    md.append("## 8. Артефакты")
     md.append("")
     md.append(f"- JSON: `{json_path}`")
     md.append(f"- Markdown: `{md_path}`")
