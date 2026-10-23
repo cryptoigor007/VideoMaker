@@ -2,6 +2,8 @@
 # CHANGED: cut_segment force_reencode + accurate -ss after -i for short tail
 # A3 | 2026-10-22: render_proxy 1080p master + native 4K conform (memory-gate/chunks/resume)
 # P0-4 | 2026-10-22: memory-gate перед 4K-чанками, manifest resume, -threads 2
+# P0-5 | 2026-10-23: memory-pause = RenderMemoryPause (не общий fail), resume
+#   с первого неготового чанка; swap больше не повод остановить рендер.
 # B4/P2 | 2026-10-23: conform_4k материализует vm-graphic:// до сборки графа
 # PREV: 2026.09.03-r25
 # REPLACE: video_maker/engines/video.py
@@ -29,6 +31,29 @@ from .ffmpeg_resilient import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class RenderMemoryPause(memory_guard.MemoryPauseError):
+    """Мастер остановлен memory-gate: чанки и манифест сохранены для resume.
+
+    Это не общая ошибка рендера: GUI показывает баннер «Продолжить», а
+    headless `/api/run` просто перезапускает мастер и продолжает с первого
+    неготового чанка из манифеста.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        done_chunks: int = 0,
+        total_chunks: int = 0,
+        next_chunk: int = 0,
+        state: memory_guard.MemoryState | None = None,
+    ) -> None:
+        super().__init__(message, state=state)
+        self.done_chunks = int(done_chunks)
+        self.total_chunks = int(total_chunks)
+        self.next_chunk = int(next_chunk)
 
 
 def _inject_fallback_treatments(filter_complex: str, scenes, log_fn=None) -> str:
@@ -283,6 +308,19 @@ def _chunk_record_ready(record: dict) -> bool:
     return True
 
 
+def _chunk_resume_index(chunks: list[dict]) -> int:
+    """Индекс первого неготового чанка (0-based); len(chunks) — всё готово.
+
+    Чистый предикат resume: используется в логе «продолжаем с чанка N» и
+    в тестах. Готовность определяется только статусом из манифеста —
+    файлы уже проверены `_chunk_record_ready` при загрузке манифеста.
+    """
+    for position, record in enumerate(chunks or []):
+        if not isinstance(record, dict) or str(record.get("status") or "") != "done":
+            return position
+    return len(chunks or [])
+
+
 # --- A3: proxy-мастер 1080p → native 4K conform ------------------------------
 
 # Финальные 4K-геометрии → размер proxy-мастера для быстрого превью.
@@ -506,10 +544,11 @@ def _render_chunked_plan(
 ) -> dict:
     """Чанковый рендер готового плана с memory-gate и manifest-resume.
 
-    Возвращает {"started", "ok", "partial"}. MemoryPressureError/FFmpegBusyError
-    пробрасываются: caller сохраняет готовые чанки и не уходит в монолитный
-    энкод (это как раз путь к OOM). Используется и proxy-мастером (1080p),
-    и 4K conform — правила памяти одинаковые.
+    Возвращает {"started", "ok", "partial"}. MemoryPauseError оборачивается
+    в RenderMemoryPause (пауза, не общая ошибка): caller сохраняет готовые
+    чанки и не уходит в монолитный энкод (это как раз путь к OOM).
+    FFmpegBusyError пробрасывается как есть. Используется и proxy-мастером
+    (1080p), и 4K conform — правила памяти одинаковые.
     """
     _log = log_fn or log.info
     sink = chunk_files if chunk_files is not None else []
@@ -684,6 +723,10 @@ def _render_chunked_plan(
 
         _log(f"[{tag}] Чанковый рендер: {len(groups)} чанков "
              f"(память {width}x{height}-графа ограничена; манифест: готово {reused})")
+        _resume_at = _chunk_resume_index(manifest.get("chunks") or [])
+        if _resume_at < len(specs) and (reused or old):
+            _log(f"[{tag}] продолжение с чанка {_resume_at + 1}/{len(specs)} "
+                 f"(готово {reused} из манифеста)")
         enc_used: set[str] = set()
         for sp in specs:
             gi = int(sp["index"])
@@ -766,12 +809,48 @@ def _render_chunked_plan(
         manifest["status"] = "concat_done"
         _save_manifest()
         return {"started": True, "ok": True, "partial": partial}
-    except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
-        # P0-4: чанки и манифест сохраняем — следующий запуск продолжит
-        # с первого неготового чанка. Монолитный энкод не запускаем.
+    except memory_guard.MemoryPressureError as _mp:
+        # P0-5: чанки и манифест сохраняем — следующий запуск («Продолжить»)
+        # продолжит с первого неготового чанка. Монолитный энкод не запускаем.
+        _done = 0
+        _total = 0
+        _next = 0
+        try:
+            _chunks = manifest.get("chunks") if "manifest" in locals() else []
+            _chunks = _chunks if isinstance(_chunks, list) else []
+            _done = sum(1 for _r in _chunks if isinstance(_r, dict)
+                        and str(_r.get("status") or "") == "done")
+            _total = len(_chunks)
+            _next = _chunk_resume_index(_chunks)
+        except Exception:
+            pass
         try:
             if "manifest" in locals():
                 manifest["last_error"] = "memory gate: рендер приостановлен"
+                _save_manifest()
+            _log(f"[{tag}] {_mp}")
+            if _total and _next >= _total:
+                _log(f"[{tag}] готово чанков {_done}/{_total}; "
+                     "«Продолжить» выполнит только сборку — чанки не переделываются")
+            elif _total:
+                _log(f"[{tag}] готово чанков {_done}/{_total}; "
+                     f"«Продолжить» начнёт с чанка {_next + 1} — чанки не переделываются")
+            else:
+                _log(f"[{tag}] Чанковый рендер остановлен memory-gate; "
+                     "готовые чанки сохранены для resume")
+        except Exception:
+            pass
+        raise RenderMemoryPause(
+            str(_mp),
+            done_chunks=_done,
+            total_chunks=_total,
+            next_chunk=_next,
+            state=getattr(_mp, "state", None),
+        ) from _mp
+    except memory_guard.FFmpegBusyError:
+        try:
+            if "manifest" in locals():
+                manifest["last_error"] = "memory gate: ffmpeg ещё работает"
                 _save_manifest()
             _log(f"[{tag}] Чанковый рендер остановлен memory-gate; "
                  "готовые чанки сохранены для resume")
@@ -919,12 +998,17 @@ def conform_4k(
                 raise
 
         if not ok:
-            # Монолитный 4K conform: memory-gate предупреждает, но не валит
-            # (resume-манифеста на этом пути нет).
+            # Монолитный 4K conform: при критической нехватке RAM — пауза,
+            # а не попытка энкода «на авось» (SIGKILL). Resume перезапустит
+            # conform после того, как пользователь закроет приложения.
             try:
                 memory_guard.wait_for_ffmpeg_idle(_log, label="4K conform")
                 memory_guard.wait_for_memory(_log, label="перед 4K conform")
-            except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError) as _mg_e:
+            except memory_guard.MemoryPressureError as _mg_e:
+                partial = True
+                _log(f"[КОНФОРМ 4K] пауза по памяти: {_mg_e}")
+                raise RenderMemoryPause(str(_mg_e), state=getattr(_mg_e, "state", None)) from _mg_e
+            except memory_guard.FFmpegBusyError as _mg_e:
                 _log(f"[КОНФОРМ 4K] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
             cmd = _build_encode_cmd(
                 ffmpeg, filter_complex, paths, tmp_out,
@@ -1735,7 +1819,24 @@ def fit_video_to_duration(
                 hwaccel=not _ce_many,
                 chunk_files=_chunk_files,
             )
-        except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError):
+        except memory_guard.MemoryPressureError as _mp:
+            _pause_keep = True
+            _partial_chunks = True
+            _done = int(getattr(_mp, "done_chunks", 0) or 0)
+            _total = int(getattr(_mp, "total_chunks", 0) or 0)
+            _next = int(getattr(_mp, "next_chunk", 0) or 0)
+            _log(f"[{_render_tag}] {_mp}")
+            if _total and _next >= _total:
+                _log(f"[{_render_tag}] пауза по памяти: готово чанков {_done}/{_total}; "
+                     "после «Продолжить» — только сборка (манифест сохранён)")
+            elif _total:
+                _log(f"[{_render_tag}] пауза по памяти: готово чанков {_done}/{_total}; "
+                     f"после «Продолжить» — с чанка {_next + 1} (манифест сохранён)")
+            else:
+                _log(f"[{_render_tag}] Чанковый рендер остановлен memory-gate; "
+                     "готовые чанки сохранены для resume")
+            raise
+        except memory_guard.FFmpegBusyError:
             _pause_keep = True
             _partial_chunks = True
             _log(f"[{_render_tag}] Чанковый рендер остановлен memory-gate; "
@@ -1755,13 +1856,18 @@ def fit_video_to_duration(
         if _ce_4k and _ce_plan is not None and n >= 8:
             _done = _render_chunked()
         if not _done:
-            # P0-4/M6: монолитный 4K-энкод — memory-gate только предупреждает.
-            # MemoryPressureError здесь не валит рендер: чанкового resume нет,
-            # поэтому пробуем выполнить команду (chunked-путь — как есть).
+            # P0-5: монолитный энкод при критической нехватке RAM — пауза,
+            # а не «пробуем без ожидания». Пользователь закроет приложения
+            # и нажмёт «Продолжить»; чанки (если были) не удаляем.
             try:
                 memory_guard.wait_for_ffmpeg_idle(_log, label="монолитный рендер")
                 memory_guard.wait_for_memory(_log, label="перед рендером")
-            except (memory_guard.MemoryPressureError, memory_guard.FFmpegBusyError) as _mg_e:
+            except memory_guard.MemoryPressureError as _mg_e:
+                _pause_keep = True
+                _partial_chunks = True
+                _log(f"[{_render_tag}] пауза по памяти: {_mg_e}")
+                raise RenderMemoryPause(str(_mg_e), state=getattr(_mg_e, "state", None)) from _mg_e
+            except memory_guard.FFmpegBusyError as _mg_e:
                 _log(f"[{_render_tag}] memory-gate (монолитный): {_mg_e} — пробуем без ожидания")
             if not _run_encode(cmd):
                 raise RuntimeError("Быстрая склейка failed (VT и CPU)" )

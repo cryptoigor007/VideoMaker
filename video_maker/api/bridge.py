@@ -338,6 +338,9 @@ class AppStatus:
             "audio_path": audio,
             "output_folder": getattr(settings, "output_folder", "") or "",
             "queue_files": [os.path.basename(p) for p in (getattr(app, "_audio_queue", None) or [])],
+            "memory_pause": bool(getattr(app, "_memory_pause_active", False)),
+            "memory_pause_message": str(getattr(app, "_memory_pause_message", "") or ""),
+            "memory_pause_queue_index": int(getattr(app, "_memory_pause_queue_index", 0) or 0),
         }
 
     # ── публичный снимок ─────────────────────────────────────────────────
@@ -355,8 +358,14 @@ class AppStatus:
 
         return {
             "ok": True,
-            "state": "running" if near["running"] else "idle",
+            "state": ("paused_memory" if near.get("memory_pause")
+                      else ("running" if near["running"] else "idle")),
             "running": near["running"],
+            "memory_pause": {
+                "active": bool(near.get("memory_pause")),
+                "message": near.get("memory_pause_message", ""),
+                "queue_index": near.get("memory_pause_queue_index", 0),
+            },
             "cancel_requested": near["cancel_requested"],
             "series": near["series"],
             "stage": {

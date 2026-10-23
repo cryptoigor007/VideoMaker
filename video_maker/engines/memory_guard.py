@@ -1,19 +1,26 @@
-# VideoMaker P0-4 | 2026.10.22
-# CHANGED: memory-gate перед 4K-чанком (vm_stat/sysctl): пауза при нехватке
-#   RAM/swap, критический уровень → понятная ошибка вместо SIGKILL;
-#   interlock «не кодировать параллельно с другим ffmpeg этой сессии».
-# REPLACE: video_maker/engines/memory_guard.py (новый модуль)
+# VideoMaker P0-5 | 2026.10.23
+# CHANGED: memory-gate больше не блокируется хроническим swap macOS:
+#   пауза/стоп только по свободной RAM; swap — WARN в лог. Критический
+#   уровень → MemoryPauseError с инструкцией «закройте приложения и
+#   нажмите Продолжить» (resume из манифеста чанков).
+# PREV: P0-4 | 2026.10.22 — пауза/стоп по RAM + абсолютному swap.
+# REPLACE: video_maker/engines/memory_guard.py
 """Безопасный 4K-рендер на Mac с 8 ГБ RAM.
 
 Гейт читает `vm_stat` (доступная RAM = free + inactive + speculative) и
 `sysctl vm.swapusage` (used / total). Перед каждым чанком:
-  * RAM < 300 МБ или swap > 85% → пауза 30с (не более 5 раз);
-  * RAM < 80 МБ или swap >= 90% → MemoryPressureError (чанк не запускаем).
+  * RAM < 300 МБ → пауза 30с (не более 5 раз);
+  * RAM < 80 МБ → MemoryPauseError (чанк не запускаем, ждём «Продолжить»).
 
-Пороги переопределяются env: VIDEOMAKER_MEM_MIN_FREE_MB,
-VIDEOMAKER_MEM_MAX_SWAP_PCT, VIDEOMAKER_MEM_CRITICAL_FREE_MB,
-VIDEOMAKER_MEM_CRITICAL_SWAP_PCT; пауза/лимит — VIDEOMAKER_MEM_PAUSE_SEC,
-VIDEOMAKER_MEM_MAX_PAUSES. Нечисловое значение env → безопасный дефолт.
+Swap на macOS хронически заполнен и САМ ПО СЕБЕ не является причиной паузы
+или стопа: при swap >= 85% пишем `[MEM] swap 90% (нормально для macOS)`.
+Исключение: swap >= 99% И RAM < 150 МБ — критично (реальная нехватка).
+
+Все пороги переопределяются env: VIDEOMAKER_MEM_MIN_FREE_MB,
+VIDEOMAKER_MEM_CRITICAL_FREE_MB, VIDEOMAKER_MEM_MAX_SWAP_PCT (порог WARN),
+VIDEOMAKER_MEM_CRITICAL_SWAP_PCT, VIDEOMAKER_MEM_CRITICAL_SWAP_FREE_MB;
+пауза/лимит — VIDEOMAKER_MEM_PAUSE_SEC, VIDEOMAKER_MEM_MAX_PAUSES.
+Нечисловое значение env → безопасный дефолт.
 
 Дополнительно: не запускаем кодирование, пока в этой же сессии (дерево
 процессов текущего Python) работает другой ffmpeg.
@@ -34,16 +41,34 @@ from typing import Callable, Optional
 LogFn = Optional[Callable[[str], None]]
 
 DEFAULT_MIN_FREE_MB = 300.0
-DEFAULT_MAX_SWAP_PCT = 85.0
 DEFAULT_CRITICAL_FREE_MB = 80.0
-DEFAULT_CRITICAL_SWAP_PCT = 90.0
+# Swap — только WARN: на macOS он хронически заполнен при свободной RAM.
+DEFAULT_MAX_SWAP_PCT = 85.0
+DEFAULT_CRITICAL_SWAP_PCT = 99.0
+DEFAULT_CRITICAL_SWAP_FREE_MB = 150.0
 DEFAULT_PAUSE_SEC = 30.0
 DEFAULT_MAX_PAUSES = 5
 DEFAULT_FFMPEG_WAIT_SEC = 600.0
 
+MEMORY_PAUSE_HINT = "Закройте все приложения и нажмите «Продолжить»."
+MEMORY_RETRY_HINT = "закройте приложения и повторите"
+
 
 class MemoryPressureError(RuntimeError):
     """Недостаточно памяти для безопасного чанка — рендер остановлен."""
+
+
+class MemoryPauseError(MemoryPressureError):
+    """Рендер приостановлен memory-gate; чанки/манифест сохранены для resume.
+
+    GUI ловит это исключение отдельно от общих ошибок и показывает баннер
+    с кнопкой «Продолжить», а не диалог «Ошибка пайплайна».
+    """
+
+    def __init__(self, message: str, state: Optional["MemoryState"] = None) -> None:
+        super().__init__(message)
+        self.state = state
+        self.pause = True
 
 
 class FFmpegBusyError(RuntimeError):
@@ -191,7 +216,10 @@ def read_memory_state() -> Optional[MemoryState]:
 
 
 def thresholds() -> tuple[float, float, float, float, float, int]:
-    """(min_free_mb, max_swap_pct, crit_free_mb, crit_swap_pct, pause_sec, pauses)."""
+    """(min_free_mb, swap_warn_pct, crit_free_mb, crit_swap_pct, pause_sec, pauses).
+
+    swap_warn_pct — только порог предупреждения в логе, не причина паузы.
+    """
     return (
         _env_float("VIDEOMAKER_MEM_MIN_FREE_MB", DEFAULT_MIN_FREE_MB),
         _env_float("VIDEOMAKER_MEM_MAX_SWAP_PCT", DEFAULT_MAX_SWAP_PCT),
@@ -202,12 +230,126 @@ def thresholds() -> tuple[float, float, float, float, float, int]:
     )
 
 
-def _is_critical(state: MemoryState, crit_free: float, crit_swap: float) -> bool:
-    return state.free_mb < crit_free or state.swap_pct >= crit_swap
+def critical_swap_free_mb() -> float:
+    """RAM-порог, ниже которого почти полный swap считается критичным."""
+    return max(
+        0.0,
+        _env_float("VIDEOMAKER_MEM_CRITICAL_SWAP_FREE_MB", DEFAULT_CRITICAL_SWAP_FREE_MB),
+    )
 
 
-def _is_low(state: MemoryState, min_free: float, max_swap: float) -> bool:
-    return state.free_mb < min_free or state.swap_pct > max_swap
+def _is_critical(
+    state: MemoryState,
+    crit_free: float,
+    crit_swap: float,
+    crit_swap_free: float = DEFAULT_CRITICAL_SWAP_FREE_MB,
+) -> bool:
+    """Критично только при реальной нехватке RAM.
+
+    Высокий swap сам по себе (даже 100%) на macOS — норма. Он становится
+    критичным лишь вместе с почти исчерпанной RAM (< crit_swap_free).
+    """
+    if state.free_mb < crit_free:
+        return True
+    return state.swap_pct >= crit_swap and state.free_mb < crit_swap_free
+
+
+def _is_low(state: MemoryState, min_free: float, _max_swap: float = 0.0) -> bool:
+    """Нужна ли пауза. Только свободная RAM; swap — WARN, не критерий."""
+    return state.free_mb < min_free
+
+
+def memory_pause_message(state: MemoryState) -> str:
+    """Сообщение критического уровня — ровно та фраза, которую ждёт GUI."""
+    return (
+        f"[MEM] Недостаточно памяти (RAM {state.free_mb} МБ, "
+        f"swap {state.swap_pct:.0f}%). {MEMORY_PAUSE_HINT}"
+    )
+
+
+def memory_retry_message(state: MemoryState) -> str:
+    """Повторное нажатие «Продолжить», когда память ещё не освободилась."""
+    return (
+        f"[MEM] Недостаточно памяти: RAM {state.free_mb} МБ, "
+        f"swap {state.swap_pct:.0f}% — {MEMORY_RETRY_HINT}"
+    )
+
+
+def memory_ok_message(state: MemoryState) -> str:
+    return f"[MEM] Память в норме (RAM {state.free_mb} МБ, swap {state.swap_pct:.0f}%) — продолжаем"
+
+
+def swap_warning_message(state: MemoryState) -> str:
+    return f"[MEM] swap {state.swap_pct:.0f}% (нормально для macOS)"
+
+
+@dataclass(frozen=True)
+class MemoryCheck:
+    """Результат проверки: ok / low / critical (+ предупреждение о swap)."""
+
+    level: str
+    state: Optional[MemoryState]
+    message: str
+    swap_warning: str = ""
+
+    @property
+    def can_run(self) -> bool:
+        return self.level == "ok"
+
+
+def evaluate_memory(
+    state: Optional[MemoryState] = None,
+    *,
+    min_free: Optional[float] = None,
+    swap_warn: Optional[float] = None,
+    crit_free: Optional[float] = None,
+    crit_swap: Optional[float] = None,
+    crit_swap_free: Optional[float] = None,
+) -> MemoryCheck:
+    """Классифицировать снимок памяти (без сна и без исключений)."""
+    if (
+        min_free is None
+        or swap_warn is None
+        or crit_free is None
+        or crit_swap is None
+    ):
+        t_min, t_swap, t_crit_free, t_crit_swap, _pause, _max_pauses = thresholds()
+        min_free = t_min if min_free is None else min_free
+        swap_warn = t_swap if swap_warn is None else swap_warn
+        crit_free = t_crit_free if crit_free is None else crit_free
+        crit_swap = t_crit_swap if crit_swap is None else crit_swap
+    if crit_swap_free is None:
+        crit_swap_free = critical_swap_free_mb()
+
+    if state is None:
+        return MemoryCheck(
+            level="unknown",
+            state=None,
+            message="[MEM] статистика vm_stat/swap недоступна — гейт пропущен",
+        )
+
+    warn = swap_warning_message(state) if state.swap_pct >= float(swap_warn) else ""
+    if _is_critical(state, float(crit_free), float(crit_swap), float(crit_swap_free)):
+        return MemoryCheck("critical", state, memory_pause_message(state), warn)
+    if _is_low(state, float(min_free), float(swap_warn)):
+        return MemoryCheck("low", state, memory_retry_message(state), warn)
+    return MemoryCheck("ok", state, memory_ok_message(state), warn)
+
+
+def can_continue(state: Optional[MemoryState] = None) -> tuple[bool, str]:
+    """Можно ли нажать «Продолжить»: RAM >= min_free, swap не мешает.
+
+    Возвращает (можно, сообщение). При нехватке — точная фраза для GUI:
+    `[MEM] Недостаточно памяти: RAM X МБ, swap Y% — закройте приложения и повторите`.
+    """
+    if state is None:
+        state = read_memory_state()
+    check = evaluate_memory(state)
+    if check.state is None:
+        return True, check.message
+    if check.level == "ok":
+        return True, memory_ok_message(check.state)
+    return False, memory_retry_message(check.state)
 
 
 def wait_for_memory(
@@ -216,16 +358,18 @@ def wait_for_memory(
     sleep_fn: Callable[[float], None] = time.sleep,
     reader: Optional[Callable[[], Optional[MemoryState]]] = None,
 ) -> Optional[MemoryState]:
-    """Дождаться безопасного уровня RAM/swap перед чанком.
+    """Дождаться безопасного уровня RAM перед чанком.
 
-    Возвращает последний снимок (или None, если статистика недоступна).
-    Бросает MemoryPressureError на критическом уровне — лучше остановить
-    рендер с понятной ошибкой, чем получить SIGKILL/OOM.
+    Swap не блокирует рендер (на macOS он хронически заполнен): при высоком
+    swap пишем WARN. Возвращает последний снимок (или None, если статистика
+    недоступна). Бросает MemoryPauseError на критическом уровне — рендер
+    приостанавливается с инструкцией нажать «Продолжить».
     """
     _log = log_fn or (lambda _m: None)
     if reader is None:
         reader = read_memory_state
-    min_free, max_swap, crit_free, crit_swap, pause, max_pauses = thresholds()
+    min_free, swap_warn, crit_free, crit_swap, pause, max_pauses = thresholds()
+    crit_swap_free = critical_swap_free_mb()
 
     state = reader()
     if state is None:
@@ -234,6 +378,16 @@ def wait_for_memory(
 
     prefix = f"[MEM] {label}: " if label else "[MEM] "
     _log(f"{prefix}{state.as_text()}")
+    swap_warned = False
+
+    def _warn_swap(st: MemoryState) -> None:
+        nonlocal swap_warned
+        if st.swap_pct >= swap_warn:
+            if not swap_warned:
+                _log(swap_warning_message(st))
+                swap_warned = True
+        else:
+            swap_warned = False
 
     pauses = 0
     while True:
@@ -241,25 +395,33 @@ def wait_for_memory(
         if state is None:
             _log("[MEM] статистика пропала — гейт пропущен")
             return None
-        if _is_critical(state, crit_free, crit_swap):
-            _msg = (
-                f"[MEM] критический уровень памяти ({state.as_text()}) — "
-                f"чанк прерван, чтобы не повесить систему"
-            )
-            _log(_msg)
-            raise MemoryPressureError(_msg)
-        if not _is_low(state, min_free, max_swap):
+        check = evaluate_memory(
+            state,
+            min_free=min_free,
+            swap_warn=swap_warn,
+            crit_free=crit_free,
+            crit_swap=crit_swap,
+            crit_swap_free=crit_swap_free,
+        )
+        _warn_swap(state)
+        if check.level == "critical":
+            _log(check.message)
+            raise MemoryPauseError(check.message, state=state)
+        if check.level == "ok":
             if pauses:
                 _log(f"[MEM] память освободилась: {state.as_text()} — продолжаем")
             return state
         if pauses >= max_pauses:
             _log(
-                f"[MEM] после {pauses} пауз память всё ещё низкая "
-                f"({state.as_text()}) — продолжаем без ожидания"
+                f"[MEM] после {pauses} пауз RAM всё ещё {state.free_mb} МБ "
+                f"(< {min_free:g} МБ) — продолжаем без ожидания"
             )
             return state
 
-        _log(f"[MEM] пауза {pause:g}с (RAM {state.free_mb}, swap {state.swap_pct:.0f}%)")
+        _log(
+            f"[MEM] пауза {pause:g}с: RAM {state.free_mb} МБ < {min_free:g} МБ "
+            f"(swap {state.swap_pct:.0f}%) — ждём освобождения"
+        )
         sleep_fn(pause)
         pauses += 1
 

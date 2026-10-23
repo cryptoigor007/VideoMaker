@@ -37,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import webui
+from ..engines import memory_guard
 from .control import (
     apply_settings,
     cancel_pipeline,
@@ -336,13 +337,32 @@ class VideoMakerAPI:
             result["unknown"] = unknown
             result["errors"] = errors
             result["started"] = False
+            result["memory_paused"] = False
+            result["memory_pause_message"] = ""
+            result["resumed_from_memory_pause"] = False
             if not errors:
+                # Headless «Продолжить»: /api/run после паузы по памяти тоже
+                # проверяет RAM и не запускает рендер, пока приложения не закрыты.
+                if bool(getattr(self.app, "_memory_pause_active", False)):
+                    ok, memory_msg = memory_guard.can_continue()
+                    result["memory_pause_message"] = memory_msg
+                    if not ok:
+                        result["memory_paused"] = True
+                        return
+                    result["resumed_from_memory_pause"] = True
                 start_pipeline(self.app)
                 # App._start has additional checks (B-roll and collected audio)
                 # that may return without raising or starting the worker.
                 result["started"] = bool(getattr(self.app, "running", False))
 
         self.bridge.call(_go, timeout=120)
+        if result.get("memory_paused"):
+            return 409, {"ok": False,
+                         "error": result.get("memory_pause_message") or
+                                  "[MEM] Недостаточно памяти — закройте приложения и повторите",
+                         "memory_pause": True,
+                         "started": False,
+                         "status": self.status_payload(0)}
         if result.get("errors"):
             log.error("[API] запуск отклонён: %s", "; ".join(result["errors"]))
             return 400, {"ok": False, "error": "проверка не пройдена",
@@ -357,6 +377,7 @@ class VideoMakerAPI:
                          "status": self.status_payload(0)}
         time.sleep(0.05)
         return 200, {"ok": True, "started": True,
+                     "resumed_from_memory_pause": bool(result.get("resumed_from_memory_pause")),
                      "applied": result.get("applied") or [],
                      "unknown_fields": result.get("unknown") or [],
                      "status": self.status_payload(0)}

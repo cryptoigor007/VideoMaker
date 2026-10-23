@@ -300,7 +300,9 @@ _HTML = r"""<!DOCTYPE html>
     $("progressBar").setAttribute("aria-valuenow", String(Math.round(pct)));
     $("series").textContent = st.series || "—";
     var s = st.stage || {};
-    $("stage").textContent = s.name ? (s.name + (s.hint ? " — " + s.hint : "")) : "ожидание";
+    $("stage").textContent = (st.memory_pause && st.memory_pause.active && st.memory_pause.message)
+      ? st.memory_pause.message
+      : (s.name ? (s.name + (s.hint ? " — " + s.hint : "")) : "ожидание");
     $("times").textContent = running
       ? ("прошло " + hms(st.elapsed_sec) + " · осталось ~" + hms(st.eta_sec))
       : (st.activity ? "простой · последнее событие выше" : "готов к запуску");

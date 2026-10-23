@@ -28,6 +28,7 @@ import json
 from tkinter import filedialog, messagebox, ttk
 
 from ..config.settings import Settings
+from ..engines import memory_guard
 from ..pipeline.stages import PipelineContext
 from . import review_feedback as review
 
@@ -964,6 +965,34 @@ class App:
             foreground=COLORS["primary"],
             font=("SF Mono", 10),
         )
+        # P0-5: баннер паузы по памяти — заметный, но не красный «ошибка».
+        style.configure(
+            "MemoryWarn.TFrame",
+            background="#3B2A12",
+            borderwidth=1,
+            relief="solid",
+            bordercolor="#B45309",
+        )
+        style.configure(
+            "MemoryWarn.TLabel",
+            background="#3B2A12",
+            foreground="#FCD34D",
+            font=("SF Pro Text", 10),
+        )
+        style.configure(
+            "MemoryResume.TButton",
+            background="#D97706",
+            foreground="#FFFFFF",
+            borderwidth=0,
+            relief="flat",
+            padding=(12, 6),
+            font=("SF Pro Text", 10, "bold"),
+        )
+        style.map(
+            "MemoryResume.TButton",
+            background=[("active", "#B45309"), ("pressed", "#92400E")],
+            foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        )
 
         # Панель «Проверка подбора»: строки компактные, но читаемые на тёмном фоне.
         style.configure(
@@ -1840,6 +1869,37 @@ class App:
         self.activity_label.pack(fill=tk.X, pady=(0, 2))
         self._activity_text = ""
         self._pipeline_t0 = 0.0
+
+        # P0-5: пауза по памяти — баннер вместо диалога «Ошибка пайплайна».
+        # Кнопка проверяет RAM и перезапускает мастер: resume идёт из манифеста
+        # чанков, готовые чанки не перекодируются.
+        self._memory_pause_active = False
+        self._memory_pause_message = ""
+        self._memory_pause_audio_path = ""
+        self.memory_banner = ttk.Frame(parent, style="MemoryWarn.TFrame", padding=(10, 8))
+        self.memory_banner_label = ttk.Label(
+            self.memory_banner,
+            text="",
+            style="MemoryWarn.TLabel",
+            anchor="w",
+            justify="left",
+            wraplength=560,
+        )
+        self.memory_banner_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.memory_resume_btn = ttk.Button(
+            self.memory_banner,
+            text="  Продолжить  ",
+            style="MemoryResume.TButton",
+            command=self._resume_after_memory,
+        )
+        self.memory_resume_btn.pack(side=tk.RIGHT, padx=(10, 0))
+        parent.bind(
+            "<Configure>",
+            lambda event, lbl=self.memory_banner_label: lbl.configure(
+                wraplength=max(320, event.width - 190)
+            ),
+            add="+",
+        )
 
         # Сводка подбора клипов: обновляется из лог-строк "[SB] …" / "[VISION] …"
         # и не стирается обновлениями прогресса/активности.
@@ -4050,6 +4110,64 @@ class App:
         except Exception:
             pass
 
+    def _show_memory_banner(self, message: str) -> None:
+        """Показать баннер паузы по памяти (вызывается из Tk main thread)."""
+        if not hasattr(self, "memory_banner"):
+            return
+        self._memory_pause_active = True
+        self._memory_pause_message = str(message or "")
+        try:
+            self.memory_banner_label.configure(text=self._memory_pause_message)
+            stage = getattr(self, "stage_label", None)
+            if stage is not None:
+                stage.configure(text="пауза по памяти")
+            if not self.memory_banner.winfo_manager():
+                anchor = getattr(self, "pool_stats_label", None)
+                if anchor is not None:
+                    self.memory_banner.pack(
+                        fill=tk.X, pady=(4, 8), before=anchor
+                    )
+                else:
+                    self.memory_banner.pack(fill=tk.X, pady=(4, 8))
+        except tk.TclError:
+            pass
+
+    def _hide_memory_banner(self) -> None:
+        """Скрыть баннер паузы (память освободилась / рендер продолжился)."""
+        self._memory_pause_active = False
+        self._memory_pause_message = ""
+        banner = getattr(self, "memory_banner", None)
+        if banner is None:
+            return
+        try:
+            banner.pack_forget()
+        except tk.TclError:
+            pass
+        try:
+            stage = getattr(self, "stage_label", None)
+            if stage is not None and str(stage.cget("text")) == "пауза по памяти":
+                stage.configure(text="ожидание")
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _resume_after_memory(self) -> None:
+        """Кнопка «Продолжить»: проверить RAM и перезапустить мастер с чанка.
+
+        Swap не блокирует (на macOS он хронически заполнен); нужен только
+        свободный объём RAM >= VIDEOMAKER_MEM_MIN_FREE_MB. При нехватке
+        показываем точную инструкцию и остаёмся в паузе.
+        """
+        state = memory_guard.read_memory_state()
+        ok, message = memory_guard.can_continue(state)
+        self._log(message)
+        if not ok:
+            self._show_memory_banner(message)
+            with contextlib.suppress(tk.TclError):
+                self.root.bell()
+            return
+        # Баннер скроет _start только после успешной валидации и запуска.
+        self._start()
+
     def _start(self) -> None:
         """Запустить пайплайн."""
         log.info("[GUI] ╔══════════════════════════════════════════════╗")
@@ -4156,6 +4274,8 @@ class App:
             "hook_style": self.hook_style_var.get() if hasattr(self, "hook_style_var") else "auto_aisie",
             "imo": {name: self._var_get(name) for name in imo_fields},
         }
+        # Ручной «Старт» после паузы тоже продолжает с чанка (манифест/checkpoint).
+        self._hide_memory_banner()
         self.running = True
         self.start_btn.configure(state=tk.DISABLED)
         self.cancel_btn.configure(state=tk.NORMAL)
@@ -4210,6 +4330,29 @@ class App:
             pipeline_settings.audio_path
         )
         total = len(audio_queue)
+        # P0-5: после паузы по памяти не переделываем уже завершённые файлы
+        # очереди — продолжаем с того, на котором остановились. Привязка к
+        # пути аудио защищает от пропуска чужого файла, если настройки изменили.
+        try:
+            resume_from = int(getattr(self, "_memory_pause_queue_index", 0) or 0)
+        except (TypeError, ValueError):
+            resume_from = 0
+        self._memory_pause_queue_index = 0
+        resume_audio = str(getattr(self, "_memory_pause_audio_path", "") or "")
+        self._memory_pause_audio_path = ""
+        if resume_audio:
+            resume_from = 0
+            try:
+                target_audio = os.path.abspath(resume_audio)
+                for pos, queued in enumerate(audio_queue, 1):
+                    if os.path.abspath(queued) == target_audio:
+                        resume_from = pos
+                        break
+            except Exception:
+                resume_from = 0
+        if 1 < resume_from <= total:
+            self._log(f"[MEM] продолжаем очередь с файла {resume_from}/{total} "
+                      "(предыдущие уже готовы)")
         if total == 0:
             self._log("[PIPELINE] Нет аудиофайлов для обработки")
             self.running = False
@@ -4233,6 +4376,9 @@ class App:
             base_output = pipeline_settings.output_folder
 
             for idx, audio_file in enumerate(audio_queue, 1):
+                if idx < resume_from:
+                    self._log(f"[MEM] файл {idx}/{total} уже готов — пропуск")
+                    continue
                 if self.cancel_event.is_set():
                     self._log("[PIPELINE] Отмена по запросу пользователя (между файлами)")
                     break
@@ -4401,6 +4547,18 @@ class App:
                     log.info("[PIPELINE] >>> stage %s START", stage.name())
                     try:
                         ctx = stage.run(ctx)
+                    except memory_guard.MemoryPressureError:
+                        # Пауза по памяти: checkpoint нужен для resume, но его
+                        # сбой не должен маскировать MemoryPauseError.
+                        prev = (getattr(ctx, "_completed_stages", None) or [None])[-1]
+                        try:
+                            save_checkpoint(
+                                ctx, prev or "before_memory_pause",
+                                queue_index=idx, queue_total=total, log_fn=ctx.log,
+                            )
+                        except Exception as _ck_e:
+                            ctx.log(f"[CHECKPOINT] не сохранён при паузе по памяти: {_ck_e}")
+                        raise
                     except Exception:
                         prev = (getattr(ctx, "_completed_stages", None) or [None])[-1]
                         save_checkpoint(
@@ -4450,6 +4608,31 @@ class App:
                 log.info("[PIPELINE] ═══════════════════════════════════════════════")
                 pipeline_ok = True
 
+        except memory_guard.MemoryPressureError as e:
+            # P0-5: это не ошибка пайплайна, а пауза. Чанки и манифест уже
+            # сохранены; GUI показывает баннер «Продолжить», а не error-диалог.
+            log.warning("[PIPELINE] ПАУЗА ПО ПАМЯТИ: %s", e)
+            self._log(f"\n  ПАУЗА ПО ПАМЯТИ: {e}")
+            self._log("  Готовые чанки сохранены; закройте приложения и нажмите «Продолжить».")
+            self._memory_pause_active = True
+            self._memory_pause_message = str(e)
+            try:
+                self._memory_pause_queue_index = int(locals().get("idx", 1) or 1)
+            except (TypeError, ValueError):
+                self._memory_pause_queue_index = 1
+            self._memory_pause_audio_path = str(locals().get("audio_file", "") or "")
+            _pause_msg = str(e)
+            try:
+                self.root.after(
+                    0,
+                    lambda msg=_pause_msg: (
+                        self._show_memory_banner(msg)
+                        if getattr(self, "_memory_pause_active", False)
+                        else None
+                    ),
+                )
+            except (tk.TclError, RuntimeError):
+                pass
         except Exception as e:
             log.error("[PIPELINE] ╔══════════════════════════════════════════════╗")
             log.error("[PIPELINE] ║            ОШИБКА В ПАЙПЛАЙНЕ                ║")
